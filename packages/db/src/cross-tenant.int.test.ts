@@ -920,6 +920,19 @@ const MALFORMED_EXTRA: Array<
     'RepoInputError',
   ],
   [
+    'listAuditLog cursor id',
+    (t) => repos.listAuditLog(t, { before: { createdAt: new Date(), id: MALFORMED } }),
+    'RepoInputError',
+  ],
+  [
+    'listAuditLog cursor createdAt',
+    (t) =>
+      repos.listAuditLog(t, {
+        before: { createdAt: new Date(Number.NaN), id: randomUUID() },
+      }),
+    'RepoInputError',
+  ],
+  [
     'createInstallation createdByUserId',
     (t) =>
       repos.createInstallation(

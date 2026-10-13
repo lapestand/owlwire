@@ -1,5 +1,6 @@
 import { isUuid, newId } from '@owlwire/core';
 import { and, desc, eq, isNull, lt, or, type SQL } from 'drizzle-orm';
+import { RepoInputError } from '../errors.js';
 import { auditLog } from '../schema/index.js';
 import { SystemTx, type TenantTx } from '../scope.js';
 import { now, q } from './context.js';
@@ -74,6 +75,10 @@ export interface AuditCursor {
   id: string;
 }
 
+/**
+ * Raised by the audit entry guard in `writeAudit` (secret-looking keys, non-JSON data, unknown action, malformed actor id).
+ * List option errors (`limit`, `before` cursor) are `RepoInputError` instead.
+ */
 export class AuditDataError extends Error {
   constructor(message: string) {
     super(message);
@@ -209,15 +214,18 @@ async function listAudit(
 ): Promise<AuditLogRow[]> {
   const limit = opts.limit ?? 50;
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
-    throw new AuditDataError('limit must be an integer between 1 and 200');
+    throw new RepoInputError('audit', 'limit must be an integer between 1 and 200');
   }
-  if (opts.before) {
+  if (opts.before !== undefined) {
+    if (opts.before === null || typeof opts.before !== 'object') {
+      throw new RepoInputError('audit', 'before must be a cursor object');
+    }
     const { createdAt, id } = opts.before;
     if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) {
-      throw new AuditDataError('before.createdAt must be a valid Date');
+      throw new RepoInputError('audit', 'before.createdAt must be a valid Date');
     }
     if (!isUuid(id)) {
-      throw new AuditDataError('before.id must be a uuid');
+      throw new RepoInputError('audit', 'before.id must be a uuid');
     }
   }
   const conditions: SQL[] = [scopeCondition];

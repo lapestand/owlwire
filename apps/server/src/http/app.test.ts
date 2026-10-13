@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { systemClock } from '@owlwire/core';
 import {
+  AuditDataError,
   InvalidScopeError,
   type OwlwireDb,
   RepoConflictError,
@@ -12,7 +13,7 @@ import {
 import { HTTPException } from 'hono/http-exception';
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '../logger.js';
-import { type AppDeps, createApp, NOT_FOUND_DETAIL } from './app.js';
+import { type AppDeps, AUDIT_DATA_DETAIL, createApp, NOT_FOUND_DETAIL } from './app.js';
 
 const logger = createLogger('silent');
 
@@ -102,6 +103,25 @@ describe('errors', () => {
     const conflict = await app.request('/conflict');
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({ code: 'conflict', status: 409 });
+  });
+
+  it('maps audit guard errors to 422 validation_failed without echoing input keys', async () => {
+    const app = makeApp();
+    app.get('/audit', () => {
+      throw new AuditDataError(
+        'data.myBotTokenSECRETKEY looks like a secret and must not be written to audit_log',
+      );
+    });
+    const res = await app.request('/audit');
+    expect(res.status).toBe(422);
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
+    const body = await res.json();
+    expect(body).toMatchObject({
+      code: 'validation_failed',
+      status: 422,
+      detail: AUDIT_DATA_DETAIL,
+    });
+    expect(JSON.stringify(body)).not.toContain('SECRETKEY');
   });
 
   it('maps repository not-found and invalid scope errors to a 404 problem with a fixed detail', async () => {

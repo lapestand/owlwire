@@ -1,5 +1,6 @@
 import type { Clock } from '@owlwire/core';
 import {
+  AuditDataError,
   InvalidScopeError,
   type OwlwireDb,
   RepoConflictError,
@@ -30,6 +31,9 @@ export interface AppDeps {
 /** Fixed detail of the 404 for repository not-found and invalid scope errors (final review ruling). */
 export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
 
+/** Fixed detail of the 422 for audit guard rejections; the guard's own message may name input keys. */
+export const AUDIT_DATA_DETAIL = 'The request contains data that cannot be recorded.';
+
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.use('*', requestId(deps.logger));
@@ -44,6 +48,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Repository errors carry only entity/constraint/reason names, never values (P0 contract: 422 / 409).
     if (err instanceof RepoInputError) {
       return problem(c, new ProblemError(422, 'validation_failed', err.message));
+    }
+    // The audit guard rejects input (secret-looking keys, non-JSON data); its message names keys, so the detail is fixed.
+    if (err instanceof AuditDataError) {
+      return problem(c, new ProblemError(422, 'validation_failed', AUDIT_DATA_DETAIL));
     }
     // Unknown, foreign or malformed ids look the same to the caller: a fixed text, never the id or the input.
     if (err instanceof RepoNotFoundError || err instanceof InvalidScopeError) {

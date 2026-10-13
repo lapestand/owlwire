@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RepoInputError } from '../errors.js';
 import type { TenantTx } from '../scope.js';
 import { AuditDataError, assertAuditDataSafe, listAuditLog, writeAudit } from './audit.js';
 
@@ -71,7 +72,13 @@ describe('listAuditLog validation', () => {
     [{ limit: Number.NaN }],
     [{ before: { createdAt: new Date('x'), id: '0192f0a0-0000-7000-8000-00000000000a' } }],
     [{ before: { createdAt: new Date(), id: 'nope' } }],
-  ])('rejects %j', async (opts) => {
-    await expect(listAuditLog(tx, opts)).rejects.toBeInstanceOf(AuditDataError);
+    [{ before: { createdAt: '2026-10-13T00:00:00Z', id: '0192f0a0-0000-7000-8000-00000000000a' } }],
+    [{ before: 'not-a-cursor' }],
+    [{ before: null }],
+  ])('rejects %j with RepoInputError', async (opts) => {
+    const err = await listAuditLog(tx, opts as never).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RepoInputError);
+    expect(err).not.toBeInstanceOf(AuditDataError);
+    expect(err).toMatchObject({ entity: 'audit' });
   });
 });
