@@ -39,12 +39,28 @@ function assertKey(key: Uint8Array): void {
   if (key.length !== KEY_BYTES) throw new RangeError(`key must be ${KEY_BYTES} bytes`);
 }
 
+/** The format byte is part of the authenticated data, so the header cannot be relabelled. */
+function boundAad(aad: string): Buffer {
+  return Buffer.concat([Buffer.of(FORMAT_V1), Buffer.from(aad, 'utf8')]);
+}
+
+/**
+ * Canonical AAD for row-bound ciphertext: a JSON array of the parts, so `('a:b', 'c')` and
+ * `('a', 'b:c')` never collide. Every AAD that binds ciphertext to a row MUST be built with this
+ * helper; the first part is the purpose label (`owlwire:dek`, `owlwire:connection-config`, ...)
+ * and the rest are the row identifiers.
+ */
+export function buildAad(...parts: string[]): string {
+  if (parts.length === 0) throw new RangeError('buildAad needs at least one part');
+  return JSON.stringify(parts);
+}
+
 /** P1a biçimi: 0x01 | nonce(12) | ciphertext | tag(16); AAD satıra bağlı bağlam dizesidir. */
 export function sealBytes(key: Uint8Array, plaintext: Uint8Array, aad: string): Buffer {
   assertKey(key);
   const nonce = randomBytes(NONCE_LEN);
   const cipher = createCipheriv('aes-256-gcm', key, nonce, { authTagLength: TAG_LEN });
-  cipher.setAAD(Buffer.from(aad, 'utf8'));
+  cipher.setAAD(boundAad(aad));
   const body = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   return Buffer.concat([Buffer.from([FORMAT_V1]), nonce, body, cipher.getAuthTag()]);
 }
@@ -59,7 +75,7 @@ export function openBytes(key: Uint8Array, sealed: Uint8Array, aad: string): Buf
   const tag = buf.subarray(buf.length - TAG_LEN);
   const body = buf.subarray(1 + NONCE_LEN, buf.length - TAG_LEN);
   const decipher = createDecipheriv('aes-256-gcm', key, nonce, { authTagLength: TAG_LEN });
-  decipher.setAAD(Buffer.from(aad, 'utf8'));
+  decipher.setAAD(boundAad(aad));
   decipher.setAuthTag(tag);
   try {
     return Buffer.concat([decipher.update(body), decipher.final()]);

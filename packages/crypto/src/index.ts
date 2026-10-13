@@ -1,4 +1,11 @@
-export { DecryptError, openBytes, openJson, sealBytes, sealJson } from './aead.js';
+export {
+  buildAad,
+  DecryptError,
+  openBytes,
+  openJson,
+  sealBytes,
+  sealJson,
+} from './aead.js';
 export {
   rewrapWorkspaceDek,
   UnknownKekVersionError,

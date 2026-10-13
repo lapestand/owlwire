@@ -39,3 +39,23 @@ describe('createKeyring', () => {
     );
   });
 });
+
+describe('KEK version bounds', () => {
+  it('generateKek requires an integer version between 1 and 65535', () => {
+    for (const v of [0, -1, 1.5, 65536, Number.NaN]) {
+      expect(() => generateKek(v)).toThrow(RangeError);
+    }
+    expect(generateKek(1).version).toBe(1);
+    expect(generateKek(65535).version).toBe(65535);
+  });
+
+  it('createKeyring rejects current or previous KEKs with an out of range version', () => {
+    const key = Buffer.alloc(32, 1);
+    const other = Buffer.alloc(32, 2);
+    expect(() => createKeyring({ version: 0, key })).toThrow(KeyringConfigError);
+    expect(() => createKeyring({ version: 65536, key })).toThrow(KeyringConfigError);
+    expect(() => createKeyring({ version: 2, key }, { version: 1.5, key: other })).toThrow(
+      KeyringConfigError,
+    );
+  });
+});
