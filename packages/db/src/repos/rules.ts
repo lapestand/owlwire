@@ -175,9 +175,11 @@ export async function createRule(
 }
 
 /**
- * `targets` verilirse hedef kümesi atomik olarak değiştirilir. Yeni hedefler eski hedefler silinmeden ÖNCE
- * doğrulanıp kilitlenir: `deleteConnection` önce bağlantıyı, sonra kural hedeflerini kilitler; bu sıra korunarak
- * kilitlenme döngüsü oluşmaz. Görünmeyen hedef RepoNotFoundError verir, önceki küme korunur.
+ * `targets` verilirse hedef kümesi atomik olarak değiştirilir. Yeni hedefler kural satırı güncellenmeden ve eski
+ * hedefler silinmeden ÖNCE doğrulanıp kilitlenir: geçersiz hedef hiçbir yazım yapılmadan RepoNotFoundError /
+ * RepoInputError verir (hatayı yakalayıp commit eden çağıran yarım bir güncelleme kalıcılaştıramaz). `deleteConnection`
+ * önce bağlantıyı, sonra kural hedeflerini kilitler ve kurallar satırını hiç kilitlemez; bağlantı -> kural ->
+ * kural hedefi sırası döngü oluşturmaz. Kurulum değiştirilemediği için yeniden denetlenmez.
  */
 export async function updateRule(
   t: TenantTx,
@@ -185,6 +187,8 @@ export async function updateRule(
   patch: UpdateRulePatch,
   actor: AuditActor,
 ): Promise<RuleWithTargets> {
+  const split = patch.targets !== undefined ? splitTargets(patch.targets) : null;
+  if (split) await assertTargets(t, split);
   const rows = await q(t)
     .update(rules)
     .set({
@@ -199,9 +203,7 @@ export async function updateRule(
     .returning();
   const row = rows[0];
   if (!row) throw new RepoNotFoundError('rule', id);
-  if (patch.targets !== undefined) {
-    const split = splitTargets(patch.targets);
-    await assertTargets(t, split);
+  if (split) {
     await q(t)
       .delete(ruleTargets)
       .where(and(eq(ruleTargets.workspaceId, t.workspaceId), eq(ruleTargets.ruleId, id)));
@@ -212,7 +214,12 @@ export async function updateRule(
     actor,
     targetType: 'rule',
     targetId: id,
-    data: { fields: Object.keys(patch).sort() },
+    data: {
+      fields: Object.entries(patch)
+        .filter(([, value]) => value !== undefined)
+        .map(([key]) => key)
+        .sort(),
+    },
   });
   return withTargets(t, row);
 }

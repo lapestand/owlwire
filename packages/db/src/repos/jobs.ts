@@ -36,8 +36,10 @@ export interface EnqueueOptions {
 
 /**
  * Çağıranın transaction'ında iş ekler (outbox): transaction geri alınırsa iş de eklenmez. Payload yalnız
- * kimlik taşımalıdır (sır, mesaj gövdesi ya da yapılandırma değil). `graphile_worker.add_job`'ın kod tabanındaki
- * tek çağrı yeridir; tüm değerler parametre olarak bağlanır. Uygulama rolü Graphile tablolarına Görev 2'nin
+ * kimlik taşımalıdır (sır, mesaj gövdesi ya da yapılandırma değil). `graphile_worker.add_job`'ın packages/db içindeki
+ * tek çağrı yeridir; tüm değerler parametre olarak bağlanır. Kalan tek doğrudan çağıran P0
+ * `apps/server/src/worker/jobs.ts`'tir (ham `DbOrTx` alır); sunucu bağlama görevi onu bu fonksiyon üzerine ince
+ * sarmalayıcıya çevirerek kaldırır (R45, R62). Uygulama rolü Graphile tablolarına Görev 2'nin
  * politikasıyla erişir.
  */
 export async function enqueueJob(

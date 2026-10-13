@@ -62,7 +62,14 @@ export async function createDeliveries(
   const event = await getEvent(t, eventId);
   if (!event) throw new RepoNotFoundError('event', eventId);
   const byDestination = new Map(targets.map((target) => [target.destinationId, target]));
-  const visibleRows = await lockVisibleDestinations(t, [...byDestination.keys()]);
+  // Sabit sıra: eşzamanlı iki çağrı benzersiz indeks girdilerini aynı sırada kilitler (40P01 olmaz).
+  const ordered = [...byDestination.values()].sort((x, y) =>
+    x.destinationId < y.destinationId ? -1 : x.destinationId > y.destinationId ? 1 : 0,
+  );
+  const visibleRows = await lockVisibleDestinations(
+    t,
+    ordered.map((target) => target.destinationId),
+  );
   for (const dest of visibleRows) {
     if (byDestination.get(dest.id)?.connectionId !== dest.connectionId) {
       throw new RepoInputError('delivery', 'connectionId does not match the destination');
@@ -73,7 +80,7 @@ export async function createDeliveries(
     q(t)
       .insert(deliveries)
       .values(
-        [...byDestination.values()].map((target) => ({
+        ordered.map((target) => ({
           id: newId(),
           workspaceId: t.workspaceId,
           eventId,
@@ -147,7 +154,8 @@ export async function listDeliveries(
  * Gönderim için gereken her şeyi aynı transaction'da okur; yapılandırma `send` amacıyla çözülür (denetim kaydı
  * yazılmaz; DEK `readConnectionConfig` içinde açılıp sıfırlanır). Teslimat görünmüyorsa ya da hedefi veya
  * bağlantısı yumuşak silinmişse null döner: `deleteConnection` bekleyen teslimatları zaten başarısız işaretler,
- * çağıran (send_delivery) null'ı "gönderilecek bir şey yok" olarak ele alır. Sorgular sırayla çalışır (tek
+ * çağıran (send_delivery) null'ı "gönderilecek bir şey yok" olarak ele alır. Bağlantı okumalar arasında silinirse de
+ * (`readConnectionConfig` RepoNotFoundError) null döner; diğer hatalar (ör. LegacySecretError) iletilir. Sorgular sırayla çalışır (tek
  * transaction istemcisi).
  */
 export async function loadDeliveryContext(
@@ -160,6 +168,13 @@ export async function loadDeliveryContext(
   const destination = await getDestination(t, delivery.destinationId);
   const connection = await getConnection(t, delivery.connectionId);
   if (!event || !destination || !connection) return null;
-  const config = await readConnectionConfig(t, connection.id, { purpose: 'send' });
+  let config: Record<string, unknown> | null;
+  try {
+    config = await readConnectionConfig(t, connection.id, { purpose: 'send' });
+  } catch (err) {
+    // getConnection ile bu okuma arasında commit eden deleteConnection (READ COMMITTED): belgelenen null.
+    if (err instanceof RepoNotFoundError) return null;
+    throw err;
+  }
   return { delivery, event, destination, connection, config };
 }

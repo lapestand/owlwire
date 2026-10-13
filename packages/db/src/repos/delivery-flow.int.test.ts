@@ -329,7 +329,10 @@ describe('rules', () => {
         SYSTEM_ACTOR,
       ),
     );
-    await inWs(a.ws, (t) => updateRule(t, rule.id, { name: 'aud2' }, SYSTEM_ACTOR));
+    // An explicit undefined key is not a changed field.
+    await inWs(a.ws, (t) =>
+      updateRule(t, rule.id, { name: 'aud2', types: undefined }, SYSTEM_ACTOR),
+    );
     await inWs(a.ws, (t) => deleteRule(t, rule.id, SYSTEM_ACTOR));
     const entries = (await inWs(a.ws, (t) => listAuditLog(t, { limit: 200 }))).filter(
       (e) => e.targetId === rule.id,
@@ -340,6 +343,53 @@ describe('rules', () => {
       'rule.updated',
     ]);
     expect(entries.find((e) => e.action === 'rule.updated')?.data).toEqual({ fields: ['name'] });
+  });
+
+  it('rejects a foreign audience on update and keeps the previous targets', async () => {
+    const audA = await inWs(a.ws, (t) =>
+      createAudience(t, { name: `aud-${randomUUID()}` }, SYSTEM_ACTOR),
+    );
+    const rule = await inWs(b.ws, (t) =>
+      createRule(
+        t,
+        {
+          installationId: b.installationId,
+          name: 'keep-aud',
+          types: ['a'],
+          targets: [{ destinationId: b.destinationId }],
+        },
+        SYSTEM_ACTOR,
+      ),
+    );
+    await expect(
+      inWs(b.ws, (t) =>
+        updateRule(t, rule.id, { targets: [{ audienceId: audA.id }] }, SYSTEM_ACTOR),
+      ),
+    ).rejects.toMatchObject({ name: 'RepoNotFoundError', entity: 'audience', id: audA.id });
+    const after = (await inWs(b.ws, (t) => listRules(t))).find((r) => r.id === rule.id);
+    expect(after?.targets).toEqual([{ destinationId: b.destinationId }]);
+  });
+
+  it('validates targets before writing, so a caught error cannot commit a partial update', async () => {
+    const rule = await inWs(a.ws, (t) =>
+      createRule(
+        t,
+        { installationId: a.installationId, name: 'before', types: ['a'], targets: [] },
+        SYSTEM_ACTOR,
+      ),
+    );
+    await inWs(a.ws, async (t) => {
+      await expect(
+        updateRule(
+          t,
+          rule.id,
+          { name: 'after', targets: [{ destinationId: b.destinationId }] },
+          SYSTEM_ACTOR,
+        ),
+      ).rejects.toBeInstanceOf(RepoNotFoundError);
+    });
+    const after = (await inWs(a.ws, (t) => listRules(t))).find((r) => r.id === rule.id);
+    expect(after?.name).toBe('before');
   });
 
   it('hides rules from another workspace (update, delete, list)', async () => {
@@ -636,6 +686,68 @@ describe('deliveries', () => {
       before = { createdAt: row.createdAt, id: row.id };
     }
     expect(seen.sort()).toEqual([...ids].sort());
+  });
+});
+
+describe('deliveries outbox and concurrency', () => {
+  it('leaves no send_delivery job when the transaction rolls back', async () => {
+    const ev = await newEvent(a);
+    let deliveryId = '';
+    await expect(
+      inWs(a.ws, async (t) => {
+        const [d] = await createDeliveries(t, ev.eventId, [
+          { destinationId: a.destinationId, connectionId: a.connectionId },
+        ]);
+        deliveryId = d?.id ?? '';
+        throw new Error('rollback');
+      }),
+    ).rejects.toThrow('rollback');
+    expect(deliveryId).not.toBe('');
+    expect(await jobCount('send_delivery', 'deliveryId', deliveryId)).toBe(0);
+    expect(await inWs(a.ws, (t) => getDelivery(t, deliveryId))).toBeNull();
+  });
+
+  it('does not deadlock when concurrent calls name the same targets in reverse order', async () => {
+    const d1 = { destinationId: a.destinationId, connectionId: a.connectionId };
+    const extra = await extraDestination(a.ws, 'order');
+    const appWaiters = async () =>
+      Number(
+        (
+          await env.owner.query<{ n: string }>(
+            `select count(*) as n from pg_stat_activity
+             where usename <> current_user and wait_event_type = 'Lock' and query ilike 'insert into "deliveries"%'`,
+          )
+        ).rows[0]?.n ?? 0,
+      );
+    for (let round = 0; round < 10; round++) {
+      const ev = await newEvent(a);
+      // An uncommitted owner insert of (event, extra) makes both calls queue on the unique index, so their
+      // insert order decides the outcome: caller order would deadlock (40P01) in about half of the rounds.
+      const blocker = await env.owner.connect();
+      try {
+        await blocker.query('begin');
+        await blocker.query(
+          `insert into deliveries (id, workspace_id, event_id, destination_id, connection_id)
+           values ($1, $2, $3, $4, $5)`,
+          [newId(), a.ws, ev.eventId, extra.destinationId, extra.connectionId],
+        );
+        const calls = Promise.all([
+          inWs(a.ws, (t) => createDeliveries(t, ev.eventId, [d1, extra])),
+          inWs(a.ws, (t) => createDeliveries(t, ev.eventId, [extra, d1])),
+        ]);
+        for (let i = 0; i < 250 && (await appWaiters()) < 2; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(await appWaiters()).toBe(2);
+        await blocker.query('rollback');
+        const [x, y] = await calls;
+        expect([...x, ...y].map((d) => d.destinationId).sort()).toEqual(
+          [d1.destinationId, extra.destinationId].sort(),
+        );
+      } finally {
+        blocker.release();
+      }
+    }
   });
 });
 
