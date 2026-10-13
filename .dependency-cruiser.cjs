@@ -61,7 +61,7 @@ module.exports = {
       severity: 'error',
       from: { path: '^packages/core/' },
       to: {
-        path: 'node_modules/(\\.pnpm/[^/]+/node_modules/)?(pg|postgres|drizzle-orm|graphile-worker|grammy|hono|pino)/',
+        path: 'node_modules/(pg|postgres|drizzle-orm|graphile-worker|grammy|hono|pino)/',
       },
     },
     {
