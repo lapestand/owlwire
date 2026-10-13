@@ -1,0 +1,191 @@
+import { newId } from '@owlwire/core';
+import { and, desc, eq, isNull, lt, or, type SQL } from 'drizzle-orm';
+import { auditLog } from '../schema/index.js';
+import { SystemTx, type TenantTx } from '../scope.js';
+import { now, q } from './context.js';
+
+// Sahip P1a; sonraki planlar Sözleşme §6.4'e göre bu diziyi genişletir
+// (aynı kalıp `<hedef>.<geçmiş zaman fiil>`, snake_case; migration gerekmez — R24, R41).
+export const AUDIT_ACTIONS = [
+  'workspace.created',
+  'workspace.ownership_transferred',
+  'keys.dek_created',
+  'keys.kek_rotated',
+  'keys.legacy_secrets_upgraded',
+  'connection.created',
+  'connection.config_updated',
+  'connection.secret_viewed',
+  'connection.deleted',
+  'audience.created',
+  'audience.deleted',
+  'audience.members_changed',
+  'app.created',
+  'app.key_rotated',
+  'app.approval_changed',
+  'installation.created',
+  'installation.revoked',
+  'rule.created',
+  'rule.updated',
+  'rule.deleted',
+  'member.added',
+  'member.removed',
+  'member.role_changed',
+  'settings.updated',
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+// Sahip P1a; sonraki planlar Sözleşme §6.4'teki hedef tiplerini ekler (R41).
+export const AUDIT_TARGET_TYPES = [
+  'workspace',
+  'keys',
+  'connection',
+  'audience',
+  'app',
+  'installation',
+  'rule',
+  'member',
+  'settings',
+] as const;
+export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number];
+
+export type AuditActor =
+  | { kind: 'user'; userId: string }
+  | { kind: 'installation'; installationId: string }
+  | { kind: 'system' };
+
+export const SYSTEM_ACTOR: AuditActor = Object.freeze({ kind: 'system' as const });
+
+export interface AuditEntry {
+  action: AuditAction;
+  actor: AuditActor;
+  targetType: AuditTargetType;
+  targetId: string;
+  data?: Record<string, unknown>;
+}
+
+export interface SystemAuditEntry extends AuditEntry {
+  workspaceId: string | null;
+}
+
+export type AuditLogRow = typeof auditLog.$inferSelect;
+
+export interface AuditCursor {
+  createdAt: Date;
+  id: string;
+}
+
+export class AuditDataError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuditDataError';
+  }
+}
+
+const SECRET_KEY_SUFFIXES = [
+  'token',
+  'secret',
+  'password',
+  'passwd',
+  'config',
+  'dek',
+  'kek',
+  'authorization',
+  'cookie',
+  'apikey',
+  'privatekey',
+  'webhookurl',
+];
+
+const normalizeKey = (key: string): string => key.toLowerCase().replace(/[_\-\s]/g, '');
+
+/** Denetim kaydına sır yazılmasını engeller: anahtar adı sır gibi görünen her alan reddedilir. */
+export function assertAuditDataSafe(value: unknown, path = 'data'): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => {
+      assertAuditDataSafe(item, `${path}[${i}]`);
+    });
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value)) {
+      const normalized = normalizeKey(key);
+      if (SECRET_KEY_SUFFIXES.some((suffix) => normalized.endsWith(suffix))) {
+        throw new AuditDataError(
+          `${path}.${key} looks like a secret and must not be written to audit_log`,
+        );
+      }
+      assertAuditDataSafe(child, `${path}.${key}`);
+    }
+  }
+}
+
+export async function writeAudit(t: TenantTx, entry: AuditEntry): Promise<void>;
+export async function writeAudit(s: SystemTx, entry: SystemAuditEntry): Promise<void>;
+export async function writeAudit(
+  t: TenantTx | SystemTx,
+  entry: AuditEntry & { workspaceId?: string | null },
+): Promise<void> {
+  if (!(AUDIT_ACTIONS as readonly string[]).includes(entry.action)) {
+    throw new AuditDataError(`unknown audit action: ${entry.action}`);
+  }
+  const data = entry.data ?? {};
+  assertAuditDataSafe(data);
+  const workspaceId = t instanceof SystemTx ? (entry.workspaceId ?? null) : t.workspaceId;
+  await q(t)
+    .insert(auditLog)
+    .values({
+      id: newId(),
+      workspaceId,
+      actorUserId: entry.actor.kind === 'user' ? entry.actor.userId : null,
+      actorInstallationId: entry.actor.kind === 'installation' ? entry.actor.installationId : null,
+      action: entry.action,
+      targetType: entry.targetType,
+      targetId: entry.targetId,
+      data,
+      createdAt: now(t),
+    });
+}
+
+export interface ListAuditOptions {
+  limit?: number;
+  before?: AuditCursor;
+  action?: AuditAction;
+}
+
+async function listAudit(
+  t: TenantTx | SystemTx,
+  scopeCondition: SQL,
+  opts: ListAuditOptions,
+): Promise<AuditLogRow[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const conditions: SQL[] = [scopeCondition];
+  if (opts.action) conditions.push(eq(auditLog.action, opts.action));
+  if (opts.before) {
+    const cursor = or(
+      lt(auditLog.createdAt, opts.before.createdAt),
+      and(eq(auditLog.createdAt, opts.before.createdAt), lt(auditLog.id, opts.before.id)),
+    );
+    if (cursor) conditions.push(cursor);
+  }
+  return q(t)
+    .select()
+    .from(auditLog)
+    .where(and(...conditions))
+    .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+    .limit(limit);
+}
+
+export async function listAuditLog(
+  t: TenantTx,
+  opts: ListAuditOptions = {},
+): Promise<AuditLogRow[]> {
+  return listAudit(t, eq(auditLog.workspaceId, t.workspaceId), opts);
+}
+
+/** Instance düzeyi kayıtlar (workspace_id null): keys.legacy_secrets_upgraded, settings.updated, ... */
+export async function listSystemAuditLog(
+  s: SystemTx,
+  opts: ListAuditOptions = {},
+): Promise<AuditLogRow[]> {
+  return listAudit(s, isNull(auditLog.workspaceId), opts);
+}

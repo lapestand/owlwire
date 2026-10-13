@@ -67,7 +67,7 @@ module.exports = {
     {
       name: 'db-boundary',
       severity: 'error',
-      from: { path: '^packages/db/', pathNot: '\\.test\\.ts$' },
+      from: { path: '^packages/db/', pathNot: '(\\.test\\.ts$|/__test__/)' },
       to: { path: '^packages/', pathNot: '^packages/(db|core|crypto)/' },
     },
     {
