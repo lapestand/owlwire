@@ -7,5 +7,5 @@ export {
   resolveWorkspaceOf,
   type TenantEntityKind,
 } from './lookups.js';
-export { getInstanceSetting, setInstanceSetting } from './settings.js';
+export { getInstanceSetting, InvalidSettingValueError, setInstanceSetting } from './settings.js';
 export { backfillWorkspaceKeys } from './workspace-keys.js';

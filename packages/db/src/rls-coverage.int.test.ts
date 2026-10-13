@@ -30,6 +30,9 @@ const OWNS_APP = 'owlwire_private.rls_allows(owner_workspace_id)';
 const CATALOG_WRITE =
   '(EXISTS ( SELECT 1 FROM apps a WHERE ((a.id = catalog_types.app_id) AND owlwire_private.rls_allows(a.owner_workspace_id))))';
 
+/** Instance düzeyi tablolar: rls_allows(NULL) yalnız sistem modunda doğrudur. */
+const SYSTEM_ONLY = 'owlwire_private.rls_allows(NULL::uuid)';
+
 /** workspace_id kolonu olmayan ama RLS'li tablolar; politika kümeleri birebir beklenir. */
 const SPECIAL_TABLES: Readonly<Record<string, Readonly<Record<string, PolicySpec>>>> = {
   workspaces: { workspaces_tenant_isolation: tenantSpec('id') },
@@ -42,6 +45,13 @@ const SPECIAL_TABLES: Readonly<Record<string, Readonly<Record<string, PolicySpec
     apps_insert: { cmd: 'INSERT', qual: null, withCheck: OWNS_APP },
     apps_update: { cmd: 'UPDATE', qual: OWNS_APP, withCheck: OWNS_APP },
     apps_delete: { cmd: 'DELETE', qual: OWNS_APP, withCheck: null },
+  },
+  instance_settings: {
+    instance_settings_system_only: {
+      cmd: 'ALL',
+      qual: SYSTEM_ONLY,
+      withCheck: SYSTEM_ONLY,
+    },
   },
   catalog_types: {
     catalog_types_select: {
@@ -192,14 +202,46 @@ describe('rls coverage', () => {
     ]);
   });
 
-  it('workspaces, apps and catalog_types have RLS enabled', async () => {
+  it('workspaces, apps, catalog_types and instance_settings have RLS enabled', async () => {
     const { rows } = await owner.query<{ relname: string; relrowsecurity: boolean }>(`
       select relname, relrowsecurity from pg_class
-      where relname in ('workspaces', 'apps', 'catalog_types') and relkind = 'r' order by 1`);
+      where relname in ('workspaces', 'apps', 'catalog_types', 'instance_settings') and relkind = 'r'
+      order by 1`);
     expect(rows).toEqual([
       { relname: 'apps', relrowsecurity: true },
       { relname: 'catalog_types', relrowsecurity: true },
+      { relname: 'instance_settings', relrowsecurity: true },
       { relname: 'workspaces', relrowsecurity: true },
+    ]);
+  });
+
+  it('flags an instance_settings policy that lets tenants in', async () => {
+    expect(
+      await problemsAfter(
+        'alter policy instance_settings_system_only on instance_settings using (true) with check (true)',
+      ),
+    ).toEqual([
+      'instance_settings: instance_settings_system_only qual "true"',
+      'instance_settings: instance_settings_system_only with_check "true"',
+    ]);
+  });
+
+  it('apps has the enabled approval guard trigger (before insert or update, per row)', async () => {
+    const { rows } = await owner.query<{
+      tgname: string;
+      tgenabled: string;
+      fn: string;
+      def: string;
+    }>(`
+      select t.tgname, t.tgenabled, t.tgfoid::regproc::text as fn, pg_get_triggerdef(t.oid) as def
+      from pg_trigger t where t.tgrelid = 'public.apps'::regclass and not t.tgisinternal`);
+    expect(rows).toEqual([
+      {
+        tgname: 'apps_approval_guard',
+        tgenabled: 'O',
+        fn: 'owlwire_private.apps_approval_guard',
+        def: 'CREATE TRIGGER apps_approval_guard BEFORE INSERT OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION owlwire_private.apps_approval_guard()',
+      },
     ]);
   });
 

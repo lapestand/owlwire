@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { generateToken, hashToken, tokenPrefix } from '@owlwire/crypto';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { createTestWorkspace } from '../__test__/fixtures.js';
-import { RepoConflictError, RepoNotFoundError } from '../errors.js';
+import { pgErrorCode, RepoConflictError, RepoNotFoundError } from '../errors.js';
+import { apps, instanceSettings } from '../schema/index.js';
 import {
   SYSTEM,
   type SystemTx,
@@ -19,10 +21,15 @@ import {
   resolveWorkspaceOf,
   type TenantEntityKind,
 } from '../system/lookups.js';
-import { getInstanceSetting, setInstanceSetting } from '../system/settings.js';
+import {
+  getInstanceSetting,
+  InvalidSettingValueError,
+  setInstanceSetting,
+} from '../system/settings.js';
 import { type AppRow, type CreateAppInput, createApp, getApp, listOwnApps } from './apps.js';
 import { listAuditLog, listSystemAuditLog, SYSTEM_ACTOR } from './audit.js';
 import { createConnection } from './connections.js';
+import { q } from './context.js';
 import { createDestination } from './destinations.js';
 import {
   createInstallation,
@@ -373,5 +380,142 @@ describe('system lookups', () => {
     );
     expect(entry?.data).toEqual({ keys: ['smtp'] });
     expect(JSON.stringify(entry)).not.toContain('do-not-audit-me');
+  });
+});
+
+/** Expects a raw query to fail with SQLSTATE 42501 (unmapped by design, so it surfaces loudly). */
+async function expectInsufficientPrivilege(p: Promise<unknown>): Promise<void> {
+  const err = await p.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(err, 'query should have been rejected').not.toBeNull();
+  expect(pgErrorCode(err)).toBe('42501');
+}
+
+describe('database guard on app approval (raw q(t), bypassing the repository)', () => {
+  it('rejects a tenant self-approving its own pending public app', async () => {
+    const pub = await inA((t) => createApp(t, app('selfapprove', 'public'), SYSTEM_ACTOR));
+    await expectInsufficientPrivilege(
+      inA((t) => q(t).update(apps).set({ approvalStatus: 'approved' }).where(eq(apps.id, pub.id))),
+    );
+    expect((await inA((t) => getApp(t, pub.id)))?.approvalStatus).toBe('pending');
+    expect(await inB((t) => getApp(t, pub.id))).toBeNull();
+  });
+
+  it('resets approval to pending when a tenant flips a private app to public', async () => {
+    const priv = await inA((t) => createApp(t, app('flip', 'private'), SYSTEM_ACTOR));
+    expect(priv.approvalStatus).toBe('approved');
+    await inA((t) => q(t).update(apps).set({ visibility: 'public' }).where(eq(apps.id, priv.id)));
+    expect(await inA((t) => getApp(t, priv.id))).toMatchObject({
+      visibility: 'public',
+      approvalStatus: 'pending',
+    });
+    expect(await inB((t) => getApp(t, priv.id))).toBeNull();
+    await expectInsufficientPrivilege(
+      inA((t) =>
+        q(t)
+          .update(apps)
+          .set({ visibility: 'private', approvalStatus: 'approved' })
+          .where(eq(apps.id, priv.id)),
+      ),
+    );
+  });
+
+  it('rejects flipping to public and approving in one statement', async () => {
+    const priv = await inA((t) => createApp(t, app('flip2', 'private'), SYSTEM_ACTOR));
+    await inA((t) => q(t).update(apps).set({ visibility: 'public' }).where(eq(apps.id, priv.id)));
+    await inA((t) => q(t).update(apps).set({ visibility: 'private' }).where(eq(apps.id, priv.id)));
+    await expectInsufficientPrivilege(
+      inA((t) =>
+        q(t)
+          .update(apps)
+          .set({ visibility: 'public', approvalStatus: 'approved' })
+          .where(eq(apps.id, priv.id)),
+      ),
+    );
+  });
+
+  it('keeps a rejected status when the app goes private and back to public', async () => {
+    const pub = await inA((t) => createApp(t, app('rej', 'public'), SYSTEM_ACTOR));
+    await sys((s) =>
+      q(s).update(apps).set({ approvalStatus: 'rejected' }).where(eq(apps.id, pub.id)),
+    );
+    await inA((t) => q(t).update(apps).set({ visibility: 'private' }).where(eq(apps.id, pub.id)));
+    await inA((t) => q(t).update(apps).set({ visibility: 'public' }).where(eq(apps.id, pub.id)));
+    expect((await inA((t) => getApp(t, pub.id)))?.approvalStatus).toBe('rejected');
+  });
+
+  it('rejects a raw insert of a public app that starts approved, explicitly or by column default', async () => {
+    for (const approvalStatus of ['approved', undefined] as const) {
+      const id = randomUUID();
+      await expectInsufficientPrivilege(
+        inA((t) =>
+          q(t)
+            .insert(apps)
+            .values({
+              id,
+              ownerWorkspaceId: A,
+              name: 'raw',
+              slug: `raw-${id}`,
+              visibility: 'public',
+              ...(approvalStatus ? { approvalStatus } : {}),
+            }),
+        ),
+      );
+    }
+  });
+
+  it('lets system mode approve an app, which then becomes visible to other workspaces', async () => {
+    const pub = await inA((t) => createApp(t, app('sysapprove', 'public'), SYSTEM_ACTOR));
+    await sys((s) =>
+      q(s).update(apps).set({ approvalStatus: 'approved' }).where(eq(apps.id, pub.id)),
+    );
+    expect((await inB((t) => getApp(t, pub.id)))?.approvalStatus).toBe('approved');
+    // A tenant still cannot take the approval back either.
+    await expectInsufficientPrivilege(
+      inA((t) => q(t).update(apps).set({ approvalStatus: 'pending' }).where(eq(apps.id, pub.id))),
+    );
+  });
+});
+
+describe('instance_settings is system only', () => {
+  it('hides rows from tenant transactions and rejects tenant writes, while withSystem works', async () => {
+    await sys((s) => setInstanceSetting(s, 'tenant-probe', 'x', SYSTEM_ACTOR));
+    expect(await inA((t) => q(t).select().from(instanceSettings))).toEqual([]);
+    await expectInsufficientPrivilege(
+      inA((t) => q(t).insert(instanceSettings).values({ key: 'from-tenant', value: 'y' })),
+    );
+    const updated = await inA((t) =>
+      q(t)
+        .update(instanceSettings)
+        .set({ value: 'hijacked' })
+        .where(eq(instanceSettings.key, 'tenant-probe'))
+        .returning(),
+    );
+    expect(updated).toEqual([]);
+    expect(await sys((s) => getInstanceSetting(s, 'tenant-probe'))).toBe('x');
+    expect(await sys((s) => getInstanceSetting(s, 'from-tenant'))).toBeNull();
+  });
+});
+
+describe('instance setting values', () => {
+  it('rejects undefined before any SQL', async () => {
+    await expect(
+      sys((s) => setInstanceSetting(s, 'undef', undefined, SYSTEM_ACTOR)),
+    ).rejects.toBeInstanceOf(InvalidSettingValueError);
+    const audit = await sys((s) =>
+      listSystemAuditLog(s, { action: 'settings.updated', limit: 200 }),
+    );
+    expect(audit.some((a) => a.targetId === 'undef')).toBe(false);
+  });
+
+  it('stores a JSON null, which reads back like a missing key', async () => {
+    await sys((s) => setInstanceSetting(s, 'json-null', null, SYSTEM_ACTOR));
+    const { rows } = await env.owner.query(
+      "select value is null as sql_null, value = 'null'::jsonb as json_null from instance_settings where key = 'json-null'",
+    );
+    expect(rows[0]).toEqual({ sql_null: false, json_null: true });
+    expect(await sys((s) => getInstanceSetting(s, 'json-null'))).toBeNull();
   });
 });
