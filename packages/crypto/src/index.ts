@@ -12,7 +12,14 @@ export {
   unwrapWorkspaceDek,
   wrapWorkspaceDek,
 } from './dek.js';
-export * from './envelope.js';
+// R90: wrapDek/unwrapDek P0 envelope internals; not part of the public API.
+export {
+  createSecretBox,
+  decryptJson,
+  encryptJson,
+  generateDek,
+  type SecretBox,
+} from './envelope.js';
 export { createKeyring, generateKek, type Keyring, KeyringConfigError } from './keyring.js';
 export * from './keys.js';
 export * from './tokens.js';
