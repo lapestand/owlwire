@@ -21,7 +21,22 @@ export function open(key: Buffer, blob: Buffer, aad: Buffer): Buffer {
   const decipher = createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAAD(aad);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]);
+  return finishZeroing(decipher, ct);
+}
+
+/** Decrypts `body` and returns one plaintext buffer; the intermediate chunk is zeroed whether or not auth succeeds. */
+function finishZeroing(decipher: ReturnType<typeof createDecipheriv>, body: Buffer): Buffer {
+  const head = decipher.update(body);
+  try {
+    const tail = decipher.final();
+    try {
+      return Buffer.concat([head, tail]);
+    } finally {
+      tail.fill(0);
+    }
+  } finally {
+    head.fill(0);
+  }
 }
 
 const FORMAT_V1 = 0x01;
@@ -78,7 +93,7 @@ export function openBytes(key: Uint8Array, sealed: Uint8Array, aad: string): Buf
   decipher.setAAD(boundAad(aad));
   decipher.setAuthTag(tag);
   try {
-    return Buffer.concat([decipher.update(body), decipher.final()]);
+    return finishZeroing(decipher, body);
   } catch {
     throw new DecryptError();
   }
@@ -93,10 +108,22 @@ export function jsonBytes(value: unknown): Buffer {
   return Buffer.from(text, 'utf8');
 }
 
+/** The serialised plaintext is zeroed once sealed (JSON.stringify's string itself stays with the GC). */
 export function sealJson(key: Uint8Array, value: unknown, aad: string): Buffer {
-  return sealBytes(key, jsonBytes(value), aad);
+  const plaintext = jsonBytes(value);
+  try {
+    return sealBytes(key, plaintext, aad);
+  } finally {
+    plaintext.fill(0);
+  }
 }
 
+/** The decrypted bytes are zeroed after parsing; the parsed strings are copies the caller owns. */
 export function openJson<T = unknown>(key: Uint8Array, sealed: Uint8Array, aad: string): T {
-  return JSON.parse(openBytes(key, sealed, aad).toString('utf8')) as T;
+  const plaintext = openBytes(key, sealed, aad);
+  try {
+    return JSON.parse(plaintext.toString('utf8')) as T;
+  } finally {
+    plaintext.fill(0);
+  }
 }

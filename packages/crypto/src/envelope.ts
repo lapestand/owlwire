@@ -34,13 +34,21 @@ export function unwrapDek(ring: KekRing, wrapped: Buffer): Buffer {
 export function encryptJson(dek: Buffer, value: unknown): Buffer {
   const aad = Buffer.of(DATA_FORMAT);
   const plaintext = jsonBytes(value);
-  return Buffer.concat([aad, seal(dek, plaintext, aad)]);
+  try {
+    return Buffer.concat([aad, seal(dek, plaintext, aad)]);
+  } finally {
+    plaintext.fill(0);
+  }
 }
 
 export function decryptJson<T>(dek: Buffer, blob: Buffer): T {
   if (blob.length < 1 || blob[0] !== DATA_FORMAT) throw new Error('unknown ciphertext format');
   const plaintext = open(dek, blob.subarray(1), blob.subarray(0, 1));
-  return JSON.parse(plaintext.toString('utf8')) as T;
+  try {
+    return JSON.parse(plaintext.toString('utf8')) as T;
+  } finally {
+    plaintext.fill(0);
+  }
 }
 
 /** @deprecated P1a: yalnız P0 legacy `config_enc` (kek_v0, 0x02) okuması için (Görev 13); yeni sırlar sealJson + workspace DEK ile yazılır. */
@@ -57,11 +65,15 @@ export function createSecretBox(ring: KekRing): SecretBox {
   return {
     seal(value) {
       const dek = generateDek();
-      const wrapped = wrapDek(ring.current, dek);
-      const header = Buffer.alloc(3);
-      header.writeUInt8(BOX_FORMAT, 0);
-      header.writeUInt16BE(wrapped.length, 1);
-      return Buffer.concat([header, wrapped, encryptJson(dek, value)]);
+      try {
+        const wrapped = wrapDek(ring.current, dek);
+        const header = Buffer.alloc(3);
+        header.writeUInt8(BOX_FORMAT, 0);
+        header.writeUInt16BE(wrapped.length, 1);
+        return Buffer.concat([header, wrapped, encryptJson(dek, value)]);
+      } finally {
+        dek.fill(0);
+      }
     },
     open<T>(blob: Buffer): T {
       if (blob.length < 3 || blob[0] !== BOX_FORMAT) throw new Error('unknown secret box format');
@@ -69,7 +81,11 @@ export function createSecretBox(ring: KekRing): SecretBox {
       if (len < 3 || blob.length < 3 + len + 1) throw new Error('secret box is truncated');
       const wrapped = blob.subarray(3, 3 + len);
       const dek = unwrapDek(ring, wrapped);
-      return decryptJson<T>(dek, blob.subarray(3 + len));
+      try {
+        return decryptJson<T>(dek, blob.subarray(3 + len));
+      } finally {
+        dek.fill(0);
+      }
     },
   };
 }

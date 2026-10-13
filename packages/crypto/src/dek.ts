@@ -28,7 +28,10 @@ export function unwrapWorkspaceDek(
   const kek = keyring.byVersion(kekVersion);
   if (!kek) throw new UnknownKekVersionError(kekVersion);
   const dek = openBytes(kek.key, wrapped, dekAad(workspaceId));
-  if (dek.length !== KEY_BYTES) throw new DecryptError('unwrapped DEK has wrong length');
+  if (dek.length !== KEY_BYTES) {
+    dek.fill(0);
+    throw new DecryptError('unwrapped DEK has wrong length');
+  }
   return dek;
 }
 

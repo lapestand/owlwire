@@ -1,5 +1,5 @@
 import { createCipheriv, randomBytes } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildAad, DecryptError, openBytes, openJson, sealBytes, sealJson } from './aead.js';
 import { KEY_BYTES } from './keys.js';
 
@@ -129,5 +129,70 @@ describe('buildAad', () => {
 
   it('requires at least one part', () => {
     expect(() => buildAad()).toThrow(RangeError);
+  });
+});
+
+describe('plaintext hygiene', () => {
+  /**
+   * Runs `fn` and returns every buffer that was decoded to text while it ran and held `text` at that moment; the
+   * caller then checks that those very buffers are zero-filled afterwards.
+   */
+  function decodedDuring(text: string, fn: () => void): Buffer[] {
+    const seen: Buffer[] = [];
+    const original = Buffer.prototype.toString;
+    const spy = vi.spyOn(Buffer.prototype, 'toString').mockImplementation(function (
+      this: Buffer,
+      ...args: unknown[]
+    ) {
+      const out = Reflect.apply(original, this, args) as string;
+      if (out === text) seen.push(this);
+      return out;
+    });
+    try {
+      fn();
+    } finally {
+      spy.mockRestore();
+    }
+    return seen;
+  }
+
+  const allZero = (b: Buffer) => b.every((byte) => byte === 0);
+
+  it('openJson zeroes the decrypted bytes after parsing', () => {
+    const k = key();
+    const plaintext = '{"botToken":"PLAINTEXT-123"}';
+    const sealed = sealBytes(k, Buffer.from(plaintext), 'aad');
+    let value: unknown;
+    const decoded = decodedDuring(plaintext, () => {
+      value = openJson(k, sealed, 'aad');
+    });
+    expect(value).toEqual({ botToken: 'PLAINTEXT-123' });
+    expect(decoded.length).toBeGreaterThan(0);
+    expect(decoded.every(allZero)).toBe(true);
+  });
+
+  it('openJson zeroes the decrypted bytes when they are not valid JSON', () => {
+    const k = key();
+    const plaintext = 'not json PLAINTEXT';
+    const sealed = sealBytes(k, Buffer.from(plaintext), 'aad');
+    const decoded = decodedDuring(plaintext, () => {
+      expect(() => openJson(k, sealed, 'aad')).toThrow(SyntaxError);
+    });
+    expect(decoded.length).toBeGreaterThan(0);
+    expect(decoded.every(allZero)).toBe(true);
+  });
+
+  it('sealJson zeroes the serialised plaintext once sealed', () => {
+    const fills = vi.spyOn(Buffer.prototype, 'fill');
+    try {
+      sealJson(key(), { botToken: 'PLAINTEXT-456' }, 'aad');
+      const zeroed = fills.mock.contexts.filter((_, i) => fills.mock.calls[i]?.[0] === 0);
+      expect(
+        zeroed.some((b) => (b as Buffer).length === '{"botToken":"PLAINTEXT-456"}'.length),
+      ).toBe(true);
+      expect(zeroed.every((b) => allZero(b as Buffer))).toBe(true);
+    } finally {
+      fills.mockRestore();
+    }
   });
 });
