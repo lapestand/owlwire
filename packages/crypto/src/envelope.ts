@@ -1,0 +1,70 @@
+import { randomBytes } from 'node:crypto';
+import { open, seal } from './aead.js';
+import { KEY_BYTES, type Kek, type KekRing } from './keys.js';
+
+const WRAP_FORMAT = 0x01;
+const DATA_FORMAT = 0x01;
+const BOX_FORMAT = 0x02;
+
+export function generateDek(): Buffer {
+  return randomBytes(KEY_BYTES);
+}
+
+export function wrapDek(kek: Kek, dek: Buffer): Buffer {
+  const header = Buffer.alloc(3);
+  header.writeUInt8(WRAP_FORMAT, 0);
+  header.writeUInt16BE(kek.version, 1);
+  return Buffer.concat([header, seal(kek.key, dek, header)]);
+}
+
+export function unwrapDek(ring: KekRing, wrapped: Buffer): Buffer {
+  if (wrapped.length < 3 || wrapped[0] !== WRAP_FORMAT)
+    throw new Error('unknown wrapped DEK format');
+  const version = wrapped.readUInt16BE(1);
+  const kek =
+    ring.current.version === version
+      ? ring.current
+      : ring.previous?.version === version
+        ? ring.previous
+        : null;
+  if (!kek) throw new Error(`no KEK available for KEK version ${version}`);
+  return open(kek.key, wrapped.subarray(3), wrapped.subarray(0, 3));
+}
+
+export function encryptJson(dek: Buffer, value: unknown): Buffer {
+  const aad = Buffer.of(DATA_FORMAT);
+  const plaintext = Buffer.from(JSON.stringify(value), 'utf8');
+  return Buffer.concat([aad, seal(dek, plaintext, aad)]);
+}
+
+export function decryptJson<T>(dek: Buffer, blob: Buffer): T {
+  if (blob.length < 1 || blob[0] !== DATA_FORMAT) throw new Error('unknown ciphertext format');
+  const plaintext = open(dek, blob.subarray(1), blob.subarray(0, 1));
+  return JSON.parse(plaintext.toString('utf8')) as T;
+}
+
+export interface SecretBox {
+  seal(value: unknown): Buffer;
+  open<T>(blob: Buffer): T;
+}
+
+/** Self-contained envelope (one DEK per secret); used for connections.config_enc in P0. */
+export function createSecretBox(ring: KekRing): SecretBox {
+  return {
+    seal(value) {
+      const dek = generateDek();
+      const wrapped = wrapDek(ring.current, dek);
+      const header = Buffer.alloc(3);
+      header.writeUInt8(BOX_FORMAT, 0);
+      header.writeUInt16BE(wrapped.length, 1);
+      return Buffer.concat([header, wrapped, encryptJson(dek, value)]);
+    },
+    open<T>(blob: Buffer): T {
+      if (blob.length < 3 || blob[0] !== BOX_FORMAT) throw new Error('unknown secret box format');
+      const len = blob.readUInt16BE(1);
+      const wrapped = blob.subarray(3, 3 + len);
+      const dek = unwrapDek(ring, wrapped);
+      return decryptJson<T>(dek, blob.subarray(3 + len));
+    },
+  };
+}
