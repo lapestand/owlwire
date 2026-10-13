@@ -68,6 +68,25 @@ describe('findSystemGucWrites', () => {
     ]);
   });
 
+  it('scans deploy/ and docker/ scripts, sql, compose files and the Dockerfile', () => {
+    const root = repoWith({
+      'deploy/compose/initdb/10-app-role.sh':
+        'psql -c "ALTER ROLE owlwire_app SET owlwire.system = \'on\'"\n',
+      'deploy/compose/initdb/20-bad.sql': "SET owlwire.system = 'on';\n",
+      'deploy/compose/docker-compose.yml':
+        "    environment:\n      PGOPTIONS: '-c owlwire.system=on'\n",
+      'docker/Dockerfile': 'ENV PGOPTIONS="-c owlwire.system=on"\n',
+      'docker/entrypoint.sh': "echo ok\nselect current_setting('owlwire.system', true)\n",
+      'deploy/compose/UPGRADING.md': "SET owlwire.system = 'on'\n",
+    });
+    expect(findSystemGucWrites(root)).toEqual([
+      { file: 'deploy/compose/docker-compose.yml', line: 2 },
+      { file: 'deploy/compose/initdb/10-app-role.sh', line: 1 },
+      { file: 'deploy/compose/initdb/20-bad.sql', line: 1 },
+      { file: 'docker/Dockerfile', line: 1 },
+    ]);
+  });
+
   it('skips dependencies and build output', () => {
     const root = repoWith({
       'packages/db/node_modules/x/index.js': ENABLE,

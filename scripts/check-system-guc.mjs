@@ -6,11 +6,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const ROOTS = ['apps', 'packages'];
+// deploy/ and docker/ hold init scripts, compose files and the image recipe (init SQL, PGOPTIONS, ALTER ROLE).
+const ROOTS = ['apps', 'packages', 'deploy', 'docker'];
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.turbo', 'coverage', 'public']);
 // Build copy of packages/db/drizzle (gitignored); the source folder is scanned.
 const SKIP_PATHS = new Set(['apps/server/drizzle']);
-const SCANNED = /\.(ts|tsx|js|mjs|cjs|sql)$/;
+const SCANNED = /(\.(ts|tsx|js|mjs|cjs|sql|sh|ya?ml)|^Dockerfile.*|\.env.*)$/;
 const ALLOWED = [/^packages\/db\/src\/scope\.ts$/, /^packages\/db\/src\/.*\.int\.test\.ts$/];
 
 // A quote as it appears in SQL text, possibly escaped inside a JS string literal.
@@ -20,6 +21,8 @@ const ENABLING = [
   new RegExp(String.raw`set_config\(\s*${Q}owlwire\.system${Q}\s*,\s*(?!${Q}${Q}\s*[,)])`, 'gi'),
   // SET [LOCAL|SESSION] owlwire.system ... (also ALTER ROLE/DATABASE ... SET owlwire.system)
   /\bset\s+(?:local\s+|session\s+)?owlwire\.system\b/gi,
+  // libpq/server options: PGOPTIONS='-c owlwire.system=on', postgres -c owlwire.system=on
+  /-c\s*owlwire\.system\s*=/gi,
 ];
 
 function* walk(root, dir) {
