@@ -17,7 +17,7 @@ import {
 import { migrateAll } from '@owlwire/db/migrate';
 import { startTestDatabase, type TestDatabase } from '@owlwire/testing';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { seedDevWorkspace } from './dev-seed.js';
 import { runKeysRotate } from './keys-rotate.js';
 
@@ -57,6 +57,20 @@ async function versions(): Promise<Record<number, number>> {
   return Object.fromEntries(rows.map((r) => [r.v, r.n]));
 }
 
+/** A fresh workspace (with its DEK wrapped by `kek`, and a dev-seed connection); returns its id. */
+async function seedWorkspace(kek: Kek): Promise<string> {
+  return (await seedDevWorkspace(open(createKeyring(kek)), { platform: 'telegram' })).workspaceId;
+}
+
+async function insertLegacySecret(workspaceId: string, kek: Kek, config: object): Promise<string> {
+  const id = randomUUID();
+  await owner.query(
+    "insert into connections (id, workspace_id, platform, kind, display_name, config_enc, config_enc_scheme) values ($1, $2, 'telegram', 'own_bot', 'legacy', $3, 'kek_v0')",
+    [id, workspaceId, createSecretBox(createKeyring(kek)).seal(config)],
+  );
+  return id;
+}
+
 beforeAll(async () => {
   tdb = await startTestDatabase({ migrate: migrateAll });
   owner = new pg.Pool({ connectionString: tdb.ownerUrl });
@@ -68,13 +82,14 @@ afterAll(async () => {
   await tdb?.stop();
 });
 
-describe('owlwire keys rotate', () => {
-  let workspaceId = '';
-  let legacyConnectionId = '';
+// Every test starts from an empty database and seeds its own workspaces and keys, so the tests pass in any order.
+beforeEach(async () => {
+  await owner.query('truncate workspaces, audit_log cascade');
+});
 
+describe('owlwire keys rotate', () => {
   it('reports nothing to do when keys are current', async () => {
-    workspaceId = (await seedDevWorkspace(open(createKeyring(v1)), { platform: 'telegram' }))
-      .workspaceId;
+    await seedWorkspace(v1);
     const r = await run(createKeyring(v1));
     expect(r.code).toBe(0);
     expect(r.out).toContain('already');
@@ -82,6 +97,7 @@ describe('owlwire keys rotate', () => {
   });
 
   it('exits with 2 when stale keys exist but OWLWIRE_KEK_PREVIOUS is missing', async () => {
+    await seedWorkspace(v1);
     const r = await run(createKeyring(v2));
     expect(r.code).toBe(2);
     expect(r.out).toContain('OWLWIRE_KEK_PREVIOUS');
@@ -90,6 +106,7 @@ describe('owlwire keys rotate', () => {
   });
 
   it('exits with 2 when OWLWIRE_KEK_PREVIOUS holds the wrong key for its version', async () => {
+    await seedWorkspace(v1);
     const r = await run(createKeyring(v2, generateKek(1)));
     expect(r.code).toBe(2);
     expect(r.out).toContain('does not open the stored workspace keys');
@@ -97,15 +114,10 @@ describe('owlwire keys rotate', () => {
   });
 
   it('upgrades P0 SecretBox secrets sealed with the old KEK, rotates, and says PREVIOUS can be removed', async () => {
-    legacyConnectionId = randomUUID();
-    await owner.query(
-      "insert into connections (id, workspace_id, platform, kind, display_name, config_enc, config_enc_scheme) values ($1, $2, 'telegram', 'own_bot', 'legacy', $3, 'kek_v0')",
-      [
-        legacyConnectionId,
-        workspaceId,
-        createSecretBox(createKeyring(v1)).seal({ botToken: 'legacy-token' }),
-      ],
-    );
+    const workspaceId = await seedWorkspace(v1);
+    const legacyConnectionId = await insertLegacySecret(workspaceId, v1, {
+      botToken: 'legacy-token',
+    });
     const r = await run(createKeyring(v2, v1));
     expect(r.code).toBe(0);
     expect(r.out).toContain('Re-wrapped 1 workspace key(s) with KEK v2');
@@ -118,7 +130,8 @@ describe('owlwire keys rotate', () => {
     expect(config).toEqual({ botToken: 'legacy-token' });
   });
 
-  it('says PREVIOUS can be removed on a re-run that finds nothing to rotate', async () => {
+  it('says PREVIOUS can be removed on a run that finds nothing to rotate', async () => {
+    await seedWorkspace(v2);
     const r = await run(createKeyring(v2, v1));
     expect(r.code).toBe(0);
     expect(r.out).toContain('already');
@@ -126,39 +139,31 @@ describe('owlwire keys rotate', () => {
   });
 
   it('refuses to re-wrap newer keys down when OWLWIRE_KEK and OWLWIRE_KEK_PREVIOUS are swapped', async () => {
-    const { rows: before } = await owner.query<{ n: number }>(
-      "select count(*)::int as n from audit_log where action = 'keys.kek_rotated'",
-    );
+    await seedWorkspace(v2);
     const r = await run(createKeyring(v1, v2));
     expect(r.code).toBe(2);
     expect(r.out).toContain('v2 are newer than OWLWIRE_KEK_VERSION v1');
     expect(r.out).toContain('look swapped');
     expect(r.out).not.toContain('can be removed');
     expect(await versions()).toEqual({ 2: 1 });
-    const { rows: after } = await owner.query<{ n: number }>(
+    const { rows } = await owner.query<{ n: number }>(
       "select count(*)::int as n from audit_log where action = 'keys.kek_rotated'",
     );
-    expect(after[0]?.n).toBe(before[0]?.n);
+    expect(rows[0]?.n).toBe(0);
   });
 
   it('exits with 2 when a legacy secret is sealed with an unconfigured KEK version', async () => {
-    const id = randomUUID();
-    await owner.query(
-      "insert into connections (id, workspace_id, platform, kind, display_name, config_enc, config_enc_scheme) values ($1, $2, 'telegram', 'own_bot', 'legacy9', $3, 'kek_v0')",
-      [id, workspaceId, createSecretBox(createKeyring(generateKek(9))).seal({ botToken: 'x' })],
-    );
-    try {
-      const r = await run(createKeyring(v2));
-      expect(r.code).toBe(2);
-      expect(r.out).toContain('Legacy secrets are sealed with KEK v9');
-      expect(r.out).toContain('OWLWIRE_KEK_PREVIOUS');
-      expect(r.out).not.toContain('can be removed');
-    } finally {
-      await owner.query('delete from connections where id = $1', [id]);
-    }
+    const workspaceId = await seedWorkspace(v2);
+    await insertLegacySecret(workspaceId, generateKek(9), { botToken: 'x' });
+    const r = await run(createKeyring(v2));
+    expect(r.code).toBe(2);
+    expect(r.out).toContain('Legacy secrets are sealed with KEK v9');
+    expect(r.out).toContain('OWLWIRE_KEK_PREVIOUS');
+    expect(r.out).not.toContain('can be removed');
   });
 
   it('exits with 1 when a P0 secret appears during the run', async () => {
+    await seedWorkspace(v2);
     // Simulates a still-running P0 process sealing a secret with the KEK while the rotation runs.
     await owner.query(`
       create function test_late_legacy() returns trigger language plpgsql as $$
@@ -200,7 +205,8 @@ describe('owlwire keys rotate', () => {
   });
 
   it('exits with 1 and keeps PREVIOUS when a key cannot be re-wrapped', async () => {
-    await seedDevWorkspace(open(createKeyring(v3)), { platform: 'webhook' });
+    await seedWorkspace(v3);
+    await seedWorkspace(v3);
     // The startup coverage check samples the lowest workspace id per version; corrupt the other one.
     const { rows } = await owner.query<{ lo: string; hi: string }>(
       'select min(workspace_id::text) as lo, max(workspace_id::text) as hi from workspace_keys',
