@@ -40,6 +40,12 @@ const visible = (t: TenantTx, ...extra: SQL[]) =>
  * Bağlantı satırı `FOR SHARE` ile kilitlenir: eşzamanlı `deleteConnection` ya önce biter (bu çağrı
  * RepoNotFoundError alır) ya da bu transaction'ı bekleyip yeni hedefi de yumuşak siler. Başka workspace'in ya da
  * silinmiş bağlantı RepoNotFoundError('connection'); aynı bağlantıda yinelenen dış kimlik RepoConflictError.
+ *
+ * Kilitlenme uyarısı: `FOR SHARE` (yalnız FK'nin aldığı `FOR KEY SHARE`'den güçlü) bağlantının satır güncellemeleriyle
+ * çakışır. Aynı transaction'da önce `createDestination`, sonra aynı bağlantıyı güncelleyen bir çağrı
+ * (`updateConnectionStatus`, `updateConnectionConfig`, `deleteConnection`) yapan iki transaction eşzamanlı koşarsa
+ * ikisi de paylaşımlı kilidi yükseltmeye çalışır ve 40P01 deadlock oluşur. Çağıranlar bağlantıyı ya önce günceller ya da
+ * hedef oluşturduktan sonra aynı transaction'da güncellemez.
  */
 export async function createDestination(
   t: TenantTx,

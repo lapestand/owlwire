@@ -6,6 +6,7 @@ import { createTestWorkspace } from '../__test__/fixtures.js';
 import { LegacySecretError, RepoConflictError, RepoNotFoundError } from '../errors.js';
 import { type TenantTx, tenantScope, withTenant } from '../scope.js';
 import { listAuditLog, SYSTEM_ACTOR } from './audit.js';
+import { sealConnectionConfig } from './connection-crypto.js';
 import {
   type ConnectionRow,
   createConnection,
@@ -635,5 +636,95 @@ describe('destination isolation (R121)', () => {
     expect(await inA((t) => getConnection(t, cb.id))).toBeNull();
     const audit = await inA((t) => listAuditLog(t));
     expect(audit.map((a) => a.targetId)).not.toContain(cb.id);
+  });
+});
+
+describe('fix round 1', () => {
+  it('refuses a ciphertext sealed with another workspace key even when the AAD matches', async () => {
+    const cb = await inB((t) =>
+      createConnection(t, newBot('aad-match', 'bravo-secret'), SYSTEM_ACTOR),
+    );
+    // Sealed in A for B's connection id: the AAD is identical, only the workspace DEK differs.
+    const foreign = await inA((t) => sealConnectionConfig(t, cb.id, { botToken: 'alpha-forged' }));
+    await env.owner.query('update connections set config_enc = $1 where id = $2', [foreign, cb.id]);
+    await expect(
+      inB((t) => readConnectionConfig(t, cb.id, { purpose: 'send' })),
+    ).rejects.toBeInstanceOf(DecryptError);
+    // Control: the same path with B's own key decrypts, so the failure above comes from the key alone.
+    const own = await inB((t) => sealConnectionConfig(t, cb.id, { botToken: 'bravo-again' }));
+    await env.owner.query('update connections set config_enc = $1 where id = $2', [own, cb.id]);
+    expect(await inB((t) => readConnectionConfig(t, cb.id, { purpose: 'send' }))).toEqual({
+      botToken: 'bravo-again',
+    });
+  });
+
+  it('a foreign deleteConnection leaves the whole connection graph intact', async () => {
+    const conn = await inA((t) => createConnection(t, newBot('graph', SECRET), SYSTEM_ACTOR));
+    const dest = await inA((t) =>
+      createDestination(t, {
+        connectionId: conn.id,
+        kind: 'group',
+        externalId: '-100graph',
+        name: 'graph',
+      }),
+    );
+    const { installationId, ruleId, audienceId } = await seedRuleAndAudience(A);
+    const targetId = randomUUID();
+    await env.owner.query(
+      'insert into rule_targets (id, workspace_id, rule_id, destination_id) values ($1, $2, $3, $4)',
+      [targetId, A, ruleId, dest.id],
+    );
+    await env.owner.query(
+      'insert into audience_members (audience_id, destination_id, workspace_id) values ($1, $2, $3)',
+      [audienceId, dest.id, A],
+    );
+    const eventId = randomUUID();
+    await env.owner.query(
+      "insert into events (id, workspace_id, installation_id, idempotency_key, type, severity, message) values ($1, $2, $3, $4, 'generic', 'info', '{}'::jsonb)",
+      [eventId, A, installationId, `graph-${eventId}`],
+    );
+    const deliveryId = randomUUID();
+    await env.owner.query(
+      "insert into deliveries (id, workspace_id, event_id, destination_id, connection_id, status) values ($1, $2, $3, $4, $5, 'pending')",
+      [deliveryId, A, eventId, dest.id, conn.id],
+    );
+
+    await expect(inB((t) => deleteConnection(t, conn.id, SYSTEM_ACTOR))).rejects.toBeInstanceOf(
+      RepoNotFoundError,
+    );
+
+    const { rows } = await env.owner.query(
+      `select (select deleted_at from connections where id = $1) as conn_deleted_at,
+              (select deleted_at from destinations where id = $2) as dest_deleted_at,
+              (select count(*)::int from rule_targets where id = $3) as targets,
+              (select count(*)::int from audience_members where audience_id = $4 and destination_id = $2) as members,
+              (select status from deliveries where id = $5) as delivery_status,
+              (select last_error from deliveries where id = $5) as delivery_error`,
+      [conn.id, dest.id, targetId, audienceId, deliveryId],
+    );
+    expect(rows[0]).toEqual({
+      conn_deleted_at: null,
+      dest_deleted_at: null,
+      targets: 1,
+      members: 1,
+      delivery_status: 'pending',
+      delivery_error: null,
+    });
+    const audit = await inB((t) => listAuditLog(t));
+    expect(audit.map((a) => a.targetId)).not.toContain(conn.id);
+  });
+
+  it('updateConnectionConfig reports a missing connection before touching the DEK', async () => {
+    const C = await createTestWorkspace(env.db, 'charlie');
+    await env.owner.query('delete from workspace_keys where workspace_id = $1', [C]);
+    const conn = await inA((t) => createConnection(t, newBot('nokey', SECRET), SYSTEM_ACTOR));
+    const inC = <T>(fn: (t: TenantTx) => Promise<T>) => withTenant(env.db, tenantScope(C), fn);
+    // C has no DEK: sealing first would surface WorkspaceKeyMissingError instead.
+    await expect(
+      inC((t) => updateConnectionConfig(t, randomUUID(), { botToken: 'x' }, SYSTEM_ACTOR)),
+    ).rejects.toBeInstanceOf(RepoNotFoundError);
+    await expect(
+      inC((t) => updateConnectionConfig(t, conn.id, { botToken: 'x' }, SYSTEM_ACTOR)),
+    ).rejects.toBeInstanceOf(RepoNotFoundError);
   });
 });

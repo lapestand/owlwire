@@ -128,13 +128,18 @@ export async function updateConnectionConfig(
   config: Record<string, unknown> | null,
   actor: AuditActor,
 ): Promise<void> {
+  // Varlık önce kilitlenerek denetlenir: eksik, silinmiş ya da yabancı kimlik DEK'e dokunmadan RepoNotFoundError alır.
+  const existing = await q(t)
+    .select({ id: connections.id })
+    .from(connections)
+    .where(byId(t, id))
+    .for('update');
+  if (!existing[0]) throw new RepoNotFoundError('connection', id);
   const configEnc = config === null ? null : await sealConnectionConfig(t, id, config);
-  const rows = await q(t)
+  await q(t)
     .update(connections)
     .set({ configEnc, configEncScheme: 'dek_v1', updatedAt: now(t) })
-    .where(byId(t, id))
-    .returning({ id: connections.id });
-  if (!rows[0]) throw new RepoNotFoundError('connection', id);
+    .where(byId(t, id));
   await writeAudit(t, {
     action: 'connection.config_updated',
     actor,
