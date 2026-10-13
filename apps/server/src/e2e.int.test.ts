@@ -66,4 +66,33 @@ describe('walking skeleton', () => {
       attempts: 1,
     });
   });
+
+  it('retries a rate limited send through the real runner and records two attempts', async () => {
+    const seed = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
+      platform: 'webhook',
+      chatId: 'retry',
+    });
+    h.fake.nextOutcome({ status: 'rate_limited', retryAfterMs: 0 });
+    const res = await fetch(`${base}/v1/hooks?token=${seed.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: 'Retry me',
+    });
+    expect(res.status).toBe(202);
+    const { eventId } = (await res.json()) as { eventId: string };
+
+    await waitFor(async () => {
+      const rows = await h.deps.db
+        .select({ status: deliveries.status })
+        .from(deliveries)
+        .where(eq(deliveries.eventId, eventId));
+      return rows[0]?.status === 'delivered';
+    });
+    const [row] = await h.deps.db
+      .select({ status: deliveries.status, attempts: deliveries.attempts })
+      .from(deliveries)
+      .where(eq(deliveries.eventId, eventId));
+    expect(row).toEqual({ status: 'delivered', attempts: 2 });
+    expect(h.fake.sent.at(-1)?.rendered.text).toBe('Retry me');
+  });
 });
