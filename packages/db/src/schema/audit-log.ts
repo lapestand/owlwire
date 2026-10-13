@@ -1,6 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
-import { tstz } from './types.js';
+import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { workspaces } from './workspaces.js';
 
 export const auditLog = pgTable(
@@ -15,7 +14,10 @@ export const auditLog = pgTable(
     targetType: text('target_type').notNull(),
     targetId: text('target_id').notNull(),
     data: jsonb('data').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
-    createdAt: tstz('created_at').notNull().defaultNow(),
+    // ms precision: the keyset cursor is a JS Date, so stored values must not be finer than that
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date', precision: 3 })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index('audit_log_workspace_created_idx').on(t.workspaceId, t.createdAt.desc(), t.id.desc()),

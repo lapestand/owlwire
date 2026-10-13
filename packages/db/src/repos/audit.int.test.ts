@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
+import { auditLog } from '../schema/index.js';
 import { SYSTEM, tenantScope, withSystem, withTenant } from '../scope.js';
 import {
   type AuditAction,
@@ -10,6 +11,7 @@ import {
   SYSTEM_ACTOR,
   writeAudit,
 } from './audit.js';
+import { q } from './context.js';
 
 let env: DbTestEnv;
 const WS_A = randomUUID();
@@ -81,9 +83,16 @@ describe('writeAudit / listAuditLog', () => {
     expect(a.some((r) => r.targetId === 'b-only')).toBe(false);
     expect(b.every((r) => r.workspaceId === WS_B)).toBe(true);
     expect(b.some((r) => r.targetId === 'r1')).toBe(false);
-    // RLS itself (not only the explicit filter) hides the other tenant: raw owner count differs.
+  });
+
+  it('RLS alone confines an unfiltered select to the tenant rows', async () => {
+    const seen = await withTenant(env.db, tenantScope(WS_A), (t) =>
+      q(t).select({ workspaceId: auditLog.workspaceId }).from(auditLog),
+    );
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((r) => r.workspaceId === WS_A)).toBe(true);
     const total = await env.owner.query('select count(*)::int as n from audit_log');
-    expect(total.rows[0].n).toBeGreaterThan(a.length);
+    expect(total.rows[0].n).toBeGreaterThan(seen.length);
   });
 
   it('rejects secret-looking data and writes nothing', async () => {
@@ -165,5 +174,37 @@ describe('writeAudit / listAuditLog', () => {
       listAuditLog(t, { limit: 2, before: { createdAt: last.createdAt, id: last.id } }),
     );
     expect(second.map((r) => r.targetId)).toEqual(['p0', 'b-only']);
+  });
+});
+
+describe('keyset pagination with sub-millisecond timestamps', () => {
+  it('neither skips nor duplicates rows written with now()', async () => {
+    const ws = randomUUID();
+    await env.owner.query(
+      "insert into workspaces (id, name, slug, kind) values ($1, $2, $2, 'community')",
+      [ws, `ws-${ws}`],
+    );
+    // One statement: now() is identical for every row, and ids order them. Plus rows a few microseconds apart.
+    await env.owner.query(
+      `insert into audit_log (id, workspace_id, action, target_type, target_id, created_at)
+       select gen_random_uuid(), $1, 'rule.updated', 'rule', 'm' || g,
+              timestamptz '2026-10-12 10:00:00.123456+00' + (g % 3) * interval '137 microseconds'
+       from generate_series(1, 12) g`,
+      [ws],
+    );
+    const seen: string[] = [];
+    let before: { createdAt: Date; id: string } | undefined;
+    for (let i = 0; i < 20; i++) {
+      const page = await withTenant(env.db, tenantScope(ws), (t) =>
+        listAuditLog(t, { limit: 5, before }),
+      );
+      if (page.length === 0) break;
+      seen.push(...page.map((r) => r.targetId));
+      const last = page[page.length - 1];
+      if (!last) break;
+      before = { createdAt: last.createdAt, id: last.id };
+    }
+    expect(seen).toHaveLength(12);
+    expect(new Set(seen).size).toBe(12);
   });
 });

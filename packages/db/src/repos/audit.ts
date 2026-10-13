@@ -94,11 +94,28 @@ const SECRET_KEY_SUFFIXES = [
   'apikey',
   'privatekey',
   'webhookurl',
+  'credential',
+  'pem',
 ];
 
-const normalizeKey = (key: string): string => key.toLowerCase().replace(/[_\-\s]/g, '');
+/** NFKC, lower case, then drop every character outside [a-z0-9] (separators, zero-width, dots). */
+const normalizeKey = (key: string): string =>
+  key
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 
-/** Denetim kaydına sır yazılmasını engeller: anahtar adı sır gibi görünen her alan reddedilir. */
+/** Strips a trailing plural/hash marker so `tokens`, `credentials` and `password_hash` match. */
+const looksSecret = (normalized: string): boolean =>
+  SECRET_KEY_SUFFIXES.some((suffix) =>
+    [normalized, normalized.replace(/(s|hash|value)$/, '')].some((n) => n.endsWith(suffix)),
+  );
+
+/**
+ * Denetim kaydına sır yazılmasını engeller: anahtar adı sır gibi görünen her alan reddedilir.
+ * Yalnız anahtar adları incelenir; çağıran sırrı zararsız görünen bir anahtarın altına asla koymamalıdır.
+ * Cyrillic homoglyph anahtarlar (ör. `tоken`) eşleşmez.
+ */
 export function assertAuditDataSafe(value: unknown, path = 'data'): void {
   if (Array.isArray(value)) {
     value.forEach((item, i) => {
@@ -108,8 +125,7 @@ export function assertAuditDataSafe(value: unknown, path = 'data'): void {
   }
   if (value !== null && typeof value === 'object') {
     for (const [key, child] of Object.entries(value)) {
-      const normalized = normalizeKey(key);
-      if (SECRET_KEY_SUFFIXES.some((suffix) => normalized.endsWith(suffix))) {
+      if (looksSecret(normalizeKey(key))) {
         throw new AuditDataError(
           `${path}.${key} looks like a secret and must not be written to audit_log`,
         );
@@ -117,6 +133,27 @@ export function assertAuditDataSafe(value: unknown, path = 'data'): void {
       assertAuditDataSafe(child, `${path}.${key}`);
     }
   }
+}
+
+/**
+ * Checks the JSON form that jsonb will actually store (toJSON, Map/Set and undefined are resolved first)
+ * and returns that same value for insertion. Cycles, BigInt and extreme depth raise AuditDataError.
+ */
+function canonicalAuditData(data: Record<string, unknown>): Record<string, unknown> {
+  let canonical: unknown;
+  try {
+    canonical = JSON.parse(JSON.stringify(data));
+    assertAuditDataSafe(canonical);
+  } catch (err) {
+    if (err instanceof AuditDataError) throw err;
+    throw new AuditDataError(
+      `audit data is not serializable (${err instanceof Error ? err.name : 'error'})`,
+    );
+  }
+  if (canonical === null || typeof canonical !== 'object' || Array.isArray(canonical)) {
+    throw new AuditDataError('audit data must be a JSON object');
+  }
+  return canonical as Record<string, unknown>;
 }
 
 export async function writeAudit(t: TenantTx, entry: AuditEntry): Promise<void>;
@@ -128,8 +165,7 @@ export async function writeAudit(
   if (!(AUDIT_ACTIONS as readonly string[]).includes(entry.action)) {
     throw new AuditDataError(`unknown audit action: ${entry.action}`);
   }
-  const data = entry.data ?? {};
-  assertAuditDataSafe(data);
+  const data = canonicalAuditData(entry.data ?? {});
   const workspaceId = t instanceof SystemTx ? (entry.workspaceId ?? null) : t.workspaceId;
   await q(t)
     .insert(auditLog)
@@ -146,6 +182,8 @@ export async function writeAudit(
     });
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface ListAuditOptions {
   limit?: number;
   before?: AuditCursor;
@@ -157,7 +195,19 @@ async function listAudit(
   scopeCondition: SQL,
   opts: ListAuditOptions,
 ): Promise<AuditLogRow[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const limit = opts.limit ?? 50;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new AuditDataError('limit must be an integer between 1 and 200');
+  }
+  if (opts.before) {
+    const { createdAt, id } = opts.before;
+    if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) {
+      throw new AuditDataError('before.createdAt must be a valid Date');
+    }
+    if (typeof id !== 'string' || !UUID_RE.test(id)) {
+      throw new AuditDataError('before.id must be a uuid');
+    }
+  }
   const conditions: SQL[] = [scopeCondition];
   if (opts.action) conditions.push(eq(auditLog.action, opts.action));
   if (opts.before) {
