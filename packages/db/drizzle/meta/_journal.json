@@ -15,6 +15,13 @@
       "when": 1791904524034,
       "tag": "0001_p1a_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791904796147,
+      "tag": "0002_rls_policies",
+      "breakpoints": true
     }
   ]
 }

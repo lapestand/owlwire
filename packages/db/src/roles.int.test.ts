@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { startTestDatabase, TEST_APP, TEST_OWNER, type TestDatabase } from '@owlwire/testing';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -59,13 +59,14 @@ describe('app role', () => {
     const client = await app.connect();
     try {
       await client.query('begin');
-      const id = (
-        await client.query<{ id: string }>(
-          "insert into workspaces (id, name, slug, kind) values (gen_random_uuid(), 'w', $1, 'personal') returning id",
-          [`rw_${suffix}`],
-        )
-      ).rows[0]?.id;
-      expect(id).toBeDefined();
+      // RLS: uygulama rolü yalnız transaction'da seçili workspace'in satırlarına erişir.
+      const id = randomUUID();
+      await client.query("select set_config('owlwire.workspace_id', $1, true)", [id]);
+      const inserted = await client.query(
+        "insert into workspaces (id, name, slug, kind) values ($1, 'w', $2, 'personal')",
+        [id, `rw_${suffix}`],
+      );
+      expect(inserted.rowCount).toBe(1);
       const updated = await client.query("update workspaces set name = 'w2' where id = $1", [id]);
       expect(updated.rowCount).toBe(1);
       const read = await client.query<{ name: string }>(
