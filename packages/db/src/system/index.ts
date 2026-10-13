@@ -20,4 +20,10 @@ export {
   KeyringCoverageError,
   RlsNotEnforcedError,
 } from './startup.js';
-export { backfillWorkspaceKeys, countKeysByVersion } from './workspace-keys.js';
+export {
+  backfillWorkspaceKeys,
+  countKeysByVersion,
+  type RotateOptions,
+  type RotateResult,
+  rotateWorkspaceKeys,
+} from './workspace-keys.js';

@@ -6,6 +6,7 @@ import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './
 import { createDeps, type Deps } from './deps.js';
 import { createLogger } from './logger.js';
 import { formatSeedResult, seedDevWorkspace } from './system/dev-seed.js';
+import { runKeysRotate } from './system/keys-rotate.js';
 import { migrateDatabase } from './system/migrate.js';
 import { runServeCommand } from './system/serve.js';
 
@@ -63,6 +64,27 @@ program
     const logger = createLogger(config.logLevel);
     await migrateDatabase(config, logger);
     logger.info('migrations applied');
+  });
+
+const keys = program.command('keys').description('manage encryption keys');
+keys
+  .command('rotate')
+  .description(
+    're-wrap all workspace data keys with OWLWIRE_KEK (requires OWLWIRE_KEK_PREVIOUS for older keys)',
+  )
+  .action(async () => {
+    // Application role with system scope (OWLWIRE_DATABASE_URL); the migration role is not needed.
+    const deps = createDeps(readConfig());
+    try {
+      process.exitCode = await runKeysRotate({
+        db: deps.db,
+        keyring: deps.keyring,
+        logger: deps.logger,
+        out: (line) => process.stdout.write(`${line}\n`),
+      });
+    } finally {
+      await closeDeps(deps);
+    }
   });
 
 program
