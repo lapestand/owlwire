@@ -2,3 +2,6 @@ packages:
   - apps/*
   - packages/*
   - packages/adapters/*
+
+allowBuilds:
+  "@swc/core": true
