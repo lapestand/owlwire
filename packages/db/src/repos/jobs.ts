@@ -46,18 +46,6 @@ export interface EnqueueOptions {
   maxAttempts?: number;
 }
 
-/**
- * Çağıranın transaction'ında iş ekler (outbox): transaction geri alınırsa iş de eklenmez. Payload yalnız
- * kimlik taşımalıdır (sır, mesaj gövdesi ya da yapılandırma değil). `graphile_worker.add_job`'ın packages/db içindeki
- * tek çağrı yeridir; tüm değerler parametre olarak bağlanır. Kalan tek doğrudan çağıran P0
- * `apps/server/src/worker/jobs.ts`'tir (ham `DbOrTx` alır); sunucu bağlama görevi onu bu fonksiyon üzerine ince
- * sarmalayıcıya çevirerek kaldırır (R45, R62). Uygulama rolü Graphile tablolarına Görev 2'nin
- * politikasıyla erişir.
- *
- * TenantTx ile: verilen `queueName` ve `jobKey` `tenantJobName(t.workspaceId, …)` ad alanına alınır ve payload'a
- * `_ws: t.workspaceId` eklenir (payload'da `_ws` varsa RepoInputError). Worker'lar `_ws`'yi işin kimliklerinden
- * çözülen workspace ile karşılaştırmalıdır. SystemTx ile adlar olduğu gibi kalır (yalnız instance düzeyi işler).
- */
 /** JSON gidiş-dönüşü; sonuç düz bir nesne değilse (dizi, null, ilkel, serileştirilemez) RepoInputError. */
 function canonicalPayload(payload: unknown): Record<string, unknown> {
   let parsed: unknown;
@@ -73,6 +61,16 @@ function canonicalPayload(payload: unknown): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+/**
+ * Çağıranın transaction'ında iş ekler (outbox): transaction geri alınırsa iş de eklenmez. Payload yalnız
+ * kimlik taşımalıdır (sır, mesaj gövdesi ya da yapılandırma değil). `graphile_worker.add_job`'ın packages/db içindeki
+ * tek çağrı yeridir (monorepo'da da tek: `apps/server/src/worker/jobs.ts` bunun üzerine ince sarmalayıcıdır, R45,
+ * R62); tüm değerler parametre olarak bağlanır. Uygulama rolü Graphile tablolarına Görev 2'nin politikasıyla erişir.
+ *
+ * TenantTx ile: verilen `queueName` ve `jobKey` `tenantJobName(t.workspaceId, …)` ad alanına alınır ve payload'a
+ * `_ws: t.workspaceId` eklenir (payload'da `_ws` varsa RepoInputError). Worker'lar `_ws`'yi işin kimliklerinden
+ * çözülen workspace ile karşılaştırmalıdır. SystemTx ile adlar olduğu gibi kalır (yalnız instance düzeyi işler).
+ */
 export async function enqueueJob(
   t: TenantTx | SystemTx,
   name: JobName,

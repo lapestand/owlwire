@@ -27,11 +27,11 @@ function list(query = '', token = TEST_DEV_ADMIN_TOKEN) {
 describe('GET /api/dev/deliveries', () => {
   it('lists deliveries newest first with event and destination details', async () => {
     const { seed, eventId: first } = await seedAndIngest(h, {}, { title: 'First', body: 'one' });
-    const { deliveryIds } = await routeEvent(h.deps, { eventId: first });
-    await sendDelivery(h.deps, { deliveryId: deliveryIds[0] ?? '' });
+    const { deliveryIds } = await routeEvent(h.deps, { eventId: first, _ws: seed.workspaceId });
+    await sendDelivery(h.deps, { deliveryId: deliveryIds[0] ?? '', _ws: seed.workspaceId });
     clock.advance(60_000);
     const second = await ingestFor(h, seed, { type: 'attack.incoming', body: 'two' });
-    await routeEvent(h.deps, { eventId: second });
+    await routeEvent(h.deps, { eventId: second, _ws: seed.workspaceId });
 
     const res = await list();
     expect(res.status).toBe(200);

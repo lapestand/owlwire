@@ -8,7 +8,13 @@ export type Role = (typeof ROLES)[number];
 export const DEFAULT_CONFIG_PATH = '/etc/owlwire/owlwire.yaml';
 
 export interface ServerConfig {
+  /** Uygulama rolü (owlwire_app, RLS'e tabi). */
   databaseUrl: string;
+  /**
+   * Sahip/migration rolü (owlwire). Yoksa databaseUrl kullanılır; o rol RLS'i aşabiliyorsa serve açılmaz
+   * (Sözleşme §4; NODE_ENV=development yalnız uyarır).
+   */
+  migrationDatabaseUrl?: string;
   kek: KekRing;
   role: Role;
   port: number;
@@ -27,6 +33,10 @@ export class ConfigError extends Error {
 
 const envSchema = z.object({
   OWLWIRE_DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
+  OWLWIRE_MIGRATION_DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL')
+    .optional(),
   OWLWIRE_KEK: z.string().min(1),
   OWLWIRE_KEK_VERSION: z.coerce.number().int().min(1).max(65535).default(1),
   OWLWIRE_KEK_PREVIOUS: z.string().optional(),
@@ -102,6 +112,9 @@ export function loadConfig(
 
   return {
     databaseUrl: e.OWLWIRE_DATABASE_URL,
+    ...(e.OWLWIRE_MIGRATION_DATABASE_URL
+      ? { migrationDatabaseUrl: e.OWLWIRE_MIGRATION_DATABASE_URL }
+      : {}),
     kek: { current, previous },
     role: e.OWLWIRE_ROLE,
     port: e.OWLWIRE_PORT,

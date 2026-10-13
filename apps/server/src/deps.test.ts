@@ -4,6 +4,7 @@ import { testConfig } from './test/config.js';
 
 let deps: Deps | undefined;
 afterEach(async () => {
+  await deps?.db.close();
   await deps?.pool.end();
   deps = undefined;
 });
@@ -14,5 +15,19 @@ describe('createDeps', () => {
     expect(deps.pool.listenerCount('error')).toBeGreaterThan(0);
     expect(deps.pool.listenerCount('connect')).toBeGreaterThan(0);
     expect(() => deps?.pool.emit('error', new Error('connection reset'))).not.toThrow();
+  });
+
+  it('refuses a db override without a pool override instead of opening an unrelated pool', async () => {
+    const config = testConfig('postgres://user:pass@127.0.0.1:1/none');
+    const base = createDeps(config);
+    try {
+      expect(() => createDeps(config, { db: base.db })).toThrow(TypeError);
+      const reused = createDeps(config, { db: base.db, pool: base.pool });
+      expect(reused.db).toBe(base.db);
+      expect(reused.pool).toBe(base.pool);
+    } finally {
+      await base.db.close();
+      await base.pool.end();
+    }
   });
 });

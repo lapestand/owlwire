@@ -1,19 +1,23 @@
-import { type Clock, newId } from '@owlwire/core';
-import { generateToken, hashToken, type SecretBox, tokenPrefix } from '@owlwire/crypto';
+import { newId } from '@owlwire/core';
+import { generateToken, hashToken, tokenPrefix } from '@owlwire/crypto';
 import {
-  apps,
-  connections,
-  type Db,
-  destinations,
-  installations,
-  rules,
-  ruleTargets,
-  workspaces,
+  type CreateConnectionInput,
+  createApp,
+  createConnection,
+  createDestination,
+  createInstallation,
+  createRule,
+  createWorkspace,
+  type OwlwireDb,
+  SYSTEM_ACTOR,
+  tenantScope,
+  updateConnectionStatus,
+  withTenant,
 } from '@owlwire/db';
 
 export interface SeedOptions {
   platform: 'telegram' | 'webhook';
-  chatId: string;
+  chatId?: string;
   botToken?: string;
   threadId?: string;
   types?: string[];
@@ -26,7 +30,7 @@ export interface SeedResult {
   installationId: string;
   token: string;
   connectionId: string;
-  destinationId: string;
+  destinationId: string | null;
   ruleId: string;
 }
 
@@ -36,103 +40,83 @@ function destinationKind(opts: SeedOptions, chatId: string): 'dm' | 'group' | 't
   return chatId.startsWith('-') ? 'group' : 'dm';
 }
 
-/** P0 dev helper: workspace + private app + installation + connection + destination + rule ['*']. */
-export async function seedDevWorkspace(
-  db: Db,
-  box: SecretBox,
-  clock: Clock,
-  opts: SeedOptions,
-): Promise<SeedResult> {
-  const chatId = opts.chatId.trim();
-  if (chatId === '') throw new Error('--chat-id must not be empty');
+/**
+ * P0/P1a dev helper: workspace (+ DEK) + private app + installation + connection (+ destination when a chat id is
+ * given) + rule ['*'], all through the tenant repositories in one transaction. Telegram with a bot token is own_bot
+ * (config sealed with the workspace DEK, dek_v1); without one it is shared_bot (config null, R2). webhook is P0's
+ * OWLWIRE_DEV_FAKE_ADAPTER fake adapter (R48).
+ */
+export async function seedDevWorkspace(db: OwlwireDb, opts: SeedOptions): Promise<SeedResult> {
+  const chatId = opts.chatId?.trim() ?? '';
   const botToken = opts.botToken?.trim() ?? '';
-  if (opts.platform === 'telegram' && botToken === '') {
-    throw new Error('--bot-token is required for the telegram platform');
-  }
-  const now = clock.now();
-  const suffix = newId().slice(-8);
   const name = opts.name ?? 'Dev';
+  const suffix = newId().slice(-8);
   const token = generateToken('inst');
-  const ids = {
-    workspaceId: newId(),
-    appId: newId(),
-    installationId: newId(),
-    connectionId: newId(),
-    destinationId: newId(),
-    ruleId: newId(),
-  };
-  const telegram = opts.platform === 'telegram';
+  const workspaceId = newId();
+  const connection: CreateConnectionInput =
+    opts.platform === 'webhook'
+      ? { platform: 'webhook', kind: 'webhook', displayName: 'Fake adapter (dev)', config: null }
+      : botToken !== ''
+        ? {
+            platform: 'telegram',
+            kind: 'own_bot',
+            displayName: 'Telegram bot (dev)',
+            config: { botToken },
+          }
+        : {
+            platform: 'telegram',
+            kind: 'shared_bot',
+            displayName: 'Shared Telegram bot (dev)',
+            config: null,
+          };
 
-  await db.transaction(async (tx) => {
-    await tx.insert(workspaces).values({
-      id: ids.workspaceId,
-      name,
-      slug: `dev-${suffix}`,
-      kind: 'personal',
-      createdAt: now,
-    });
-    await tx.insert(apps).values({
-      id: ids.appId,
-      ownerWorkspaceId: ids.workspaceId,
-      name: `${name} app`,
-      slug: `dev-app-${suffix}`,
-      visibility: 'private',
-      approvalStatus: 'approved',
-      createdAt: now,
-    });
-    await tx.insert(installations).values({
-      id: ids.installationId,
-      appId: ids.appId,
-      workspaceId: ids.workspaceId,
-      status: 'active',
-      tokenHash: hashToken(token),
-      tokenPrefix: tokenPrefix(token),
-      createdAt: now,
-    });
-    await tx.insert(connections).values({
-      id: ids.connectionId,
-      workspaceId: ids.workspaceId,
-      platform: opts.platform,
-      kind: telegram ? 'own_bot' : 'webhook',
-      displayName: telegram ? 'Telegram bot (dev)' : 'Fake adapter (dev)',
-      configEnc: telegram ? box.seal({ botToken }) : null,
-      status: 'active',
-      createdAt: now,
-      updatedAt: now,
-    });
-    await tx.insert(destinations).values({
-      id: ids.destinationId,
-      workspaceId: ids.workspaceId,
-      connectionId: ids.connectionId,
-      kind: destinationKind(opts, chatId),
-      externalId: chatId,
-      externalSubId: opts.threadId ?? null,
-      name: `${opts.platform}:${chatId}`,
-      consentStatus: 'confirmed',
-      consentedAt: now,
-      status: 'active',
-      createdAt: now,
-    });
-    await tx.insert(rules).values({
-      id: ids.ruleId,
-      workspaceId: ids.workspaceId,
-      installationId: ids.installationId,
-      name: 'all events (dev)',
-      types: opts.types ?? ['*'],
-      minSeverity: 'info',
-      enabled: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await tx.insert(ruleTargets).values({
-      id: newId(),
-      workspaceId: ids.workspaceId,
-      ruleId: ids.ruleId,
-      destinationId: ids.destinationId,
-    });
+  return withTenant(db, tenantScope(workspaceId), async (t) => {
+    await createWorkspace(t, { name, slug: `dev-${suffix}`, kind: 'personal' }, SYSTEM_ACTOR);
+    const app = await createApp(
+      t,
+      { name: `${name} app`, slug: `dev-app-${suffix}`, visibility: 'private' },
+      SYSTEM_ACTOR,
+    );
+    const inst = await createInstallation(
+      t,
+      { appId: app.id, tokenHash: hashToken(token), tokenPrefix: tokenPrefix(token) },
+      SYSTEM_ACTOR,
+    );
+    const conn = await createConnection(t, connection, SYSTEM_ACTOR);
+    // Status first, destination after: createDestination takes FOR SHARE on the connection row (see its note).
+    await updateConnectionStatus(t, conn.id, 'active', null);
+    let destinationId: string | null = null;
+    if (chatId !== '') {
+      const dest = await createDestination(t, {
+        connectionId: conn.id,
+        kind: destinationKind(opts, chatId),
+        externalId: chatId,
+        externalSubId: opts.threadId ?? null,
+        name: `${opts.platform}:${chatId}`,
+        consentStatus: 'confirmed',
+      });
+      destinationId = dest.id;
+    }
+    const rule = await createRule(
+      t,
+      {
+        installationId: inst.id,
+        name: 'all events (dev)',
+        types: opts.types ?? ['*'],
+        targets: destinationId ? [{ destinationId }] : [],
+      },
+      SYSTEM_ACTOR,
+    );
+    return {
+      workspaceId,
+      appId: app.id,
+      installationId: inst.id,
+      token,
+      connectionId: conn.id,
+      destinationId,
+      ruleId: rule.id,
+    };
   });
-
-  return { ...ids, token };
 }
 
 export function formatSeedResult(r: SeedResult, opts: { port: number; platform: string }): string {
@@ -142,7 +126,7 @@ export function formatSeedResult(r: SeedResult, opts: { port: number; platform: 
     `  workspace:    ${r.workspaceId}`,
     `  installation: ${r.installationId}`,
     `  connection:   ${r.connectionId} (${opts.platform})`,
-    `  destination:  ${r.destinationId}`,
+    `  destination:  ${r.destinationId ?? '-'}`,
     `  token:        ${r.token}`,
     '',
     'Send a test event:',

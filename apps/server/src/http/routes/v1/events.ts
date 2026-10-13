@@ -1,5 +1,5 @@
 import { EventInput } from '@owlwire/contracts';
-import type { Db } from '@owlwire/db';
+import type { OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
 import { ingestEvent } from '../../../events/ingest.js';
 import { idempotencyHeader, readJsonBody } from '../../body.js';
@@ -17,7 +17,7 @@ export function assertTypeGranted(installation: InstallationContext, type: strin
   }
 }
 
-export function eventsRoutes(deps: { db: Db }): Hono<AppEnv> {
+export function eventsRoutes(deps: { db: OwlwireDb }): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   r.post('/events', installationAuth(deps.db, { allowQueryToken: false }), async (c) => {
     const json = await readJsonBody(c);

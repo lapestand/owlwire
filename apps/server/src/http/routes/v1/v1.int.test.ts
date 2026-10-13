@@ -1,5 +1,11 @@
-import { events, installations } from '@owlwire/db';
-import { eq } from 'drizzle-orm';
+import {
+  revokeInstallation,
+  routeQueue,
+  SYSTEM_ACTOR,
+  tenantJobName,
+  tenantScope,
+  withTenant,
+} from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type SeedResult, seedDevWorkspace } from '../../../system/dev-seed.js';
 import { createHarness, type Harness } from '../../../test/harness.js';
@@ -10,7 +16,7 @@ let seed: SeedResult;
 
 beforeAll(async () => {
   h = await createHarness();
-  seed = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
+  seed = await seedDevWorkspace(h.deps.db, {
     platform: 'webhook',
     chatId: 'v1',
   });
@@ -31,8 +37,24 @@ function postEvent(body: unknown, headers: Record<string, string> = {}) {
   });
 }
 
+/** R43: raw reads through the owner pool (outside RLS). */
+async function eventRow(id: string) {
+  const { rows } = await h.ownerPool.query<{
+    type: string;
+    severity: string;
+    workspaceId: string;
+    installationId: string;
+    message: unknown;
+  }>(
+    `select type, severity, workspace_id as "workspaceId", installation_id as "installationId", message
+     from events where id = $1`,
+    [id],
+  );
+  return rows[0];
+}
+
 async function routeJobsFor(eventId: string) {
-  return (await listJobs(h.deps.pool)).filter(
+  return (await listJobs(h.ownerPool)).filter(
     (j) => j.task === 'route_event' && j.payload.eventId === eventId,
   );
 }
@@ -47,7 +69,7 @@ describe('POST /v1/events', () => {
     expect(res.status).toBe(202);
     const body = (await res.json()) as { eventId: string; duplicate: boolean };
     expect(body.duplicate).toBe(false);
-    const [row] = await h.deps.db.select().from(events).where(eq(events.id, body.eventId));
+    const row = await eventRow(body.eventId);
     expect(row).toMatchObject({
       type: 'player.inactive',
       severity: 'info',
@@ -60,7 +82,13 @@ describe('POST /v1/events', () => {
       body: '**Ali** is idle',
       data: { a: 1 },
     });
-    expect(await routeJobsFor(body.eventId)).toHaveLength(1);
+    const jobs = await routeJobsFor(body.eventId);
+    expect(jobs).toHaveLength(1);
+    // Task 12: tenant jobs are namespaced and stamped with the workspace.
+    expect(jobs[0]?.queue_name).toBe(
+      tenantJobName(seed.workspaceId, routeQueue(seed.installationId)),
+    );
+    expect(jobs[0]?.payload).toEqual({ eventId: body.eventId, _ws: seed.workspaceId });
   });
 
   it('returns the same event for a repeated idempotency key without a second job', async () => {
@@ -177,18 +205,17 @@ describe('POST /v1/events', () => {
   });
 
   it('rejects types that are not granted to the installation', async () => {
-    await h.deps.db
-      .update(installations)
-      .set({ grantedTypes: ['player.inactive'] })
-      .where(eq(installations.id, seed.installationId));
+    await h.ownerPool.query('update installations set granted_types = $2 where id = $1', [
+      seed.installationId,
+      ['player.inactive'],
+    ]);
     const denied = await postEvent({ type: 'attack.incoming', body: 'x' });
     expect(denied.status).toBe(422);
     expect(((await denied.json()) as { code: string }).code).toBe('unknown_type');
     expect((await postEvent({ type: 'player.inactive', body: 'x' })).status).toBe(202);
-    await h.deps.db
-      .update(installations)
-      .set({ grantedTypes: null })
-      .where(eq(installations.id, seed.installationId));
+    await h.ownerPool.query('update installations set granted_types = null where id = $1', [
+      seed.installationId,
+    ]);
   });
 });
 
@@ -201,7 +228,7 @@ describe('POST /v1/hooks', () => {
     });
     expect(res.status).toBe(202);
     const { eventId } = (await res.json()) as { eventId: string };
-    const [row] = await h.deps.db.select().from(events).where(eq(events.id, eventId));
+    const row = await eventRow(eventId);
     expect(row?.message).toEqual({
       type: 'generic',
       severity: 'info',
@@ -217,7 +244,7 @@ describe('POST /v1/hooks', () => {
     });
     expect(res.status).toBe(202);
     const { eventId } = (await res.json()) as { eventId: string };
-    const [row] = await h.deps.db.select().from(events).where(eq(events.id, eventId));
+    const row = await eventRow(eventId);
     expect(row?.message).toMatchObject({ type: 'generic', title: 'Gate', body: 'opened' });
   });
 
@@ -238,14 +265,13 @@ describe('POST /v1/hooks', () => {
   });
 
   it('reports a revoked installation as installation_revoked', async () => {
-    const other = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
+    const other = await seedDevWorkspace(h.deps.db, {
       platform: 'webhook',
       chatId: 'revoked',
     });
-    await h.deps.db
-      .update(installations)
-      .set({ status: 'revoked', revokedAt: new Date() })
-      .where(eq(installations.id, other.installationId));
+    await withTenant(h.deps.db, tenantScope(other.workspaceId), (t) =>
+      revokeInstallation(t, other.installationId, SYSTEM_ACTOR),
+    );
     const res = await h.app.request(`/v1/hooks?token=${other.token}`, {
       method: 'POST',
       headers: { 'content-type': 'text/plain' },

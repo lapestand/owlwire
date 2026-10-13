@@ -1,29 +1,49 @@
-import type { DbOrTx } from '@owlwire/db';
-import { sql } from 'drizzle-orm';
+import {
+  connectionQueue,
+  enqueueJob,
+  type JobName,
+  routeQueue,
+  sendJobKey,
+  TENANT_JOB_PAYLOAD_KEY,
+  type TenantTx,
+  tenantJobName,
+} from '@owlwire/db';
 
-export const ROUTE_EVENT_TASK = 'route_event';
-export const SEND_DELIVERY_TASK = 'send_delivery';
+export const ROUTE_EVENT_TASK: JobName = 'route_event';
+export const SEND_DELIVERY_TASK: JobName = 'send_delivery';
+export { connectionQueue, routeQueue, sendJobKey, TENANT_JOB_PAYLOAD_KEY, tenantJobName };
 
-export const connectionQueue = (connectionId: string) => `conn:${connectionId}`;
-export const sendJobKey = (deliveryId: string) => `send:${deliveryId}`;
-
-export async function enqueueRouteEvent(tx: DbOrTx, eventId: string): Promise<void> {
-  await tx.execute(
-    sql`select graphile_worker.add_job(${ROUTE_EVENT_TASK}::text, json_build_object('eventId', ${eventId}::text))`,
+/**
+ * Thin wrappers over `@owlwire/db` enqueueJob (R45, R62): the only `graphile_worker.add_job` call lives there.
+ * With a TenantTx the queue name and job key are namespaced `w:<workspaceId>:` and the payload gets `_ws`.
+ * insertEvent and createDeliveries already enqueue their jobs; these serve re-scheduling and later callers.
+ */
+export async function enqueueRouteEvent(
+  t: TenantTx,
+  args: { eventId: string; installationId: string },
+): Promise<void> {
+  await enqueueJob(
+    t,
+    ROUTE_EVENT_TASK,
+    { eventId: args.eventId },
+    { queueName: routeQueue(args.installationId) },
   );
 }
 
 /** job_key_mode 'replace' turns a re-schedule of the same delivery into an update of its job. */
 export async function enqueueSendDelivery(
-  tx: DbOrTx,
+  t: TenantTx,
   args: { deliveryId: string; connectionId: string; runAt: Date },
 ): Promise<void> {
-  await tx.execute(sql`select graphile_worker.add_job(
-    ${SEND_DELIVERY_TASK}::text,
-    json_build_object('deliveryId', ${args.deliveryId}::text),
-    queue_name := ${connectionQueue(args.connectionId)}::text,
-    run_at := ${args.runAt.toISOString()}::timestamptz,
-    job_key := ${sendJobKey(args.deliveryId)}::text,
-    job_key_mode := 'replace'
-  )`);
+  await enqueueJob(
+    t,
+    SEND_DELIVERY_TASK,
+    { deliveryId: args.deliveryId },
+    {
+      queueName: connectionQueue(args.connectionId),
+      jobKey: sendJobKey(args.deliveryId),
+      jobKeyMode: 'replace',
+      runAt: args.runAt,
+    },
+  );
 }

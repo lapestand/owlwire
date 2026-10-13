@@ -1,5 +1,5 @@
 import { EventInput, HookJsonInput } from '@owlwire/contracts';
-import type { Db } from '@owlwire/db';
+import type { OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
 import { ingestEvent } from '../../../events/ingest.js';
 import { idempotencyHeader, isJsonContentType, readJsonBody } from '../../body.js';
@@ -8,7 +8,7 @@ import { ProblemError, validationProblem } from '../../problem.js';
 import type { AppEnv } from '../../types.js';
 import { assertTypeGranted } from './events.js';
 
-export function hooksRoutes(deps: { db: Db }): Hono<AppEnv> {
+export function hooksRoutes(deps: { db: OwlwireDb }): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   r.post('/hooks', installationAuth(deps.db, { allowQueryToken: true }), async (c) => {
     let title: string | undefined;

@@ -1,16 +1,15 @@
-import type { DeliveryStatus, DevDeliveryList } from '@owlwire/contracts';
 import { safeEqual } from '@owlwire/crypto';
-import { connections, type Db, deliveries, destinations, events } from '@owlwire/db';
-import { desc, eq } from 'drizzle-orm';
+import type { OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
 import type { ServerConfig } from '../../config/load.js';
+import { listDevDeliveryList } from '../../system/dev-panel.js';
 import { extractToken } from '../middleware/installation-auth.js';
 import { ProblemError } from '../problem.js';
 import type { AppEnv } from '../types.js';
 
 /** P0 only: read-only delivery list for the dev panel, guarded by OWLWIRE_DEV_ADMIN_TOKEN. */
 export function devRoutes(deps: {
-  db: Db;
+  db: OwlwireDb;
   config: Pick<ServerConfig, 'devAdminToken'>;
 }): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
@@ -29,42 +28,7 @@ export function devRoutes(deps: {
   r.get('/deliveries', async (c) => {
     const requested = Number.parseInt(c.req.query('limit') ?? '', 10);
     const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 500) : 100;
-    const rows = await deps.db
-      .select({
-        id: deliveries.id,
-        eventId: deliveries.eventId,
-        status: deliveries.status,
-        attempts: deliveries.attempts,
-        lastError: deliveries.lastError,
-        createdAt: deliveries.createdAt,
-        deliveredAt: deliveries.deliveredAt,
-        eventType: events.type,
-        message: events.message,
-        destinationName: destinations.name,
-        platform: connections.platform,
-      })
-      .from(deliveries)
-      .innerJoin(events, eq(events.id, deliveries.eventId))
-      .innerJoin(destinations, eq(destinations.id, deliveries.destinationId))
-      .innerJoin(connections, eq(connections.id, deliveries.connectionId))
-      .orderBy(desc(deliveries.createdAt), desc(deliveries.id))
-      .limit(limit);
-    const body: DevDeliveryList = {
-      deliveries: rows.map((row) => ({
-        id: row.id,
-        eventId: row.eventId,
-        eventType: row.eventType,
-        eventTitle: row.message.title ?? null,
-        destinationName: row.destinationName,
-        platform: row.platform,
-        status: row.status as DeliveryStatus,
-        attempts: row.attempts,
-        lastError: row.lastError,
-        createdAt: row.createdAt.toISOString(),
-        deliveredAt: row.deliveredAt ? row.deliveredAt.toISOString() : null,
-      })),
-    };
-    return c.json(body);
+    return c.json(await listDevDeliveryList(deps.db, limit));
   });
   return r;
 }

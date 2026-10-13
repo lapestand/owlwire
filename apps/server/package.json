@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/server",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "private": true,
   "type": "module",
   "bin": {
@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsup && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
-    "dev": "tsx watch --conditions=source src/main.ts serve",
+    "dev": "NODE_ENV=development tsx watch --conditions=source src/main.ts serve",
     "start": "node dist/main.js serve",
     "test": "vitest run --config ../../vitest.config.ts --project unit --passWithNoTests",
     "test:int": "vitest run --config ../../vitest.config.ts --project int --passWithNoTests"

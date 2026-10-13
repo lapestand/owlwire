@@ -5,6 +5,10 @@ import type { ServerConfig } from '../config/load.js';
 
 export const TEST_DEV_ADMIN_TOKEN = 'dev-admin-token-for-tests-0001';
 
+/**
+ * `databaseUrl` is the application role URL (owlwire_app, subject to RLS); the owner/migration URL comes in through
+ * `overrides.migrationDatabaseUrl` (createHarness sets it).
+ */
 export function testConfig(
   databaseUrl: string,
   overrides: Partial<ServerConfig> = {},

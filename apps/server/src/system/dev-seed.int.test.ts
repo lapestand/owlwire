@@ -1,6 +1,5 @@
 import { verifyTokenHash } from '@owlwire/crypto';
-import { connections, destinations, installations, rules, ruleTargets } from '@owlwire/db';
-import { eq } from 'drizzle-orm';
+import { readConnectionConfig, tenantScope, withTenant } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from '../test/harness.js';
 import { seedDevWorkspace } from './dev-seed.js';
@@ -15,73 +14,73 @@ afterAll(async () => {
 
 describe('seedDevWorkspace', () => {
   it('creates a full telegram route with an encrypted bot token', async () => {
-    const r = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
+    const r = await seedDevWorkspace(h.deps.db, {
       platform: 'telegram',
       botToken: '123:ABC',
       chatId: '-1001234',
     });
-    const [inst] = await h.deps.db
-      .select()
-      .from(installations)
-      .where(eq(installations.id, r.installationId));
-    expect(inst && verifyTokenHash(r.token, inst.tokenHash)).toBe(true);
-    expect(inst?.tokenPrefix).toBe(r.token.slice(0, 12));
+    // R43: assertions through the owner pool (outside RLS).
+    const inst = (
+      await h.ownerPool.query<{ token_hash: string; token_prefix: string }>(
+        'select token_hash, token_prefix from installations where id = $1',
+        [r.installationId],
+      )
+    ).rows[0];
+    expect(inst && verifyTokenHash(r.token, inst.token_hash)).toBe(true);
+    expect(inst?.token_prefix).toBe(r.token.slice(0, 12));
 
-    const [conn] = await h.deps.db
-      .select()
-      .from(connections)
-      .where(eq(connections.id, r.connectionId));
-    expect(conn).toMatchObject({ platform: 'telegram', kind: 'own_bot', status: 'active' });
-    expect(conn?.configEnc && h.deps.crypto.open(conn.configEnc)).toEqual({ botToken: '123:ABC' });
+    const conn = (
+      await h.ownerPool.query(
+        'select platform, kind, status, config_enc_scheme from connections where id = $1',
+        [r.connectionId],
+      )
+    ).rows[0];
+    expect(conn).toMatchObject({
+      platform: 'telegram',
+      kind: 'own_bot',
+      status: 'active',
+      config_enc_scheme: 'dek_v1',
+    });
+    expect(
+      await withTenant(h.deps.db, tenantScope(r.workspaceId), (t) =>
+        readConnectionConfig(t, r.connectionId, { purpose: 'send' }),
+      ),
+    ).toEqual({ botToken: '123:ABC' });
 
-    const [dest] = await h.deps.db
-      .select()
-      .from(destinations)
-      .where(eq(destinations.id, r.destinationId));
+    const dest = (
+      await h.ownerPool.query(
+        'select kind, external_id, consent_status from destinations where id = $1',
+        [r.destinationId],
+      )
+    ).rows[0];
     expect(dest).toMatchObject({
       kind: 'group',
-      externalId: '-1001234',
-      consentStatus: 'confirmed',
+      external_id: '-1001234',
+      consent_status: 'confirmed',
     });
 
-    const [rule] = await h.deps.db.select().from(rules).where(eq(rules.id, r.ruleId));
+    const rule = (
+      await h.ownerPool.query<{ types: string[] }>('select types from rules where id = $1', [
+        r.ruleId,
+      ])
+    ).rows[0];
     expect(rule?.types).toEqual(['*']);
-    const targets = await h.deps.db
-      .select()
-      .from(ruleTargets)
-      .where(eq(ruleTargets.ruleId, r.ruleId));
-    expect(targets.map((t) => t.destinationId)).toEqual([r.destinationId]);
+    const targets = await h.ownerPool.query<{ destination_id: string }>(
+      'select destination_id from rule_targets where rule_id = $1',
+      [r.ruleId],
+    );
+    expect(targets.rows.map((t) => t.destination_id)).toEqual([r.destinationId]);
   });
 
   it('creates a fake webhook route without config and can run twice', async () => {
-    const a = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
-      platform: 'webhook',
-      chatId: 'smoke',
-    });
-    const b = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
-      platform: 'webhook',
-      chatId: 'smoke',
-    });
+    const a = await seedDevWorkspace(h.deps.db, { platform: 'webhook', chatId: 'smoke' });
+    const b = await seedDevWorkspace(h.deps.db, { platform: 'webhook', chatId: 'smoke' });
     expect(a.workspaceId).not.toBe(b.workspaceId);
-    const [conn] = await h.deps.db
-      .select()
-      .from(connections)
-      .where(eq(connections.id, a.connectionId));
-    expect(conn).toMatchObject({ platform: 'webhook', kind: 'webhook', configEnc: null });
-  });
-
-  it('requires a bot token for telegram and a chat id', async () => {
-    await expect(
-      seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
-        platform: 'telegram',
-        chatId: '1',
-      }),
-    ).rejects.toThrow(/--bot-token/);
-    await expect(
-      seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
-        platform: 'webhook',
-        chatId: ' ',
-      }),
-    ).rejects.toThrow(/--chat-id/);
+    const conn = (
+      await h.ownerPool.query('select platform, kind, config_enc from connections where id = $1', [
+        a.connectionId,
+      ])
+    ).rows[0];
+    expect(conn).toMatchObject({ platform: 'webhook', kind: 'webhook', config_enc: null });
   });
 });

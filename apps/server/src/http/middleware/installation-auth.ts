@@ -1,7 +1,7 @@
-import { hashToken, isInstallationToken, verifyTokenHash } from '@owlwire/crypto';
-import { type Db, installations } from '@owlwire/db';
-import { eq } from 'drizzle-orm';
+import { isInstallationToken } from '@owlwire/crypto';
+import type { OwlwireDb } from '@owlwire/db';
 import type { MiddlewareHandler } from 'hono';
+import { authenticateInstallationToken } from '../../system/installation-auth.js';
 import { ProblemError } from '../problem.js';
 import type { AppEnv } from '../types.js';
 
@@ -19,7 +19,7 @@ export function extractToken(
 }
 
 export function installationAuth(
-  db: Db,
+  db: OwlwireDb,
   opts: { allowQueryToken: boolean },
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
@@ -35,36 +35,16 @@ export function installationAuth(
         CHALLENGE,
       );
     }
-    const [row] = await db
-      .select({
-        id: installations.id,
-        appId: installations.appId,
-        workspaceId: installations.workspaceId,
-        status: installations.status,
-        grantedTypes: installations.grantedTypes,
-        tokenHash: installations.tokenHash,
-      })
-      .from(installations)
-      .where(eq(installations.tokenHash, hashToken(token)))
-      .limit(1);
-    if (!row || !verifyTokenHash(token, row.tokenHash)) {
-      throw new ProblemError(401, 'unauthorized', 'invalid installation token', CHALLENGE);
+    // System lookup (cross-tenant) finishes here; tenant scopes are opened later by the handlers.
+    const result = await authenticateInstallationToken(db, token);
+    if (!result.ok) {
+      throw result.code === 'installation_revoked'
+        ? new ProblemError(401, 'installation_revoked', 'installation has been revoked', CHALLENGE)
+        : new ProblemError(401, 'unauthorized', 'invalid installation token', CHALLENGE);
     }
-    if (row.status !== 'active') {
-      throw new ProblemError(
-        401,
-        'installation_revoked',
-        'installation has been revoked',
-        CHALLENGE,
-      );
-    }
-    c.set('installation', {
-      id: row.id,
-      appId: row.appId,
-      workspaceId: row.workspaceId,
-      grantedTypes: row.grantedTypes,
-    });
-    c.set('log', c.get('log').child({ workspaceId: row.workspaceId }));
+    const { id, appId, workspaceId, grantedTypes } = result.installation;
+    c.set('installation', { id, appId, workspaceId, grantedTypes });
+    c.set('log', c.get('log').child({ workspaceId }));
     await next();
   };
 }

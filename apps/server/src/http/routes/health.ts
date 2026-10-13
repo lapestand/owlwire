@@ -1,16 +1,10 @@
-import type { Db } from '@owlwire/db';
-import { sql } from 'drizzle-orm';
+import { isQueueSchemaReady, type OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
 import { ProblemError } from '../problem.js';
 import type { AppEnv } from '../types.js';
 
-export function dbReadiness(db: Db): () => Promise<boolean> {
-  return async () => {
-    const res = await db.execute<{ ok: boolean }>(
-      sql`select to_regclass('graphile_worker.jobs') is not null as ok`,
-    );
-    return res.rows[0]?.ok === true;
-  };
+export function dbReadiness(db: OwlwireDb): () => Promise<boolean> {
+  return () => isQueueSchemaReady(db);
 }
 
 export function healthRoutes(checkReady: () => Promise<boolean>): Hono<AppEnv> {

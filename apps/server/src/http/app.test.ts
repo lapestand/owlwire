@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { systemClock } from '@owlwire/core';
-import type { Db } from '@owlwire/db';
+import { type OwlwireDb, RepoConflictError, RepoInputError } from '@owlwire/db';
 import { HTTPException } from 'hono/http-exception';
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '../logger.js';
@@ -12,7 +12,7 @@ const logger = createLogger('silent');
 
 function makeApp(over: Partial<AppDeps> = {}) {
   return createApp({
-    db: {} as Db,
+    db: {} as OwlwireDb,
     clock: systemClock,
     logger,
     config: { devAdminToken: null },
@@ -79,6 +79,36 @@ describe('errors', () => {
     const text = await res.text();
     expect(text).not.toContain('hunter2');
     expect(JSON.parse(text).code).toBe('internal');
+  });
+
+  it('maps repository input and conflict errors to 422 validation_failed and 409 conflict', async () => {
+    const app = makeApp();
+    app.get('/input', () => {
+      throw new RepoInputError('event', 'idempotencyKey must be a non-empty string');
+    });
+    app.get('/conflict', () => {
+      throw new RepoConflictError('workspace', 'workspaces_slug_unique');
+    });
+    const input = await app.request('/input');
+    expect(input.status).toBe(422);
+    expect(input.headers.get('content-type')).toContain('application/problem+json');
+    expect(await input.json()).toMatchObject({ code: 'validation_failed', status: 422 });
+    const conflict = await app.request('/conflict');
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: 'conflict', status: 409 });
+  });
+
+  it('logs unhandled errors without query parameters', async () => {
+    const lines: string[] = [];
+    const app = makeApp({
+      logger: createLogger('error', { write: (line: string) => void lines.push(line) }),
+    });
+    app.get('/query', () => {
+      throw new Error('Failed query: select 1 where token = $1\nparams: hunter2-secret');
+    });
+    expect((await app.request('/query')).status).toBe(500);
+    expect(lines.join('')).toContain('Failed query');
+    expect(lines.join('')).not.toContain('hunter2-secret');
   });
 
   it('maps a 400 HTTPException such as a malformed JSON body to validation_failed', async () => {

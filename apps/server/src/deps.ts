@@ -1,6 +1,6 @@
 import { type Clock, systemClock } from '@owlwire/core';
-import { createSecretBox, type SecretBox } from '@owlwire/crypto';
-import { createDb, createPool, type Db } from '@owlwire/db';
+import { createKeyring, createSecretBox, type Keyring, type SecretBox } from '@owlwire/crypto';
+import { createPool, type OwlwireDb, openDatabase } from '@owlwire/db';
 import type pg from 'pg';
 import type { Logger } from 'pino';
 import {
@@ -13,19 +13,27 @@ import { createLogger, toAdapterLogger } from './logger.js';
 
 export interface Deps {
   config: ServerConfig;
+  /** Application role pool for Graphile Worker (and P1e leader election). Data access goes through deps.db. */
   pool: pg.Pool;
-  db: Db;
+  db: OwlwireDb;
+  keyring: Keyring;
   clock: Clock;
   logger: Logger;
+  /** Only for reading P0 legacy config_enc (kek_v0, Task 13); new secrets are sealed inside the repositories. */
   crypto: SecretBox;
   adapters: AdapterRegistry;
   rand: () => number;
 }
 
+/** Close with `await deps.db.close(); await deps.pool.end();` (R68). */
 export function createDeps(
   config: ServerConfig,
   overrides: Partial<Omit<Deps, 'config'>> = {},
 ): Deps {
+  if (overrides.db && !overrides.pool) {
+    // P0 carry-over: a db override without a pool override used to open an unrelated, unused pool.
+    throw new TypeError('createDeps: overriding db requires overriding pool as well');
+  }
   const logger = overrides.logger ?? createLogger(config.logLevel);
   let pool = overrides.pool;
   if (!pool) {
@@ -36,8 +44,16 @@ export function createDeps(
       client.on('error', (err) => logger.error({ err }, 'database client error'));
     });
   }
-  const db = overrides.db ?? createDb(pool);
   const clock = overrides.clock ?? systemClock;
+  const keyring = overrides.keyring ?? createKeyring(config.kek.current, config.kek.previous);
+  const db =
+    overrides.db ??
+    openDatabase({
+      url: config.databaseUrl,
+      keyring,
+      clock,
+      onPoolError: (err) => logger.error({ err }, 'database client error'),
+    });
   const adapters =
     overrides.adapters ??
     createAdapterRegistry(
@@ -51,6 +67,7 @@ export function createDeps(
     config,
     pool,
     db,
+    keyring,
     clock,
     logger,
     crypto: overrides.crypto ?? createSecretBox(config.kek),

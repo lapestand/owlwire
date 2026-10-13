@@ -6,19 +6,28 @@ import type {
   Platform,
   SendOutcome,
 } from '@owlwire/adapter-sdk';
-import { type Clock, computeBackoffMs, DEFAULT_MAX_ATTEMPTS } from '@owlwire/core';
-import type { SecretBox } from '@owlwire/crypto';
-import { connections, type Db, deliveries, destinations, events } from '@owlwire/db';
-import { eq } from 'drizzle-orm';
+import { type Clock, computeBackoffMs, DEFAULT_MAX_ATTEMPTS, type Message } from '@owlwire/core';
+import {
+  type DeliveryContext,
+  getDelivery,
+  loadDeliveryContext,
+  type OwlwireDb,
+  safeErrorMessage,
+  type TenantScope,
+  updateConnectionStatus,
+  updateDelivery,
+  updateDestinationStatus,
+  withTenant,
+} from '@owlwire/db';
 import type { Logger } from 'pino';
 import type { AdapterRegistry } from '../../adapters/registry.js';
+import { resolveJobTenant } from '../job-tenant.js';
 import { enqueueSendDelivery } from '../jobs.js';
 
 export interface SendDeliveryDeps {
-  db: Db;
+  db: OwlwireDb;
   clock: Clock;
   logger: Logger;
-  crypto: SecretBox;
   adapters: AdapterRegistry;
   rand: () => number;
   maxAttempts?: number;
@@ -26,7 +35,14 @@ export interface SendDeliveryDeps {
 
 export type SendDeliveryResult = 'delivered' | 'retry_scheduled' | 'failed' | 'skipped';
 
+export interface SendDeliveryPayload {
+  deliveryId: string;
+  /** Stamped by enqueueJob (TenantTx); checked against the delivery's workspace. */
+  _ws?: unknown;
+}
+
 interface DeliveryCtx {
+  scope: TenantScope;
   deliveryId: string;
   connectionId: string;
   destinationId: string;
@@ -47,10 +63,9 @@ async function fail(
   ctx: DeliveryCtx,
   error: string,
 ): Promise<SendDeliveryResult> {
-  await deps.db
-    .update(deliveries)
-    .set({ status: 'failed', lastError: error, nextAttemptAt: null, updatedAt: deps.clock.now() })
-    .where(eq(deliveries.id, ctx.deliveryId));
+  await withTenant(deps.db, ctx.scope, (t) =>
+    updateDelivery(t, ctx.deliveryId, { status: 'failed', lastError: error, nextAttemptAt: null }),
+  );
   ctx.log.warn({ error }, 'delivery failed');
   return 'failed';
 }
@@ -61,20 +76,17 @@ async function applyOutcome(
   attempts: number,
   outcome: SendOutcome,
 ): Promise<SendDeliveryResult> {
-  const now = deps.clock.now();
   switch (outcome.status) {
     case 'ok': {
-      await deps.db
-        .update(deliveries)
-        .set({
+      await withTenant(deps.db, ctx.scope, (t) =>
+        updateDelivery(t, ctx.deliveryId, {
           status: 'delivered',
           platformMessageId: outcome.platformMessageId ?? null,
-          deliveredAt: now,
+          deliveredAt: deps.clock.now(),
           lastError: null,
           nextAttemptAt: null,
-          updatedAt: now,
-        })
-        .where(eq(deliveries.id, ctx.deliveryId));
+        }),
+      );
       ctx.log.info({ attempts }, 'delivery delivered');
       return 'delivered';
     }
@@ -92,13 +104,15 @@ async function applyOutcome(
         outcome.status === 'rate_limited'
           ? outcome.retryAfterMs
           : Math.max(computeBackoffMs(attempts, deps.rand), outcome.retryAfterMs ?? 0);
-      const runAt = new Date(now.getTime() + delayMs);
-      await deps.db.transaction(async (tx) => {
-        await tx
-          .update(deliveries)
-          .set({ status: 'scheduled', nextAttemptAt: runAt, lastError: error, updatedAt: now })
-          .where(eq(deliveries.id, ctx.deliveryId));
-        await enqueueSendDelivery(tx, {
+      const runAt = new Date(deps.clock.now().getTime() + delayMs);
+      // Status and the re-scheduled job commit together (outbox).
+      await withTenant(deps.db, ctx.scope, async (t) => {
+        await updateDelivery(t, ctx.deliveryId, {
+          status: 'scheduled',
+          nextAttemptAt: runAt,
+          lastError: error,
+        });
+        await enqueueSendDelivery(t, {
           deliveryId: ctx.deliveryId,
           connectionId: ctx.connectionId,
           runAt,
@@ -109,10 +123,9 @@ async function applyOutcome(
     }
     case 'permanent': {
       if (outcome.destinationBroken) {
-        await deps.db
-          .update(destinations)
-          .set({ status: 'broken', statusReason: 'send_failed' })
-          .where(eq(destinations.id, ctx.destinationId));
+        await withTenant(deps.db, ctx.scope, (t) =>
+          updateDestinationStatus(t, ctx.destinationId, 'broken', 'send_failed'),
+        );
       }
       return fail(deps, ctx, outcome.error);
     }
@@ -120,56 +133,65 @@ async function applyOutcome(
       const reason = STATUS_KEY.test(outcome.error)
         ? outcome.error
         : `${ctx.platform}.status.banned`;
-      await deps.db
-        .update(connections)
-        .set({ status: 'paused', statusReason: reason, updatedAt: now })
-        .where(eq(connections.id, ctx.connectionId));
+      await withTenant(deps.db, ctx.scope, (t) =>
+        updateConnectionStatus(t, ctx.connectionId, 'paused', reason),
+      );
       return fail(deps, ctx, outcome.error);
     }
   }
 }
 
+/**
+ * The platform call runs outside any transaction. Workspace comes from the delivery id (system lookup) and must match
+ * the job's `_ws`; the connection config is decrypted inside the repository (workspace DEK).
+ */
 export async function sendDelivery(
   deps: SendDeliveryDeps,
-  payload: { deliveryId: string },
+  payload: SendDeliveryPayload,
 ): Promise<SendDeliveryResult> {
-  const [row] = await deps.db
-    .select({
-      delivery: deliveries,
-      message: events.message,
-      destination: destinations,
-      connection: connections,
-    })
-    .from(deliveries)
-    .innerJoin(events, eq(events.id, deliveries.eventId))
-    .innerJoin(destinations, eq(destinations.id, deliveries.destinationId))
-    .innerJoin(connections, eq(connections.id, deliveries.connectionId))
-    .where(eq(deliveries.id, payload.deliveryId))
-    .limit(1);
-  if (!row) {
-    deps.logger.warn({ deliveryId: payload.deliveryId }, 'send_delivery: delivery not found');
-    return 'skipped';
-  }
-  const { delivery, destination, connection, message } = row;
-  if (FINAL_STATUSES.has(delivery.status)) return 'skipped';
-
-  const ctx: DeliveryCtx = {
-    deliveryId: delivery.id,
-    connectionId: connection.id,
-    destinationId: destination.id,
-    platform: connection.platform,
-    log: deps.logger.child({
-      deliveryId: delivery.id,
-      eventId: delivery.eventId,
-      workspaceId: delivery.workspaceId,
-      connectionId: connection.id,
-    }),
-  };
+  const scope = await resolveJobTenant(deps.db, deps.logger, {
+    task: 'send_delivery',
+    kind: 'delivery',
+    id: payload.deliveryId,
+    payloadWorkspace: payload._ws,
+  });
+  if (!scope) return 'skipped';
+  const delivery = await withTenant(deps.db, scope, async (t) => {
+    const row = await getDelivery(t, payload.deliveryId);
+    if (!row || FINAL_STATUSES.has(row.status)) return null;
+    await updateDelivery(t, row.id, { status: 'sending', attempts: row.attempts + 1 });
+    return row;
+  });
+  if (!delivery) return 'skipped';
   const attempts = delivery.attempts + 1;
-  await deps.db
-    .update(deliveries)
-    .set({ status: 'sending', attempts, updatedAt: deps.clock.now() })
-    .where(eq(deliveries.id, delivery.id));
+  const log = deps.logger.child({
+    deliveryId: delivery.id,
+    eventId: delivery.eventId,
+    workspaceId: scope.workspaceId,
+    connectionId: delivery.connectionId,
+  });
+  const base = {
+    scope,
+    deliveryId: delivery.id,
+    connectionId: delivery.connectionId,
+    destinationId: delivery.destinationId,
+    log,
+  };
+
+  let loaded: DeliveryContext | null;
+  try {
+    loaded = await withTenant(deps.db, scope, (t) => loadDeliveryContext(t, delivery.id));
+  } catch (err) {
+    // safeErrorMessage: no query parameters (wrapped keys, ciphertext) in last_error or logs.
+    return fail(
+      deps,
+      { ...base, platform: 'unknown' },
+      `connection config could not be decrypted: ${safeErrorMessage(err)}`,
+    );
+  }
+  if (!loaded) return fail(deps, { ...base, platform: 'unknown' }, 'delivery context not found');
+  const { connection, destination, event, config } = loaded;
+  const ctx: DeliveryCtx = { ...base, platform: connection.platform };
 
   if (connection.status === 'paused' || connection.status === 'broken') {
     return fail(deps, ctx, `connection is ${connection.status}`);
@@ -177,21 +199,12 @@ export async function sendDelivery(
   const adapter = deps.adapters.get(connection.platform);
   if (!adapter) return fail(deps, ctx, `no adapter registered for platform ${connection.platform}`);
 
-  let config: Record<string, unknown>;
-  try {
-    config = connection.configEnc
-      ? deps.crypto.open<Record<string, unknown>>(connection.configEnc)
-      : {};
-  } catch (err) {
-    return fail(deps, ctx, `connection config could not be decrypted: ${errorMessage(err)}`);
-  }
-
   const conn: ConnectionRef = {
     id: connection.id,
     workspaceId: connection.workspaceId,
     platform: connection.platform as Platform,
     kind: connection.kind as ConnectionKind,
-    config,
+    config: config ?? {},
   };
   const dest: DestinationRef = {
     id: destination.id,
@@ -203,7 +216,7 @@ export async function sendDelivery(
 
   let outcome: SendOutcome;
   try {
-    const rendered = adapter.render(message, dest, adapter.capabilities(conn));
+    const rendered = adapter.render(event.message as Message, dest, adapter.capabilities(conn));
     outcome = await adapter.send(conn, dest, rendered, {});
   } catch (err) {
     outcome = { status: 'transient', error: errorMessage(err) };

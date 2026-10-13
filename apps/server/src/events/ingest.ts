@@ -1,9 +1,7 @@
 import type { EventInput } from '@owlwire/contracts';
 import { type Message, newId } from '@owlwire/core';
-import { type Db, events } from '@owlwire/db';
-import { and, eq } from 'drizzle-orm';
+import { insertEvent, type OwlwireDb, tenantScope, withTenant } from '@owlwire/db';
 import type { InstallationContext } from '../http/types.js';
-import { enqueueRouteEvent } from '../worker/jobs.js';
 
 export interface IngestResult {
   eventId: string;
@@ -29,7 +27,7 @@ export function resolveIdempotencyKey(
 
 /** Stores the event and enqueues route_event atomically (outbox); repeats return the stored event. */
 export async function ingestEvent(
-  db: Db,
+  db: OwlwireDb,
   args: {
     installation: InstallationContext;
     input: EventInput;
@@ -41,36 +39,18 @@ export async function ingestEvent(
     args.headerIdempotencyKey,
   );
   const message = toMessage(args.input);
-  return db.transaction(async (tx) => {
-    const id = newId();
-    const inserted = await tx
-      .insert(events)
-      .values({
-        id,
-        workspaceId: args.installation.workspaceId,
+  // insertEvent enqueues route_event in the same transaction (outbox) on the installation's route queue.
+  const { eventId, duplicate } = await withTenant(
+    db,
+    tenantScope(args.installation.workspaceId),
+    (t) =>
+      insertEvent(t, {
         installationId: args.installation.id,
         idempotencyKey,
         type: message.type,
         severity: message.severity,
         message,
-      })
-      .onConflictDoNothing({ target: [events.installationId, events.idempotencyKey] })
-      .returning({ id: events.id });
-    if (inserted.length > 0) {
-      await enqueueRouteEvent(tx, id);
-      return { eventId: id, duplicate: false };
-    }
-    const [existing] = await tx
-      .select({ id: events.id })
-      .from(events)
-      .where(
-        and(
-          eq(events.installationId, args.installation.id),
-          eq(events.idempotencyKey, idempotencyKey),
-        ),
-      )
-      .limit(1);
-    if (!existing) throw new Error('idempotency conflict without a stored event');
-    return { eventId: existing.id, duplicate: true };
-  });
+      }),
+  );
+  return { eventId, duplicate };
 }

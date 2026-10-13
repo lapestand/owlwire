@@ -1,3 +1,4 @@
+import { safeErrorMessage } from '@owlwire/db';
 import { Logger as GraphileLogger, type Runner, run, type TaskList } from 'graphile-worker';
 import type { Logger } from 'pino';
 import { z } from 'zod';
@@ -6,17 +7,32 @@ import { ROUTE_EVENT_TASK, SEND_DELIVERY_TASK } from './jobs.js';
 import { routeEvent } from './tasks/route-event.js';
 import { sendDelivery } from './tasks/send-delivery.js';
 
-const RouteEventPayload = z.object({ eventId: z.string().min(1) });
-const SendDeliveryPayload = z.object({ deliveryId: z.string().min(1) });
+// `_ws` (TENANT_JOB_PAYLOAD_KEY) is kept as unknown: the tasks compare it with the resolved workspace and drop
+// the job on a mismatch; a zod default object would strip it.
+const RouteEventPayload = z.object({ eventId: z.string().min(1), _ws: z.unknown().optional() });
+const SendDeliveryPayload = z.object({
+  deliveryId: z.string().min(1),
+  _ws: z.unknown().optional(),
+});
+
+/**
+ * Graphile logs a failed task's error and stores it in the job row; DrizzleQueryError messages carry query
+ * parameters, so the error is replaced with its safeErrorMessage before it leaves the task.
+ */
+async function sanitized(fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    throw new Error(safeErrorMessage(err));
+  }
+}
 
 export function createTaskList(deps: Deps): TaskList {
   return {
-    [ROUTE_EVENT_TASK]: async (payload) => {
-      await routeEvent(deps, RouteEventPayload.parse(payload));
-    },
-    [SEND_DELIVERY_TASK]: async (payload) => {
-      await sendDelivery(deps, SendDeliveryPayload.parse(payload));
-    },
+    [ROUTE_EVENT_TASK]: (payload) =>
+      sanitized(() => routeEvent(deps, RouteEventPayload.parse(payload))),
+    [SEND_DELIVERY_TASK]: (payload) =>
+      sanitized(() => sendDelivery(deps, SendDeliveryPayload.parse(payload))),
   };
 }
 

@@ -27,7 +27,7 @@ export async function seedAndIngest(
   seedOpts: Partial<SeedOptions> = {},
   input: Partial<EventInput> = {},
 ): Promise<{ seed: SeedResult; eventId: string }> {
-  const seed = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
+  const seed = await seedDevWorkspace(h.deps.db, {
     platform: 'webhook',
     chatId: `chat-${newId()}`,
     ...seedOpts,

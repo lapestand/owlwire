@@ -1,13 +1,26 @@
-import { type Clock, isSeverity, newId, type Severity, severityRank } from '@owlwire/core';
-import { type Db, deliveries, destinations, events, rules, ruleTargets } from '@owlwire/db';
-import { and, eq, inArray, isNotNull } from 'drizzle-orm';
+import { type Clock, isSeverity, type Severity, severityRank } from '@owlwire/core';
+import {
+  createDeliveries,
+  getDestinationsByIds,
+  getEvent,
+  listRulesForInstallation,
+  markEventRouted,
+  type OwlwireDb,
+  withTenant,
+} from '@owlwire/db';
 import type { Logger } from 'pino';
-import { enqueueSendDelivery } from '../jobs.js';
+import { resolveJobTenant } from '../job-tenant.js';
 
 export interface RouteEventDeps {
-  db: Db;
+  db: OwlwireDb;
   clock: Clock;
   logger: Logger;
+}
+
+export interface RouteEventPayload {
+  eventId: string;
+  /** Stamped by enqueueJob (TenantTx); checked against the event's workspace. */
+  _ws?: unknown;
 }
 
 export function ruleMatches(
@@ -20,93 +33,52 @@ export function ruleMatches(
   return typeMatches && severityRank(ev.severity) >= severityRank(min);
 }
 
+/**
+ * P0 behaviour on the repositories: type + minimum severity, direct destination targets only, only active and
+ * confirmed destinations. Audiences, consent and filters belong to the P1d router. Events of one installation run
+ * in order on its route queue; UNIQUE(event_id, destination_id) prevents duplicate deliveries, and createDeliveries
+ * enqueues send_delivery in the same transaction.
+ */
 export async function routeEvent(
   deps: RouteEventDeps,
-  payload: { eventId: string },
+  payload: RouteEventPayload,
 ): Promise<{ deliveryIds: string[] }> {
   const log = deps.logger.child({ eventId: payload.eventId });
-  const deliveryIds = await deps.db.transaction(async (tx) => {
-    const [ev] = await tx
-      .select()
-      .from(events)
-      .where(eq(events.id, payload.eventId))
-      .limit(1)
-      .for('update');
-    if (!ev) {
-      log.warn('route_event: event not found');
-      return [];
-    }
-    if (ev.routedAt) return [];
-
-    const candidates = await tx
-      .select({
-        types: rules.types,
-        minSeverity: rules.minSeverity,
-        enabled: rules.enabled,
-        destinationId: ruleTargets.destinationId,
-      })
-      .from(rules)
-      .innerJoin(ruleTargets, eq(ruleTargets.ruleId, rules.id))
-      .where(
-        and(
-          eq(rules.installationId, ev.installationId),
-          eq(rules.workspaceId, ev.workspaceId),
-          eq(ruleTargets.workspaceId, ev.workspaceId),
-          isNotNull(ruleTargets.destinationId),
-        ),
-      );
+  const scope = await resolveJobTenant(deps.db, log, {
+    task: 'route_event',
+    kind: 'event',
+    id: payload.eventId,
+    payloadWorkspace: payload._ws,
+  });
+  if (!scope) return { deliveryIds: [] };
+  const deliveryIds = await withTenant(deps.db, scope, async (t) => {
+    const ev = await getEvent(t, payload.eventId);
+    if (!ev || ev.routedAt) return [];
     const severity: Severity = isSeverity(ev.severity) ? ev.severity : 'info';
+    const rules = await listRulesForInstallation(t, ev.installationId);
     const destinationIds = [
       ...new Set(
-        candidates
+        rules
           .filter((r) => ruleMatches(r, { type: ev.type, severity }))
-          .flatMap((r) => (r.destinationId ? [r.destinationId] : [])),
+          .flatMap((r) =>
+            r.targets.flatMap((target) =>
+              'destinationId' in target ? [target.destinationId] : [],
+            ),
+          ),
       ),
     ];
-
     const now = deps.clock.now();
-    const created: string[] = [];
-    if (destinationIds.length > 0) {
-      const targets = await tx
-        .select({ id: destinations.id, connectionId: destinations.connectionId })
-        .from(destinations)
-        .where(
-          and(
-            inArray(destinations.id, destinationIds),
-            eq(destinations.workspaceId, ev.workspaceId),
-            eq(destinations.status, 'active'),
-            eq(destinations.consentStatus, 'confirmed'),
-          ),
-        );
-      for (const target of targets) {
-        const id = newId();
-        const inserted = await tx
-          .insert(deliveries)
-          .values({
-            id,
-            workspaceId: ev.workspaceId,
-            eventId: ev.id,
-            destinationId: target.id,
-            connectionId: target.connectionId,
-            status: 'pending',
-            createdAt: now,
-            updatedAt: now,
-          })
-          .onConflictDoNothing({ target: [deliveries.eventId, deliveries.destinationId] })
-          .returning({ id: deliveries.id });
-        if (inserted.length > 0) {
-          await enqueueSendDelivery(tx, {
-            deliveryId: id,
-            connectionId: target.connectionId,
-            runAt: now,
-          });
-          created.push(id);
-        }
-      }
-    }
-    await tx.update(events).set({ routedAt: now }).where(eq(events.id, ev.id));
-    return created;
+    const targets = (await getDestinationsByIds(t, destinationIds)).filter(
+      (d) => d.status === 'active' && d.consentStatus === 'confirmed',
+    );
+    const created = await createDeliveries(
+      t,
+      ev.id,
+      targets.map((d) => ({ destinationId: d.id, connectionId: d.connectionId, runAt: now })),
+    );
+    await markEventRouted(t, ev.id);
+    return created.map((d) => d.id);
   });
-  log.info({ deliveries: deliveryIds.length }, 'event routed');
+  log.info({ workspaceId: scope.workspaceId, deliveries: deliveryIds.length }, 'event routed');
   return { deliveryIds };
 }

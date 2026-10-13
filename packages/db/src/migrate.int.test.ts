@@ -5,21 +5,18 @@ import { createTestDatabase, pgAdminUrl, type ScratchDatabase } from '@owlwire/t
 import { eq } from 'drizzle-orm';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, createPool } from './client.js';
+import { pgErrorCode } from './errors.js';
+import { defaultMigrationsFolder, runMigrations, withAdvisoryLock } from './migrate.js';
 import {
   apps,
   connections,
-  createDb,
-  createPool,
-  defaultMigrationsFolder,
   destinations,
   installations,
-  pgErrorCode,
   rules,
   ruleTargets,
-  runMigrations,
-  withAdvisoryLock,
   workspaces,
-} from './index.js';
+} from './schema/index.js';
 
 let tdb: ScratchDatabase;
 let pool: pg.Pool;

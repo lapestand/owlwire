@@ -1,5 +1,5 @@
 import type { Clock } from '@owlwire/core';
-import type { Db } from '@owlwire/db';
+import { type OwlwireDb, RepoConflictError, RepoInputError, safeErrorMessage } from '@owlwire/db';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { Logger } from 'pino';
@@ -13,7 +13,7 @@ import { staticHandler } from './static.js';
 import type { AppEnv } from './types.js';
 
 export interface AppDeps {
-  db: Db;
+  db: OwlwireDb;
   clock: Clock;
   logger: Logger;
   config: Pick<ServerConfig, 'devAdminToken'>;
@@ -32,7 +32,15 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (err instanceof HTTPException && err.status === 400) {
       return problem(c, new ProblemError(400, 'validation_failed', err.message || undefined));
     }
-    (c.get('log') ?? deps.logger).error({ err }, 'unhandled error');
+    // Repository errors carry only entity/constraint/reason names, never values (P0 contract: 422 / 409).
+    if (err instanceof RepoInputError) {
+      return problem(c, new ProblemError(422, 'validation_failed', err.message));
+    }
+    if (err instanceof RepoConflictError) {
+      return problem(c, new ProblemError(409, 'conflict', err.message));
+    }
+    // safeErrorMessage drops DrizzleQueryError's "params:" (query values) from the log line.
+    (c.get('log') ?? deps.logger).error({ error: safeErrorMessage(err) }, 'unhandled error');
     return problem(c, new ProblemError(500, 'internal'));
   });
   app.notFound((c) => problem(c, new ProblemError(404, 'not_found')));

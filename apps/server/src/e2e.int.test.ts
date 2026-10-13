@@ -1,6 +1,4 @@
 import type { DevDeliveryList } from '@owlwire/contracts';
-import { deliveries } from '@owlwire/db';
-import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { seedDevWorkspace } from './system/dev-seed.js';
 import { type RunningServer, startServer } from './system/serve.js';
@@ -11,6 +9,15 @@ import { waitFor } from './test/wait.js';
 let h: Harness;
 let server: RunningServer;
 let base: string;
+
+/** R43: assertion through the owner pool (outside RLS). */
+async function deliveryOf(eventId: string) {
+  const { rows } = await h.ownerPool.query<{ status: string; attempts: number }>(
+    'select status, attempts from deliveries where event_id = $1',
+    [eventId],
+  );
+  return rows[0];
+}
 
 beforeAll(async () => {
   h = await createHarness();
@@ -33,7 +40,7 @@ describe('walking skeleton', () => {
   });
 
   it('delivers a hook through route_event and send_delivery to the fake adapter', async () => {
-    const seed = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
+    const seed = await seedDevWorkspace(h.deps.db, {
       platform: 'webhook',
       chatId: 'smoke',
     });
@@ -46,11 +53,7 @@ describe('walking skeleton', () => {
     const { eventId } = (await res.json()) as { eventId: string };
 
     await waitFor(async () => {
-      const rows = await h.deps.db
-        .select({ status: deliveries.status })
-        .from(deliveries)
-        .where(eq(deliveries.eventId, eventId));
-      return rows[0]?.status === 'delivered';
+      return (await deliveryOf(eventId))?.status === 'delivered';
     });
     expect(h.fake.sent.at(-1)?.rendered.text).toBe('Gate opened: 34 ABC 123');
 
@@ -68,7 +71,7 @@ describe('walking skeleton', () => {
   });
 
   it('retries a rate limited send through the real runner and records two attempts', async () => {
-    const seed = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
+    const seed = await seedDevWorkspace(h.deps.db, {
       platform: 'webhook',
       chatId: 'retry',
     });
@@ -82,17 +85,9 @@ describe('walking skeleton', () => {
     const { eventId } = (await res.json()) as { eventId: string };
 
     await waitFor(async () => {
-      const rows = await h.deps.db
-        .select({ status: deliveries.status })
-        .from(deliveries)
-        .where(eq(deliveries.eventId, eventId));
-      return rows[0]?.status === 'delivered';
+      return (await deliveryOf(eventId))?.status === 'delivered';
     });
-    const [row] = await h.deps.db
-      .select({ status: deliveries.status, attempts: deliveries.attempts })
-      .from(deliveries)
-      .where(eq(deliveries.eventId, eventId));
-    expect(row).toEqual({ status: 'delivered', attempts: 2 });
+    expect(await deliveryOf(eventId)).toEqual({ status: 'delivered', attempts: 2 });
     expect(h.fake.sent.at(-1)?.rendered.text).toBe('Retry me');
   });
 });

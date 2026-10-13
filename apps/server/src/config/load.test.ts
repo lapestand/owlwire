@@ -122,4 +122,17 @@ describe('loadConfig', () => {
     expect(() => loadConfig(base, () => 'profile: hosted\n')).toThrow(/owlwire\.yaml/);
     expect(() => loadConfig(base, () => 'profile: [unclosed\n')).toThrow(ConfigError);
   });
+
+  it('reads the optional migration database url', () => {
+    expect(
+      loadConfig(
+        { ...base, OWLWIRE_MIGRATION_DATABASE_URL: 'postgres://owlwire:pw@db:5432/owlwire' },
+        noFile,
+      ).migrationDatabaseUrl,
+    ).toBe('postgres://owlwire:pw@db:5432/owlwire');
+    expect(loadConfig(base, noFile).migrationDatabaseUrl).toBeUndefined();
+    expect(() =>
+      loadConfig({ ...base, OWLWIRE_MIGRATION_DATABASE_URL: 'mysql://x' }, noFile),
+    ).toThrow(ConfigError);
+  });
 });

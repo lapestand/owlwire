@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { safeErrorMessage } from '@owlwire/db';
 import { Command, Option } from 'commander';
-import { ConfigError, loadConfig, ROLES, type Role } from './config/load.js';
+import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
 import { createDeps, type Deps } from './deps.js';
+import { createLogger } from './logger.js';
 import { formatSeedResult, seedDevWorkspace } from './system/dev-seed.js';
 import { migrateDatabase } from './system/migrate.js';
-import { startServer } from './system/serve.js';
-import { createShutdown } from './system/shutdown.js';
+import { runServeCommand } from './system/serve.js';
 
 // src/main.ts and dist/main.js both sit one level below apps/server, so ../public is the built UI.
 const webDirCandidate = fileURLToPath(new URL('../public', import.meta.url));
@@ -20,9 +21,14 @@ function readTextFileOrNull(path: string): string | null {
   }
 }
 
-function boot(roleOverride?: Role): Deps {
+function readConfig(roleOverride?: Role): ServerConfig {
   const config = loadConfig(process.env, readTextFileOrNull);
-  return createDeps(roleOverride ? { ...config, role: roleOverride } : config);
+  return roleOverride ? { ...config, role: roleOverride } : config;
+}
+
+async function closeDeps(deps: Deps): Promise<void> {
+  await deps.db.close();
+  await deps.pool.end();
 }
 
 const program = new Command()
@@ -35,32 +41,28 @@ program
   .description('run the HTTP API and/or the worker (migrates the database first)')
   .addOption(new Option('--role <role>', 'process role').choices([...ROLES]))
   .action(async (opts: { role?: Role }) => {
-    const deps = boot(opts.role);
-    const running = await startServer(deps, deps.config.role, {
-      port: deps.config.port,
-      webDir: existsSync(webDirCandidate) ? webDirCandidate : null,
-    });
-    const { shutdown, workerCrashed } = createShutdown({
-      stop: async () => {
-        await running.stop();
-        await deps.pool.end();
+    const config = readConfig(opts.role);
+    await runServeCommand(
+      config,
+      createLogger(config.logLevel),
+      existsSync(webDirCandidate) ? webDirCandidate : null,
+      {
+        onSignal: (signal, handler) => {
+          process.on(signal, handler);
+        },
+        exit: (code) => process.exit(code),
       },
-      logger: deps.logger,
-      exit: (code) => process.exit(code),
-    });
-    running.worker?.catch(workerCrashed);
-    process.on('SIGINT', () => void shutdown('SIGINT'));
-    process.on('SIGTERM', () => void shutdown('SIGTERM'));
+    );
   });
 
 program
   .command('migrate')
   .description('apply database migrations and exit')
   .action(async () => {
-    const deps = boot();
-    await migrateDatabase(deps.pool);
-    deps.logger.info('migrations applied');
-    await deps.pool.end();
+    const config = readConfig();
+    const logger = createLogger(config.logLevel);
+    await migrateDatabase(config, logger);
+    logger.info('migrations applied');
   });
 
 program
@@ -71,7 +73,7 @@ program
       .choices(['telegram', 'webhook'])
       .default('telegram'),
   )
-  .option('--bot-token <token>', 'telegram bot token (platform telegram)')
+  .option('--bot-token <token>', 'telegram bot token (own bot); without it the shared bot is used')
   .option('--chat-id <id>', 'telegram chat id, or any label for the fake webhook adapter')
   .option('--thread-id <id>', 'telegram forum topic id')
   .option('--name <name>', 'workspace name', 'Dev')
@@ -83,12 +85,14 @@ program
       threadId?: string;
       name: string;
     }) => {
-      const deps = boot();
+      const config = readConfig();
+      const logger = createLogger(config.logLevel);
+      await migrateDatabase(config, logger);
+      const deps = createDeps(config, { logger });
       try {
-        await migrateDatabase(deps.pool);
-        const result = await seedDevWorkspace(deps.db, deps.crypto, deps.clock, {
+        const result = await seedDevWorkspace(deps.db, {
           platform: opts.platform,
-          chatId: opts.chatId ?? (opts.platform === 'webhook' ? 'fake-destination' : ''),
+          chatId: opts.chatId ?? (opts.platform === 'webhook' ? 'fake-destination' : undefined),
           ...(opts.botToken ? { botToken: opts.botToken } : {}),
           ...(opts.threadId ? { threadId: opts.threadId } : {}),
           name: opts.name,
@@ -97,7 +101,7 @@ program
           formatSeedResult(result, { port: deps.config.port, platform: opts.platform }),
         );
       } finally {
-        await deps.pool.end();
+        await closeDeps(deps);
       }
     },
   );
@@ -107,6 +111,9 @@ program.parseAsync(process.argv).catch((err: unknown) => {
     process.stderr.write(`configuration error: ${err.message}\n`);
     process.exit(2);
   }
-  process.stderr.write(`${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
+  // safeErrorMessage drops DrizzleQueryError's "params:" (wrapped keys, ciphertext); only the frames are kept.
+  const frames =
+    err instanceof Error ? (err.stack ?? '').split('\n').filter((l) => /^\s+at /.test(l)) : [];
+  process.stderr.write(`${[safeErrorMessage(err), ...frames].join('\n')}\n`);
   process.exit(1);
 });

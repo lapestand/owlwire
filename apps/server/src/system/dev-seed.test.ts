@@ -19,4 +19,20 @@ describe('formatSeedResult', () => {
     expect(text).toContain('curl -X POST "http://localhost:8080/v1/hooks?token=ow_inst_abc"');
     expect(text).toContain('http://localhost:8080/v1/events');
   });
+
+  it('prints a dash when no destination was created (shared bot without a chat id)', () => {
+    const text = formatSeedResult(
+      {
+        workspaceId: 'w',
+        appId: 'a',
+        installationId: 'i',
+        token: 'ow_inst_abc',
+        connectionId: 'c',
+        destinationId: null,
+        ruleId: 'r',
+      },
+      { port: 8080, platform: 'telegram' },
+    );
+    expect(text).toContain('  destination:  -\n');
+  });
 });
