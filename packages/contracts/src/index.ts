@@ -22,7 +22,7 @@ export const EventInput = z.object({
   summary: z.string().max(256).optional(),
   locale: z.string().max(16).optional(),
   data: z.record(z.string(), z.unknown()).optional(),
-  idempotencyKey: z.string().max(128).optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
 });
 export type EventInput = z.infer<typeof EventInput>;
 

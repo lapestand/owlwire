@@ -75,6 +75,34 @@ describe('POST /v1/events', () => {
     expect(await routeJobsFor(first.eventId)).toHaveLength(1);
   });
 
+  it('stores distinct events that carry no idempotency key at all', async () => {
+    const a = (await (await postEvent({ type: 'a', body: 'first' })).json()) as {
+      eventId: string;
+      duplicate: boolean;
+    };
+    const b = (await (await postEvent({ type: 'a', body: 'second' })).json()) as {
+      eventId: string;
+      duplicate: boolean;
+    };
+    expect(a.duplicate).toBe(false);
+    expect(b.duplicate).toBe(false);
+    expect(b.eventId).not.toBe(a.eventId);
+  });
+
+  it('rejects an empty body idempotency key instead of collapsing later events into it', async () => {
+    const empty = await postEvent({ type: 'a', body: 'x', idempotencyKey: '' });
+    expect(empty.status).toBe(422);
+    expect(((await empty.json()) as { code: string }).code).toBe('validation_failed');
+    const blankHeader = (await (
+      await postEvent({ type: 'a', body: 'x' }, { 'idempotency-key': '   ' })
+    ).json()) as { duplicate: boolean };
+    const again = (await (
+      await postEvent({ type: 'a', body: 'y' }, { 'idempotency-key': '   ' })
+    ).json()) as { duplicate: boolean };
+    expect(blankHeader.duplicate).toBe(false);
+    expect(again.duplicate).toBe(false);
+  });
+
   it('uses the Idempotency-Key header when the body has no key', async () => {
     const a = (await (
       await postEvent({ type: 'a', body: 'x' }, { 'idempotency-key': 'hdr-1' })
@@ -216,6 +244,7 @@ describe('POST /v1/hooks', () => {
       body: 'x',
     });
     expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toBe('Bearer');
     expect(((await res.json()) as { code: string }).code).toBe('installation_revoked');
   });
 });

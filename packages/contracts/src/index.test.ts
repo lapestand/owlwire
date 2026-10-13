@@ -36,6 +36,7 @@ describe('EventInput', () => {
     expect(
       EventInput.safeParse({ type: 'a', body: 'x', idempotencyKey: 'k'.repeat(129) }).success,
     ).toBe(false);
+    expect(EventInput.safeParse({ type: 'a', body: 'x', idempotencyKey: '' }).success).toBe(false);
   });
 });
 

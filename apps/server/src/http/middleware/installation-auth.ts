@@ -51,7 +51,12 @@ export function installationAuth(
       throw new ProblemError(401, 'unauthorized', 'invalid installation token', CHALLENGE);
     }
     if (row.status !== 'active') {
-      throw new ProblemError(401, 'installation_revoked', 'installation has been revoked');
+      throw new ProblemError(
+        401,
+        'installation_revoked',
+        'installation has been revoked',
+        CHALLENGE,
+      );
     }
     c.set('installation', {
       id: row.id,

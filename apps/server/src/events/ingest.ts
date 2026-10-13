@@ -15,6 +15,18 @@ export function toMessage(input: EventInput): Message {
   return { ...rest, severity: severity ?? 'info' };
 }
 
+/** Blank keys count as absent: a shared empty key would turn every later event into a duplicate. */
+export function resolveIdempotencyKey(
+  bodyKey: string | undefined,
+  headerKey: string | undefined,
+): string {
+  const body = bodyKey?.trim();
+  if (body) return body;
+  const header = headerKey?.trim();
+  if (header) return header;
+  return newId();
+}
+
 /** Stores the event and enqueues route_event atomically (outbox); repeats return the stored event. */
 export async function ingestEvent(
   db: Db,
@@ -24,7 +36,10 @@ export async function ingestEvent(
     headerIdempotencyKey: string | undefined;
   },
 ): Promise<IngestResult> {
-  const idempotencyKey = args.input.idempotencyKey ?? args.headerIdempotencyKey ?? newId();
+  const idempotencyKey = resolveIdempotencyKey(
+    args.input.idempotencyKey,
+    args.headerIdempotencyKey,
+  );
   const message = toMessage(args.input);
   return db.transaction(async (tx) => {
     const id = newId();
