@@ -7,6 +7,8 @@ import { migrateDatabase } from './migrate.js';
 
 export interface RunningServer {
   port: number | null;
+  /** graphile-worker's runner promise (null without a worker); it rejects if the worker crashes. */
+  worker: Promise<void> | null;
   stop(): Promise<void>;
 }
 
@@ -28,6 +30,7 @@ export async function startServer(
   await migrateDatabase(deps.pool);
   const stops: Array<() => Promise<void>> = [];
   let port: number | null = null;
+  let worker: Promise<void> | null = null;
 
   if (role === 'all' || role === 'api') {
     const app = createApp({
@@ -48,12 +51,14 @@ export async function startServer(
 
   if (role === 'all' || role === 'worker') {
     const runner = await startWorker(deps);
+    worker = runner.promise;
     stops.push(() => runner.stop());
   }
 
   deps.logger.info({ role, port, webUi: opts.webDir !== null }, 'owlwire started');
   return {
     port,
+    worker,
     stop: async () => {
       for (const stop of stops) await stop();
     },

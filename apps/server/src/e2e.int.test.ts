@@ -28,6 +28,10 @@ describe('walking skeleton', () => {
     expect((await fetch(`${base}/readyz`)).status).toBe(200);
   });
 
+  it('exposes the worker runner promise so main can watch for crashes', () => {
+    expect(server.worker).toBeInstanceOf(Promise);
+  });
+
   it('delivers a hook through route_event and send_delivery to the fake adapter', async () => {
     const seed = await seedDevWorkspace(h.deps.db, h.deps.crypto, h.deps.clock, {
       platform: 'webhook',

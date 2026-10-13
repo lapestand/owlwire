@@ -23,6 +23,8 @@ services:
       dockerfile: docker/Dockerfile
     restart: unless-stopped
     command: ["serve", "--role", "all"]
+    # main.ts gives up on a graceful stop after 25 s; leave headroom before SIGKILL
+    stop_grace_period: 40s
     env_file: .env
     environment:
       # P0 has a single database role (owner); P1a adds owlwire_app and OWLWIRE_MIGRATION_DATABASE_URL (R12)

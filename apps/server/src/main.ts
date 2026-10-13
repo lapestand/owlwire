@@ -6,6 +6,7 @@ import { createDeps, type Deps } from './deps.js';
 import { formatSeedResult, seedDevWorkspace } from './system/dev-seed.js';
 import { migrateDatabase } from './system/migrate.js';
 import { startServer } from './system/serve.js';
+import { createShutdown } from './system/shutdown.js';
 
 // src/main.ts and dist/main.js both sit one level below apps/server, so ../public is the built UI.
 const webDirCandidate = fileURLToPath(new URL('../public', import.meta.url));
@@ -39,14 +40,17 @@ program
       port: deps.config.port,
       webDir: existsSync(webDirCandidate) ? webDirCandidate : null,
     });
-    const shutdown = async (signal: string) => {
-      deps.logger.info({ signal }, 'shutting down');
-      await running.stop();
-      await deps.pool.end();
-      process.exit(0);
-    };
-    process.once('SIGINT', () => void shutdown('SIGINT'));
-    process.once('SIGTERM', () => void shutdown('SIGTERM'));
+    const { shutdown, workerCrashed } = createShutdown({
+      stop: async () => {
+        await running.stop();
+        await deps.pool.end();
+      },
+      logger: deps.logger,
+      exit: (code) => process.exit(code),
+    });
+    running.worker?.catch(workerCrashed);
+    process.on('SIGINT', () => void shutdown('SIGINT'));
+    process.on('SIGTERM', () => void shutdown('SIGTERM'));
   });
 
 program
