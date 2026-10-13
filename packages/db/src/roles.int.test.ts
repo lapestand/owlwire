@@ -269,6 +269,6 @@ describe('app role', () => {
         urlAs(tdb.ownerUrl, weak, 'w'),
         urlAs(tdb.appUrl, `ghost2_app_${suffix}`, 'pw'),
       ),
-    ).rejects.toBeInstanceOf(AppRoleError);
+    ).rejects.toThrow(/create it manually .* or grant CREATEROLE to the migration role$/);
   });
 });

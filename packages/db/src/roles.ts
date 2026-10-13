@@ -142,7 +142,8 @@ export async function ensureAppRole(ownerUrl: string, appUrl: string): Promise<A
       if (!me?.rolsuper && !me?.rolcreaterole) {
         throw new AppRoleError(
           `role ${appUser} does not exist and ${ownerUser} cannot create roles; ` +
-            'create it with deploy/compose/initdb/10-app-role.sh or ask the database administrator',
+            'create it manually (LOGIN, NOSUPERUSER, NOBYPASSRLS, with the OWLWIRE_DATABASE_URL password) ' +
+            'or grant CREATEROLE to the migration role',
         );
       }
       if (appPassword === '') {
