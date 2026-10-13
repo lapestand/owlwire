@@ -105,7 +105,12 @@ describe('log privacy with real failing queries (I-6)', () => {
     expect(lines.join('\n')).not.toContain(SECRET);
     const [dataLine, , , checkLine] = lines.map((l) => JSON.parse(l));
     expect(dataLine.err.cause).toMatchObject({ code: '22P02' });
-    expect(dataLine.err.message).toContain('params: [redacted]');
+    // The cause echoes the value, so the wrapper's message is withheld from its first quote as well.
+    expect(dataLine.err.message).toBe('Failed query: select [redacted]');
+    expect(dataLine.err.cause.message).toBe('invalid input syntax for type uuid: [redacted]');
+    expect(checkLine.err.message).toMatch(
+      /^Failed query: insert into "events" .*\nparams: \[redacted\]$/s,
+    );
     expect(checkLine.err.cause).toMatchObject({ code: '23514', constraint: 'events_no_secret_ck' });
     expect(checkLine.err.cause.detail).toBeUndefined();
   });
@@ -132,7 +137,10 @@ describe('log privacy with real failing queries (I-6)', () => {
       expect(JSON.parse(body)).toMatchObject({ code: 'internal', status: 500 });
       expect(body).not.toContain(SECRET);
     });
-    expect(lines.join('\n')).toContain('unhandled error');
+    const logged = lines.map((l) => JSON.parse(l)).find((l) => l.msg === 'unhandled error');
+    // The 500 log carries the sanitized cause chain: code and constraint stay, detail and params go.
+    expect(logged.err.cause).toMatchObject({ code: '23514', constraint: 'events_no_secret_ck' });
+    expect(logged.err.cause.detail).toBeUndefined();
     expect(lines.join('\n')).not.toContain(SECRET);
   });
 
@@ -159,6 +167,38 @@ describe('log privacy with real failing queries (I-6)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.last_error).toMatch(/^DrizzleQueryError: Failed query: update "deliveries"/);
     expect(rows[0]?.last_error).not.toContain(SECRET);
+    const all = lines.join('\n');
+    expect(all).toContain('Failed task');
+    expect(all).not.toContain(SECRET);
+  });
+
+  it('sanitizes last_error for a task registered without its own wrapper', async () => {
+    const s = await seed();
+    const { lines, logger } = capture();
+    const badId = botTokenLike('PROBE');
+    // A raw task: it does not wrap itself; startWorker registers it through sanitizeTaskList.
+    const probe = async () => {
+      await withTenant(h.deps.db, tenantScope(s.workspaceId), (t) => getDelivery(t, badId));
+    };
+    const runner = await startWorker(
+      { ...h.deps, logger },
+      { pollInterval: 100, extraTasks: { log_privacy_probe: probe } },
+    );
+    try {
+      await h.ownerPool.query(`select graphile_worker.add_job('log_privacy_probe', '{}'::json)`);
+      await waitFor(async () => {
+        const { rows } = await h.ownerPool.query(
+          `select 1 from graphile_worker.jobs where task_identifier = 'log_privacy_probe' and last_error is not null`,
+        );
+        return rows.length > 0;
+      });
+    } finally {
+      await runner.stop();
+    }
+    const { rows } = await h.ownerPool.query<{ last_error: string }>(
+      `select last_error from graphile_worker.jobs where task_identifier = 'log_privacy_probe'`,
+    );
+    expect(rows[0]?.last_error).toBe('DrizzleQueryError: Failed query: select [redacted]');
     const all = lines.join('\n');
     expect(all).toContain('Failed task');
     expect(all).not.toContain(SECRET);

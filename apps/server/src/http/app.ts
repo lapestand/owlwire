@@ -1,5 +1,5 @@
 import type { Clock } from '@owlwire/core';
-import { type OwlwireDb, RepoConflictError, RepoInputError, safeErrorMessage } from '@owlwire/db';
+import { type OwlwireDb, RepoConflictError, RepoInputError } from '@owlwire/db';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { Logger } from 'pino';
@@ -39,8 +39,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (err instanceof RepoConflictError) {
       return problem(c, new ProblemError(409, 'conflict', err.message));
     }
-    // safeErrorMessage drops DrizzleQueryError's "params:" (query values) from the log line.
-    (c.get('log') ?? deps.logger).error({ error: safeErrorMessage(err) }, 'unhandled error');
+    // The logger's err serializer drops query params, pg row fields and echoed input but keeps code and constraint (I-6).
+    (c.get('log') ?? deps.logger).error({ err }, 'unhandled error');
     return problem(c, new ProblemError(500, 'internal'));
   });
   app.notFound((c) => problem(c, new ProblemError(404, 'not_found')));

@@ -1,5 +1,5 @@
 import type { Fn } from '@owlwire/adapter-sdk';
-import { withholdEchoedInput } from '@owlwire/db';
+import { withholdEchoedInput } from '@owlwire/core';
 import { type DestinationStream, type LogFn, type Logger, pino } from 'pino';
 
 export const REDACT_PATHS = [
@@ -19,76 +19,140 @@ export const REDACT_PATHS = [
   '*.authorization',
 ];
 
-const PARAMS_SEGMENT = /\n[ \t]*params:[\s\S]*?(?=\n[ \t]*at |$)/g;
-const MAX_CAUSE_DEPTH = 5;
-/** DrizzleQueryError `params` and pg error fields that can carry row values or SQL with literals (I-6). */
-const DROPPED_ERROR_FIELDS = new Set(['params', 'detail', 'where', 'internalQuery']);
+const PARAMS_MARKER = /\n[ \t]*params:/;
+/** Bound for the structural walk over log objects, error fields and `cause` chains. */
+const MAX_DEPTH = 8;
+/** DrizzleQueryError `params` and pg error fields that can carry row values, hints or SQL with literals (I-6). */
+const DROPPED_ERROR_FIELDS = new Set(['params', 'detail', 'hint', 'where', 'internalQuery']);
+/** Keys whose values are treated as errors: their plain-object values lose DROPPED_ERROR_FIELDS too. */
+const ERROR_KEYS = new Set(['err', 'error', 'cause']);
+const FRAME = /^\s+at /;
+/**
+ * Copies produced by sanitize. The logMethod hook sanitizes first and pino's serializers then see the copy; walking it
+ * again would cut a rebuilt stack at its `params: [redacted]` line and lose the frames.
+ */
+const SANITIZED = new WeakSet<object>();
 
 /**
- * I-6: Drizzle'ın `Failed query: <sql>\nparams: <değerler>` metnindeki değerleri atar. Kesim bir sonraki yığın
- * satırına (`\n    at `) ya da metnin sonuna kadardır; çok satırlı parametreler de gider.
+ * I-6: Drizzle'ın `Failed query: <sql>\nparams: <değerler>` metninde `\nparams:`'tan metnin sonuna kadar her şey atılır.
+ * Parametreler çok satırlı olabilir ve satırları `at ` ile başlayabilir; bu yüzden kesim yığın çerçevesi aramaz.
  */
 export function scrubQueryParams(text: string): string {
-  return text.replace(PARAMS_SEGMENT, '\nparams: [redacted]');
+  const m = PARAMS_MARKER.exec(text);
+  return m ? `${text.slice(0, m.index)}\nparams: [redacted]` : text;
 }
 
-/** Loglanabilir hata mesajı: sorgu parametreleri atılır, girdi yankılayan mesajlar (SyntaxError, pg 22xxx) kesilir. */
+function errorType(err: Error): string {
+  return err.constructor.name === 'Error' ? err.name : err.constructor.name;
+}
+
+/** Loglanabilir hata mesajı: sorgu parametreleri atılır, girdi yankılayan mesajlar (SyntaxError, pg 22xxx, P0001) kesilir. */
 function loggableMessage(err: Error): string {
   return withholdEchoedInput(err, scrubQueryParams(err.message));
 }
 
 /**
- * Yığının başlığı mesajı tekrar eder. Girdi yankılayan hatalarda başlık temizlenmiş mesajla yeniden kurulur ve
- * yalnız çerçeve satırları (`    at `) tutulur; diğerlerinde yığın scrubQueryParams'tan geçer.
+ * Özgün yığının çerçeveleri: mesaj başlığından (`<name>: <message>`, ya da mesajın satır sayısı kadar satır) sonraki
+ * `    at ` satırları. Mesaj metni çerçeve için taranmaz.
  */
-function loggableStack(err: Error, type: string, message: string): string | undefined {
-  if (err.stack === undefined) return undefined;
-  const scrubbed = scrubQueryParams(err.stack);
-  if (withholdEchoedInput(err, err.message) === err.message) return scrubbed;
-  const frames = scrubbed.split('\n').filter((line) => /^\s+at /.test(line));
-  return [`${type}: ${message}`, ...frames].join('\n');
+function stackFrames(err: Error): string[] {
+  if (typeof err.stack !== 'string') return [];
+  const header = err.message ? `${err.name}: ${err.message}` : err.name;
+  const rest = err.stack.startsWith(header)
+    ? err.stack.slice(header.length).split('\n').slice(1)
+    : err.stack.split('\n').slice(err.message.split('\n').length);
+  return rest.filter((line) => FRAME.test(line));
 }
 
-/**
- * pino `err` serializer'ı: `type`, `message`, `stack`, kendi alanları (`params`, `detail`, `where`, `internalQuery`
- * hariç) ve `cause` zinciri (en çok 5); metinler scrubQueryParams'tan geçer (I-6).
- */
-export function serializeErr(err: unknown, depth = 0): unknown {
-  if (typeof err === 'string') return scrubQueryParams(err);
-  if (!(err instanceof Error)) return err;
-  const type = err.constructor.name === 'Error' ? err.name : err.constructor.name;
+function serializeError(err: Error, depth: number, path: Set<object>): Record<string, unknown> {
+  const type = errorType(err);
   const message = loggableMessage(err);
-  const out: Record<string, unknown> = { type, message, stack: loggableStack(err, type, message) };
+  const out: Record<string, unknown> = { type, message };
+  if (typeof err.stack === 'string')
+    out.stack = [`${type}: ${message}`, ...stackFrames(err)].join('\n');
   for (const [key, value] of Object.entries(err)) {
     if (DROPPED_ERROR_FIELDS.has(key) || key === 'cause' || key in out) continue;
-    out[key] = typeof value === 'string' ? scrubQueryParams(value) : value;
+    out[key] = sanitize(value, depth + 1, path, true);
   }
-  if (err.cause !== undefined && depth < MAX_CAUSE_DEPTH) {
-    out.cause = serializeErr(err.cause, depth + 1);
-  }
+  if (err.cause !== undefined) out.cause = sanitize(err.cause, depth + 1, path, true);
   return out;
 }
 
 /**
- * pino logMethod kancası: mesaj verilmezse pino `msg`'yi ham err.message'tan türetir (pino 10 lib/proto.js);
- * burada mesaj temizlenmiş metinle verilir ve her string argüman scrubQueryParams'tan geçer.
+ * Log değerinin sınırlı derinlikte, döngü güvenli kopyası: her Error (hangi anahtarda ve ne kadar içte olursa olsun)
+ * güvenli biçimde seri hâle gelir, her string scrubQueryParams'tan geçer; hata bağlamındaki düz nesnelerden
+ * (`err`/`error`/`cause` altı, hata alanları) DROPPED_ERROR_FIELDS atılır. Düz olmayan nesneler (Date, Buffer…) aynen kalır.
+ */
+function sanitize(
+  value: unknown,
+  depth: number,
+  path: Set<object>,
+  errorContext: boolean,
+): unknown {
+  if (typeof value === 'string') return scrubQueryParams(value);
+  if (typeof value !== 'object' || value === null || SANITIZED.has(value)) return value;
+  const isError = value instanceof Error;
+  const proto = Object.getPrototypeOf(value);
+  if (!isError && !Array.isArray(value) && proto !== Object.prototype && proto !== null)
+    return value;
+  if (path.has(value)) return '[Circular]';
+  if (depth >= MAX_DEPTH) return '[Truncated]';
+  path.add(value);
+  try {
+    let out: object;
+    if (isError) out = serializeError(value, depth, path);
+    else if (Array.isArray(value))
+      out = value.map((v) => sanitize(v, depth + 1, path, errorContext));
+    else {
+      const copy: Record<string, unknown> = {};
+      for (const [key, v] of Object.entries(value)) {
+        if (errorContext && DROPPED_ERROR_FIELDS.has(key)) continue;
+        copy[key] = sanitize(v, depth + 1, path, errorContext || ERROR_KEYS.has(key));
+      }
+      out = copy;
+    }
+    SANITIZED.add(out);
+    return out;
+  } finally {
+    path.delete(value);
+  }
+}
+
+/**
+ * pino `err`/`error` serializer'ı: `type`, `message`, `stack` (temizlenmiş başlık + özgün çerçeveler), kendi alanları
+ * (DROPPED_ERROR_FIELDS hariç) ve `cause` zinciri; Error olmayan değerler de hata bağlamında temizlenir (I-6).
+ */
+export function serializeErr(err: unknown): unknown {
+  return sanitize(err, 0, new Set(), true);
+}
+
+/** `%s`/`%o` ile biçimlenen argümanlar: Error güvenli metne, string ve nesneler temizlenmiş kopyaya döner. */
+function interpolationArg(arg: unknown): unknown {
+  if (arg instanceof Error) return `${errorType(arg)}: ${loggableMessage(arg)}`;
+  return sanitize(arg, 0, new Set(), false);
+}
+
+/**
+ * pino logMethod kancası (I-6): ilk argüman nesneyse yapısal olarak temizlenir (her anahtardaki Error ve string);
+ * mesaj verilmezse pino `msg`'yi ham err.message'tan türeteceği için (pino 10 lib/proto.js) temizlenmiş mesaj verilir;
+ * biçim argümanları (`%s`) da temizlenir.
  */
 function scrubLogArgs(this: Logger, args: Parameters<LogFn>, method: LogFn): void {
   const list: unknown[] = [...args];
   const first = list[0];
-  const err =
-    first instanceof Error
-      ? first
-      : typeof first === 'object' &&
-          first !== null &&
-          (first as { err?: unknown }).err instanceof Error
-        ? (first as { err: Error }).err
-        : undefined;
-  if (err && (list.length === 1 || list[1] === undefined)) list[1] = loggableMessage(err);
-  method.apply(
-    this,
-    list.map((a) => (typeof a === 'string' ? scrubQueryParams(a) : a)) as Parameters<LogFn>,
-  );
+  if (typeof first === 'object' && first !== null) {
+    const err =
+      first instanceof Error
+        ? first
+        : (first as { err?: unknown }).err instanceof Error
+          ? (first as { err: Error }).err
+          : undefined;
+    list[0] =
+      first instanceof Error ? { err: serializeErr(first) } : sanitize(first, 0, new Set(), false);
+    if (err && (list.length === 1 || list[1] === undefined)) list[1] = loggableMessage(err);
+  }
+  const out = list.map((a, i) => (i === 0 && typeof a !== 'string' ? a : interpolationArg(a)));
+  method.apply(this, out as Parameters<LogFn>);
 }
 
 export function createLogger(level: string, destination?: DestinationStream): Logger {

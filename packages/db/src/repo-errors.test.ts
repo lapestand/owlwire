@@ -6,7 +6,6 @@ import {
   RepoConflictError,
   RepoNotFoundError,
   safeErrorMessage,
-  withholdEchoedInput,
 } from './errors.js';
 
 const pgErr = (code: string, constraint?: string) =>
@@ -114,8 +113,8 @@ describe('mapPgErrors details', () => {
   });
 });
 
-describe('withholdEchoedInput', () => {
-  it('cuts messages that echo input values (JSON SyntaxError, pg data exceptions) at the first quote', () => {
+describe('safeErrorMessage echoed input', () => {
+  it('withholds values echoed by JSON SyntaxError, pg data exceptions and their wrappers', () => {
     let parseError: unknown;
     try {
       JSON.parse('bot123:SECRET-JSON');
@@ -127,15 +126,18 @@ describe('withholdEchoedInput', () => {
       code: '22P02',
     });
     expect(safeErrorMessage(dataErr)).toBe('Error: invalid input syntax for type uuid: [redacted]');
-    // Other errors and messages without quotes are kept verbatim.
+    const wrapped = new Error(`load failed: ${(parseError as Error).message}`, {
+      cause: parseError,
+    });
+    expect(safeErrorMessage(wrapped)).toBe('Error: load failed: Unexpected token [redacted]');
     const unique = Object.assign(
       new Error('duplicate key value violates unique constraint "x_uq"'),
       {
         code: '23505',
       },
     );
-    expect(withholdEchoedInput(unique, unique.message)).toBe(unique.message);
-    const eof = new SyntaxError('Unexpected end of JSON input');
-    expect(withholdEchoedInput(eof, eof.message)).toBe('Unexpected end of JSON input');
+    expect(safeErrorMessage(unique)).toBe(
+      'Error: duplicate key value violates unique constraint "x_uq"',
+    );
   });
 });

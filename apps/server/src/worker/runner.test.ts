@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Deps } from '../deps.js';
 import { createLogger } from '../logger.js';
-import { createTaskList, graphileLogger } from './runner.js';
+import { createTaskList, graphileLogger, sanitizeTaskList } from './runner.js';
 
 describe('createTaskList', () => {
   it('registers route_event and send_delivery', () => {
@@ -66,5 +66,24 @@ describe('graphileLogger', () => {
       attempts: 1,
       max_attempts: 25,
     });
+  });
+});
+
+describe('sanitizeTaskList', () => {
+  it('rethrows any task error as its safe message without a cause', async () => {
+    const query = Object.assign(new Error('Failed query: select $1\nparams: SECRET-TASK'), {
+      params: ['SECRET-TASK'],
+    });
+    const tasks = sanitizeTaskList({
+      raw: async () => {
+        throw query;
+      },
+    });
+    const err = await Promise.resolve(
+      tasks.raw?.({}, {} as Parameters<NonNullable<(typeof tasks)['raw']>>[1]),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Error: Failed query: select $1');
+    expect((err as Error).cause).toBeUndefined();
   });
 });

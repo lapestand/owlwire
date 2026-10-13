@@ -150,13 +150,69 @@ describe('query parameter redaction (I-6)', () => {
     expect(JSON.parse(lines[1] ?? '{}').error).toBe('Failed query: select $1\nparams: [redacted]');
   });
 
-  it('scrubQueryParams cuts each params segment up to the next stack frame', () => {
+  it('scrubQueryParams cuts from the first params marker to the end of the text', () => {
     const text =
       "with error 'Failed query: select $1\nparams: SECRET':\n  Error: Failed query: select $1\n  params: SECRET\n      at run (file.js:1:1)";
     const out = scrubQueryParams(text);
-    expect(out).not.toContain('SECRET');
-    expect(out).toContain('at run (file.js:1:1)');
+    expect(out).toBe("with error 'Failed query: select $1\nparams: [redacted]");
     expect(scrubQueryParams('no params here')).toBe('no params here');
+  });
+
+  it('redacts multi-line params whose lines start with "at" and keeps the real stack frames (review I-1)', () => {
+    const { lines, stream } = capture();
+    const err = queryError([
+      'Standup\nat 10:00, password is SECRET-STANDUP',
+      'body\n    at fake (frame.js:1:1) SECRET-FRAME',
+      'v1:wrapped-dek-SECRET-DEK',
+    ]);
+    createLogger('info', stream).error({ err }, 'boom');
+    expect(lines[0]).not.toMatch(/SECRET-(STANDUP|FRAME|DEK)/);
+    const out = JSON.parse(lines[0] ?? '{}').err;
+    expect(out.message).toBe(
+      'Failed query: update connections set config_enc = $1 where id = $2\nparams: [redacted]',
+    );
+    expect(out.stack.startsWith(`DrizzleQueryError: ${out.message}\n    at `)).toBe(true);
+    expect(out.stack).toContain('logger.test.ts');
+  });
+
+  it('sanitizes errors and query strings under any key, nested, as own fields and as non-Error causes', () => {
+    const { lines, stream } = capture();
+    const log = createLogger('info', stream);
+    log.error({ e: queryError(['SECRET-CUSTOM-KEY']) }, 'custom key');
+    log.error({ ctx: { job: { failure: queryError(['SECRET-NESTED']) } } }, 'nested');
+    log.error({
+      err: Object.assign(new Error('wrapper'), { original: queryError(['SECRET-OWN']) }),
+    });
+    log.error({
+      err: new Error('plain cause', { cause: { params: ['SECRET-PLAIN-CAUSE'], code: 'X' } }),
+    });
+    log.error({
+      err: { message: 'not an error', params: ['SECRET-PLAIN-ERR'], hint: 'SECRET-HINT' },
+    });
+    log.error({ reason: 'Failed query: select $1\nparams: SECRET-STRING' }, 'string');
+    const circular: Record<string, unknown> = { name: 'loop' };
+    circular.self = circular;
+    log.info({ circular }, 'cycle');
+    expect(lines).toHaveLength(7);
+    expect(lines.join('\n')).not.toContain('SECRET-');
+    const [custom, nested, own, plainCause, , str, cycle] = lines.map((l) => JSON.parse(l));
+    expect(custom.e).toMatchObject({ type: 'DrizzleQueryError' });
+    expect(nested.ctx.job.failure.message).toContain('params: [redacted]');
+    expect(own.err.original.message).toContain('params: [redacted]');
+    expect(plainCause.err.cause).toEqual({ code: 'X' });
+    expect(str.reason).toBe('Failed query: select $1\nparams: [redacted]');
+    expect(cycle.circular).toEqual({ name: 'loop', self: '[Circular]' });
+  });
+
+  it('sanitizes errors and strings interpolated with %s', () => {
+    const { lines, stream } = capture();
+    const log = createLogger('info', stream);
+    log.error('failed: %s', queryError(['SECRET-INTERP']));
+    log.error('failed: %s', 'Failed query: select $1\nparams: SECRET-INTERP-STR');
+    log.error({ jobId: '1' }, 'failed: %s', queryError(['SECRET-INTERP-OBJ']));
+    expect(lines).toHaveLength(3);
+    expect(lines.join('\n')).not.toContain('SECRET-');
+    expect(JSON.parse(lines[0] ?? '{}').msg).toContain('failed: DrizzleQueryError: Failed query');
   });
 
   it('drops pg error fields that carry row values and masks values echoed by data exceptions', () => {
@@ -167,6 +223,7 @@ describe('query parameter redaction (I-6)', () => {
       detail: 'Failing row contains (SECRET-DETAIL).',
       where: 'SQL statement "insert into x values (\'SECRET-WHERE\')"',
       internalQuery: "select 'SECRET-INTERNAL'",
+      hint: 'SECRET-HINT',
       routine: 'string_to_uuid',
     });
     createLogger('info', stream).error({ err: queryError(['SECRET-PARAM'], pgErr) }, 'boom');
@@ -177,6 +234,7 @@ describe('query parameter redaction (I-6)', () => {
     expect(cause.detail).toBeUndefined();
     expect(cause.where).toBeUndefined();
     expect(cause.internalQuery).toBeUndefined();
+    expect(cause.hint).toBeUndefined();
   });
 
   it('does not trust a SyntaxError message: JSON.parse echoes its input', () => {

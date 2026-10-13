@@ -36,6 +36,26 @@ async function sanitized(fn: () => Promise<unknown>): Promise<void> {
 }
 
 /**
+ * Wraps every task of a list in `sanitized`, so no task can reach Graphile with a raw error (I-6). createTaskList and
+ * startWorker (including its `extraTasks`) register tasks only through here; a task never wraps itself.
+ */
+export function sanitizeTaskList(tasks: TaskList): TaskList {
+  return Object.fromEntries(
+    Object.entries(tasks).flatMap(([name, task]) =>
+      task
+        ? [
+            [
+              name,
+              (payload: unknown, helpers: JobHelpers) =>
+                sanitized(async () => task(payload, helpers)),
+            ],
+          ]
+        : [],
+    ),
+  ) as TaskList;
+}
+
+/**
  * A payload that does not parse cannot succeed on retry: like a `_ws` mismatch it is logged with the job id only (the
  * payload itself is not logged) and dropped without throwing, so Graphile does not retry it.
  */
@@ -55,25 +75,21 @@ function parsePayload<T>(
   return null;
 }
 
-export function createTaskList(deps: Deps): TaskList {
+function rawTaskList(deps: Deps): TaskList {
   return {
-    [ROUTE_EVENT_TASK]: (payload, helpers) =>
-      sanitized(async () => {
-        const parsed = parsePayload(deps, ROUTE_EVENT_TASK, RouteEventPayload, payload, helpers);
-        if (parsed) await routeEvent(deps, parsed);
-      }),
-    [SEND_DELIVERY_TASK]: (payload, helpers) =>
-      sanitized(async () => {
-        const parsed = parsePayload(
-          deps,
-          SEND_DELIVERY_TASK,
-          SendDeliveryPayload,
-          payload,
-          helpers,
-        );
-        if (parsed) await sendDelivery(deps, parsed);
-      }),
+    [ROUTE_EVENT_TASK]: async (payload, helpers) => {
+      const parsed = parsePayload(deps, ROUTE_EVENT_TASK, RouteEventPayload, payload, helpers);
+      if (parsed) await routeEvent(deps, parsed);
+    },
+    [SEND_DELIVERY_TASK]: async (payload, helpers) => {
+      const parsed = parsePayload(deps, SEND_DELIVERY_TASK, SendDeliveryPayload, payload, helpers);
+      if (parsed) await sendDelivery(deps, parsed);
+    },
   };
+}
+
+export function createTaskList(deps: Deps): TaskList {
+  return sanitizeTaskList(rawTaskList(deps));
 }
 
 /** Graphile `job` nesnesinden yalnız kimlik alanları; `payload` ve `last_error` (önceki hata metni) loglanmaz. */
@@ -104,11 +120,16 @@ export function graphileLogger(logger: Logger): GraphileLogger {
 
 export async function startWorker(
   deps: Deps,
-  opts: { concurrency?: number; pollInterval?: number } = {},
+  opts: {
+    concurrency?: number;
+    pollInterval?: number;
+    /** Further tasks (P1+ features, tests); wrapped with the built-in ones in sanitizeTaskList. */
+    extraTasks?: TaskList;
+  } = {},
 ): Promise<Runner> {
   return run({
     pgPool: deps.pool,
-    taskList: createTaskList(deps),
+    taskList: sanitizeTaskList({ ...rawTaskList(deps), ...opts.extraTasks }),
     concurrency: opts.concurrency ?? 5,
     pollInterval: opts.pollInterval ?? 2000,
     noHandleSignals: true,

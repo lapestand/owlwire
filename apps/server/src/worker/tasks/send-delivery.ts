@@ -6,7 +6,13 @@ import type {
   Platform,
   SendOutcome,
 } from '@owlwire/adapter-sdk';
-import { type Clock, computeBackoffMs, DEFAULT_MAX_ATTEMPTS, type Message } from '@owlwire/core';
+import {
+  type Clock,
+  computeBackoffMs,
+  DEFAULT_MAX_ATTEMPTS,
+  type Message,
+  withholdEchoedInput,
+} from '@owlwire/core';
 import { DecryptError, UnknownKekVersionError } from '@owlwire/crypto';
 import {
   type DeliveryContext,
@@ -20,7 +26,6 @@ import {
   updateDelivery,
   updateDestinationStatus,
   WorkspaceKeyMissingError,
-  withholdEchoedInput,
   withTenant,
 } from '@owlwire/db';
 import type { Logger } from 'pino';
