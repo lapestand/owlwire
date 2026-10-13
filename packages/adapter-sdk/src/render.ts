@@ -33,6 +33,7 @@ function dropDanglingHighSurrogate(s: string): string {
 
 export function truncateText(text: string, max: number): { text: string; truncated: boolean } {
   if (text.length <= max) return { text, truncated: false };
+  if (max < 1) return { text: '', truncated: true };
   const cut = dropDanglingHighSurrogate(text.slice(0, Math.max(0, max - ELLIPSIS.length)));
   return { text: `${cut}${ELLIPSIS}`, truncated: true };
 }
@@ -45,7 +46,8 @@ export function renderMessagePlain(msg: Message, maxLength: number): RenderedMes
   ]
     .filter((s) => s.length > 0)
     .join('\n\n');
-  const tail = msg.url ? `\n\n${msg.url}` : '';
+  const url = msg.url ?? '';
+  const tail = url && main ? `\n\n${url}` : url;
   if (main.length + tail.length <= maxLength) return { text: `${main}${tail}`, truncated: false };
   const keptTail = tail.length <= maxLength / 2 ? tail : '';
   const cut = truncateText(main, maxLength - keptTail.length);

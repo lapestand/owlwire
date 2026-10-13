@@ -23,6 +23,11 @@ describe('truncateText', () => {
     expect(truncateText('abcdef', 4)).toEqual({ text: 'abc…', truncated: true });
   });
 
+  it('never exceeds max for max 0 and 1', () => {
+    expect(truncateText('abc', 0)).toEqual({ text: '', truncated: true });
+    expect(truncateText('abc', 1)).toEqual({ text: '…', truncated: true });
+  });
+
   it('never leaves half of a surrogate pair', () => {
     const r = truncateText('😀😀😀', 4);
     expect(r.text).toBe('😀…');
@@ -57,5 +62,33 @@ describe('renderMessagePlain', () => {
     expect(r.truncated).toBe(true);
     expect(r.text.length).toBeLessThanOrEqual(100);
     expect(r.text.endsWith('…\n\nhttps://x.dev/e/1')).toBe(true);
+  });
+
+  it('reports truncation when an oversized url tail is dropped', () => {
+    const url = `https://x.dev/${'u'.repeat(46)}`;
+    const r = renderMessagePlain({ type: 't', severity: 'info', body: 'x'.repeat(90), url }, 100);
+    expect(r.truncated).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(100);
+    expect(r.text).not.toContain('https://');
+  });
+
+  it('has no leading blank lines without title or fields', () => {
+    const r = renderMessagePlain(
+      { type: 't', severity: 'info', body: '', url: 'https://x.dev' },
+      100,
+    );
+    expect(r).toEqual({ text: 'https://x.dev', truncated: false });
+    expect(
+      renderMessagePlain({ type: 't', severity: 'info', body: 'hi', url: 'https://x.dev' }, 100)
+        .text,
+    ).toBe('hi\n\nhttps://x.dev');
+  });
+
+  it('stays within tiny limits', () => {
+    const msg = { type: 't', severity: 'info' as const, body: 'hello', url: 'https://x.dev' };
+    expect(renderMessagePlain(msg, 0)).toEqual({ text: '', truncated: true });
+    const one = renderMessagePlain(msg, 1);
+    expect(one.text.length).toBeLessThanOrEqual(1);
+    expect(one.truncated).toBe(true);
   });
 });
