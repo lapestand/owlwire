@@ -9,6 +9,134 @@ let owner: pg.Pool;
 /** RLS'siz ama workspace_id kolonlu instance tabloları (R37). P2.3 workspace_suspensions ve abuse_reports ekler. */
 const RLS_EXEMPT_TABLES: readonly string[] = [];
 
+interface Queryable {
+  query<R extends pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<R>>;
+}
+
+/** Beklenen politika: komut ve pg_policies'in deparse ettiği qual / with_check (boşluk normalize edilir, null = yok). */
+interface PolicySpec {
+  cmd: 'ALL' | 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
+  qual: string | null;
+  withCheck: string | null;
+}
+
+const tenantSpec = (column: string): PolicySpec => ({
+  cmd: 'ALL',
+  qual: `owlwire_private.rls_allows(${column})`,
+  withCheck: `owlwire_private.rls_allows(${column})`,
+});
+
+const OWNS_APP = 'owlwire_private.rls_allows(owner_workspace_id)';
+const CATALOG_WRITE =
+  '(EXISTS ( SELECT 1 FROM apps a WHERE ((a.id = catalog_types.app_id) AND owlwire_private.rls_allows(a.owner_workspace_id))))';
+
+/** workspace_id kolonu olmayan ama RLS'li tablolar; politika kümeleri birebir beklenir. */
+const SPECIAL_TABLES: Readonly<Record<string, Readonly<Record<string, PolicySpec>>>> = {
+  workspaces: { workspaces_tenant_isolation: tenantSpec('id') },
+  apps: {
+    apps_select: {
+      cmd: 'SELECT',
+      qual: `(((visibility = 'public'::text) AND (approval_status = 'approved'::text)) OR ${OWNS_APP})`,
+      withCheck: null,
+    },
+    apps_insert: { cmd: 'INSERT', qual: null, withCheck: OWNS_APP },
+    apps_update: { cmd: 'UPDATE', qual: OWNS_APP, withCheck: OWNS_APP },
+    apps_delete: { cmd: 'DELETE', qual: OWNS_APP, withCheck: null },
+  },
+  catalog_types: {
+    catalog_types_select: {
+      cmd: 'SELECT',
+      qual: '(EXISTS ( SELECT 1 FROM apps a WHERE (a.id = catalog_types.app_id)))',
+      withCheck: null,
+    },
+    catalog_types_write: { cmd: 'ALL', qual: CATALOG_WRITE, withCheck: CATALOG_WRITE },
+  },
+};
+
+const norm = (sql: string | null): string | null =>
+  sql === null ? null : sql.replace(/\s+/g, ' ').trim();
+
+/**
+ * R37 denetimi: public şemasındaki her workspace_id kolonlu tablo (relkind 'r' ve 'p'; bölümler dahil) RLS'li
+ * olmalı ve politika kümesi tam olarak {<tablo>_tenant_isolation} olmalı; özel tablolar SPECIAL_TABLES'a
+ * birebir uymalı. Fazladan bir politika, kısıtlayıcı (RESTRICTIVE) ya da role özel politika, değişmiş bir
+ * qual/with_check hata sayılır. Bulunan sorunları döndürür (boş dizi = temiz).
+ */
+async function rlsCoverageProblems(db: Queryable): Promise<string[]> {
+  const tables = await db.query<{ relname: string; rls: boolean; has_ws: boolean }>(`
+    select c.relname, c.relrowsecurity as rls,
+           exists (select 1 from pg_attribute a
+                   where a.attrelid = c.oid and a.attname = 'workspace_id' and not a.attisdropped) as has_ws
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relkind in ('r', 'p')
+    order by 1`);
+  const policies = await db.query<{
+    tablename: string;
+    policyname: string;
+    permissive: string;
+    roles: string;
+    cmd: string;
+    qual: string | null;
+    with_check: string | null;
+  }>(`select tablename, policyname, permissive, roles::text as roles, cmd, qual, with_check
+      from pg_policies where schemaname = 'public' order by 1, 2`);
+
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const t of tables.rows) {
+    const expected =
+      SPECIAL_TABLES[t.relname] ??
+      (t.has_ws && !RLS_EXEMPT_TABLES.includes(t.relname)
+        ? { [`${t.relname}_tenant_isolation`]: tenantSpec('workspace_id') }
+        : undefined);
+    if (!expected) continue;
+    seen.add(t.relname);
+    if (!t.rls) problems.push(`${t.relname}: row level security is not enabled`);
+    const actual = policies.rows.filter((p) => p.tablename === t.relname);
+    for (const name of Object.keys(expected)) {
+      if (!actual.some((p) => p.policyname === name))
+        problems.push(`${t.relname}: missing policy ${name}`);
+    }
+    for (const p of actual) {
+      const spec = expected[p.policyname];
+      if (!spec) {
+        problems.push(
+          `${t.relname}: unexpected ${p.permissive.toLowerCase()} policy ${p.policyname}`,
+        );
+        continue;
+      }
+      if (p.permissive !== 'PERMISSIVE')
+        problems.push(`${t.relname}: ${p.policyname} is ${p.permissive}`);
+      if (p.roles !== '{public}')
+        problems.push(`${t.relname}: ${p.policyname} applies to ${p.roles}`);
+      if (p.cmd !== spec.cmd)
+        problems.push(`${t.relname}: ${p.policyname} cmd ${p.cmd}, expected ${spec.cmd}`);
+      if (norm(p.qual) !== spec.qual)
+        problems.push(`${t.relname}: ${p.policyname} qual ${JSON.stringify(p.qual)}`);
+      if (norm(p.with_check) !== spec.withCheck) {
+        problems.push(`${t.relname}: ${p.policyname} with_check ${JSON.stringify(p.with_check)}`);
+      }
+    }
+  }
+  for (const name of Object.keys(SPECIAL_TABLES)) {
+    if (!seen.has(name)) problems.push(`${name}: table not found`);
+  }
+  return problems;
+}
+
+/** Değişikliği bir transaction'da yapar, denetimi aynı bağlantıda çalıştırır, sonra geri alır. */
+async function problemsAfter(change: string): Promise<string[]> {
+  const client = await owner.connect();
+  try {
+    await client.query('begin');
+    await client.query(change);
+    return await rlsCoverageProblems(client);
+  } finally {
+    await client.query('rollback');
+    client.release();
+  }
+}
+
 beforeAll(async () => {
   tdb = await startTestDatabase({ migrate: migrateAll });
   owner = new pg.Pool({ connectionString: tdb.ownerUrl });
@@ -20,17 +148,48 @@ afterAll(async () => {
 });
 
 describe('rls coverage', () => {
-  it('every public table with a workspace_id column has RLS enabled and a <table>_tenant_isolation policy', async () => {
-    const { rows } = await owner.query<{ relname: string }>(`
-      select c.relname
-      from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-      join pg_attribute a on a.attrelid = c.oid and a.attname = 'workspace_id' and not a.attisdropped
-      where n.nspname = 'public' and c.relkind = 'r'
-        and (not c.relrowsecurity
-             or not exists (select 1 from pg_policy p where p.polrelid = c.oid and p.polname = c.relname || '_tenant_isolation'))
-      order by 1`);
-    expect(rows.map((r) => r.relname).filter((t) => !RLS_EXEMPT_TABLES.includes(t))).toEqual([]);
+  it('every tenant table (relkind r and p) has RLS enabled and exactly the expected policies', async () => {
+    expect(await rlsCoverageProblems(owner)).toEqual([]);
+  });
+
+  it('flags an extra permissive policy on a tenant table', async () => {
+    expect(await problemsAfter('create policy audiences_debug on audiences using (true)')).toEqual([
+      'audiences: unexpected permissive policy audiences_debug',
+    ]);
+  });
+
+  it('flags a tenant policy whose expression no longer isolates', async () => {
+    expect(
+      await problemsAfter(
+        'alter policy audiences_tenant_isolation on audiences using (true) with check (true)',
+      ),
+    ).toEqual([
+      'audiences: audiences_tenant_isolation qual "true"',
+      'audiences: audiences_tenant_isolation with_check "true"',
+    ]);
+  });
+
+  it('flags an extra policy on a special table', async () => {
+    expect(await problemsAfter('create policy apps_debug on apps for select using (true)')).toEqual(
+      ['apps: unexpected permissive policy apps_debug'],
+    );
+  });
+
+  it('flags disabled RLS', async () => {
+    expect(await problemsAfter('alter table audiences disable row level security')).toEqual([
+      'audiences: row level security is not enabled',
+    ]);
+  });
+
+  it('flags a partitioned tenant table without a policy', async () => {
+    expect(
+      await problemsAfter(
+        'create table rls_probe_parted (workspace_id uuid not null) partition by list (workspace_id)',
+      ),
+    ).toEqual([
+      'rls_probe_parted: row level security is not enabled',
+      'rls_probe_parted: missing policy rls_probe_parted_tenant_isolation',
+    ]);
   });
 
   it('workspaces, apps and catalog_types have RLS enabled', async () => {
