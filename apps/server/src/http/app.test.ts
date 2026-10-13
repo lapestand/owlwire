@@ -2,11 +2,17 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { systemClock } from '@owlwire/core';
-import { type OwlwireDb, RepoConflictError, RepoInputError } from '@owlwire/db';
+import {
+  InvalidScopeError,
+  type OwlwireDb,
+  RepoConflictError,
+  RepoInputError,
+  RepoNotFoundError,
+} from '@owlwire/db';
 import { HTTPException } from 'hono/http-exception';
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '../logger.js';
-import { type AppDeps, createApp } from './app.js';
+import { type AppDeps, createApp, NOT_FOUND_DETAIL } from './app.js';
 
 const logger = createLogger('silent');
 
@@ -96,6 +102,32 @@ describe('errors', () => {
     const conflict = await app.request('/conflict');
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({ code: 'conflict', status: 409 });
+  });
+
+  it('maps repository not-found and invalid scope errors to a 404 problem with a fixed detail', async () => {
+    const secretId = 'SECRET-ID-6012345678';
+    const app = makeApp();
+    app.get('/missing', () => {
+      throw new RepoNotFoundError('connection', secretId);
+    });
+    app.get('/scope', () => {
+      throw new InvalidScopeError(`workspaceId must be a UUID: ${secretId}`);
+    });
+    for (const path of ['/missing', '/scope']) {
+      const res = await app.request(path);
+      expect(res.status, path).toBe(404);
+      expect(res.headers.get('content-type')).toContain('application/problem+json');
+      const text = await res.text();
+      expect(text).not.toContain(secretId);
+      expect(text).not.toContain('connection');
+      expect(JSON.parse(text)).toEqual({
+        type: 'https://owlwire.dev/errors/not_found',
+        title: 'Not Found',
+        status: 404,
+        code: 'not_found',
+        detail: NOT_FOUND_DETAIL,
+      });
+    }
   });
 
   it('logs unhandled errors without query parameters', async () => {

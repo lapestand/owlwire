@@ -1,5 +1,11 @@
 import type { Clock } from '@owlwire/core';
-import { type OwlwireDb, RepoConflictError, RepoInputError } from '@owlwire/db';
+import {
+  InvalidScopeError,
+  type OwlwireDb,
+  RepoConflictError,
+  RepoInputError,
+  RepoNotFoundError,
+} from '@owlwire/db';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { Logger } from 'pino';
@@ -21,6 +27,9 @@ export interface AppDeps {
   checkReady?: () => Promise<boolean>;
 }
 
+/** Fixed detail of the 404 for repository not-found and invalid scope errors (final review ruling). */
+export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
+
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.use('*', requestId(deps.logger));
@@ -35,6 +44,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Repository errors carry only entity/constraint/reason names, never values (P0 contract: 422 / 409).
     if (err instanceof RepoInputError) {
       return problem(c, new ProblemError(422, 'validation_failed', err.message));
+    }
+    // Unknown, foreign or malformed ids look the same to the caller: a fixed text, never the id or the input.
+    if (err instanceof RepoNotFoundError || err instanceof InvalidScopeError) {
+      return problem(c, new ProblemError(404, 'not_found', NOT_FOUND_DETAIL));
     }
     if (err instanceof RepoConflictError) {
       return problem(c, new ProblemError(409, 'conflict', err.message));
