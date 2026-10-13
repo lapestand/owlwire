@@ -4,6 +4,73 @@
   "files": { "includes": ["**", "!**/drizzle", "!**/public", "!pnpm-lock.yaml"] },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
   "javascript": { "formatter": { "quoteStyle": "single" } },
-  "linter": { "enabled": true, "rules": { "recommended": true } },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+  "plugins": [
+    { "path": "./tools/biome/no-unsafe-sql.grit", "includes": ["**", "!**/packages/db/src/**"] }
+  ],
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db repository functions (contract §2, §6.1).",
+              "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db repository functions (contract §2, §6.1).",
+              "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db repository functions (contract §2, §6.1).",
+              "@owlwire/db/system": "SystemScope is only allowed in apps/server/src/system/** (contract §2).",
+              "@owlwire/db/migrate": "Migrations run only from apps/server/src/system/**, apps/server/src/test/** and integration tests (R91)."
+            }
+          }
+        }
+      }
+    }
+  },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    {
+      "includes": ["apps/server/src/test/**", "**/*.int.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "drizzle-orm": "Tests seed with repository functions or raw SQL on the owner pool (R43).",
+                  "drizzle-orm/pg-core": "Tests seed with repository functions or raw SQL on the owner pool (R43).",
+                  "drizzle-orm/node-postgres": "Tests seed with repository functions or raw SQL on the owner pool (R43).",
+                  "@owlwire/db/system": "Verify cross-tenant state with raw SQL on the owner pool (R43)."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/server/src/system/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db/system functions (contract §2).",
+                  "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db/system functions (contract §2).",
+                  "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db/system functions (contract §2)."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/db/src/**"],
+      "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
+    }
+  ]
 }

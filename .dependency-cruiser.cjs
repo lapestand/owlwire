@@ -76,6 +76,58 @@ module.exports = {
       from: { path: '^packages/' },
       to: { path: '^apps/' },
     },
+    {
+      name: 'no-drizzle-outside-db-package',
+      comment: 'Raw Drizzle only inside packages/db/src (contract §2).',
+      severity: 'error',
+      from: { path: '^(apps|packages)/', pathNot: ['^packages/db/src/'] },
+      to: { path: '(^|/)node_modules/drizzle-orm/' },
+    },
+    {
+      name: 'no-pg-value-import-outside-allowed',
+      comment: 'pg value imports only where R91 allows; import type is free everywhere.',
+      severity: 'error',
+      from: {
+        path: '^(apps|packages)/',
+        pathNot: [
+          '^packages/db/src/',
+          '^packages/testing/src/',
+          '^apps/server/src/(deps\\.ts|worker/runner\\.ts|adapters/leader\\.ts|test/)',
+          '\\.int\\.test\\.ts$',
+        ],
+      },
+      to: {
+        path: '(^|/)node_modules/(pg|pg-pool)/',
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      name: 'system-scope-only-from-server-system',
+      comment:
+        'SystemScope/withSystem only from packages/db/src and apps/server/src/system (contract §2).',
+      severity: 'error',
+      from: { pathNot: ['^apps/server/src/system/', '^packages/db/'] },
+      to: { path: '^packages/db/(src|dist)/system/' },
+    },
+    {
+      name: 'migrate-only-from-allowed',
+      comment: '@owlwire/db/migrate only from system, test harness and integration tests (R91).',
+      severity: 'error',
+      from: {
+        pathNot: ['^apps/server/src/(system|test)/', '^packages/db/', '\\.int\\.test\\.ts$'],
+      },
+      to: { path: '^packages/db/(src|dist)/migrate-all\\.' },
+    },
+    {
+      name: 'db-internals-private',
+      comment:
+        'Only the public entry points of @owlwire/db may be imported from outside the package.',
+      severity: 'error',
+      from: { pathNot: '^packages/db/' },
+      to: {
+        path: '^packages/db/(src|dist)/(handle|scope|errors|roles|rls-sql|schema/|repos/(?!index\\.)|__test__/)',
+      },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

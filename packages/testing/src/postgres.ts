@@ -43,13 +43,19 @@ async function withAdmin<T>(adminUrl: string, fn: (c: pg.Client) => Promise<T>):
 
 export async function createTestDatabase(adminUrl: string): Promise<ScratchDatabase> {
   const name = `t_${randomBytes(6).toString('hex')}`;
-  await withAdmin(adminUrl, (c) => c.query(`create database ${name}`));
+  await withAdmin(adminUrl, (c) =>
+    // biome-ignore lint/plugin: identifier escaped with escapeIdentifier (R123)
+    c.query(`create database ${c.escapeIdentifier(name)}`),
+  );
   const url = new URL(adminUrl);
   url.pathname = `/${name}`;
   return {
     url: url.toString(),
     drop: async () => {
-      await withAdmin(adminUrl, (c) => c.query(`drop database if exists ${name} with (force)`));
+      await withAdmin(adminUrl, (c) =>
+        // biome-ignore lint/plugin: identifier escaped with escapeIdentifier (R123)
+        c.query(`drop database if exists ${c.escapeIdentifier(name)} with (force)`),
+      );
     },
   };
 }

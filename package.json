@@ -1,6 +1,6 @@
 {
   "name": "owlwire",
-  "version": "0.32.3",
+  "version": "0.33.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   "scripts": {
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "lint": "biome check .",
+    "lint": "biome check . && node scripts/check-system-guc.mjs",
     "format": "biome check --write .",
     "depcruise": "node scripts/depcruise.mjs",
     "test": "vitest run --project unit --passWithNoTests",
