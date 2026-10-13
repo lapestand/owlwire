@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
-import type { SystemTx, TenantTx } from '../scope.js';
+import { RepoInputError } from '../errors.js';
+import { type SystemTx, TenantTx } from '../scope.js';
 import { q } from './context.js';
 
 /** Sözleşme §9 görev adları (sahip P1a; sahip planlar burada tanımlı adı kullanır — R44). */
@@ -26,6 +27,17 @@ export const digestJobKey = (destinationId: string, windowStart: Date): string =
   `digest:${destinationId}:${windowStart.getTime()}`;
 export const healthJobKey = (connectionId: string): string => `health:${connectionId}`;
 
+/** Payload alanı: TenantTx ile eklenen işin workspace'i (`enqueueJob` yazar; çağıran veremez). */
+export const TENANT_JOB_PAYLOAD_KEY = '_ws';
+
+/**
+ * TenantTx ile eklenen işlerin kuyruk adı ve iş anahtarı bu ad alanına alınır: `w:<workspaceId>:<ad>`. Böylece bir
+ * kiracı başka bir workspace'in işini anahtarla değiştiremez ve kuyruğuna iş sokamaz. Testler ve worker'lar beklenen
+ * değeri bununla hesaplar (ör. `tenantJobName(ws, sendJobKey(id))`).
+ */
+export const tenantJobName = (workspaceId: string, name: string): string =>
+  `w:${workspaceId}:${name}`;
+
 export interface EnqueueOptions {
   queueName?: string;
   runAt?: Date;
@@ -41,6 +53,10 @@ export interface EnqueueOptions {
  * `apps/server/src/worker/jobs.ts`'tir (ham `DbOrTx` alır); sunucu bağlama görevi onu bu fonksiyon üzerine ince
  * sarmalayıcıya çevirerek kaldırır (R45, R62). Uygulama rolü Graphile tablolarına Görev 2'nin
  * politikasıyla erişir.
+ *
+ * TenantTx ile: verilen `queueName` ve `jobKey` `tenantJobName(t.workspaceId, …)` ad alanına alınır ve payload'a
+ * `_ws: t.workspaceId` eklenir (payload'da `_ws` varsa RepoInputError). Worker'lar `_ws`'yi işin kimliklerinden
+ * çözülen workspace ile karşılaştırmalıdır. SystemTx ile adlar olduğu gibi kalır (yalnız instance düzeyi işler).
  */
 export async function enqueueJob(
   t: TenantTx | SystemTx,
@@ -48,13 +64,24 @@ export async function enqueueJob(
   payload: Record<string, unknown>,
   opts: EnqueueOptions = {},
 ): Promise<void> {
+  let queueName = opts.queueName ?? null;
+  let jobKey = opts.jobKey ?? null;
+  let body = payload;
+  if (t instanceof TenantTx) {
+    if (Object.hasOwn(payload, TENANT_JOB_PAYLOAD_KEY)) {
+      throw new RepoInputError('job', `payload must not contain ${TENANT_JOB_PAYLOAD_KEY}`);
+    }
+    if (queueName !== null) queueName = tenantJobName(t.workspaceId, queueName);
+    if (jobKey !== null) jobKey = tenantJobName(t.workspaceId, jobKey);
+    body = { ...payload, [TENANT_JOB_PAYLOAD_KEY]: t.workspaceId };
+  }
   await q(t).execute(sql`select graphile_worker.add_job(
     ${name}::text,
-    ${JSON.stringify(payload)}::json,
-    queue_name => ${opts.queueName ?? null}::text,
+    ${JSON.stringify(body)}::json,
+    queue_name => ${queueName}::text,
     run_at => ${opts.runAt ?? null}::timestamptz,
     max_attempts => ${opts.maxAttempts ?? null}::int,
-    job_key => ${opts.jobKey ?? null}::text,
+    job_key => ${jobKey}::text,
     job_key_mode => coalesce(${opts.jobKeyMode ?? null}::text, 'replace')
   )`);
 }

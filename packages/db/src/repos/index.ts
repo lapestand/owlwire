@@ -85,6 +85,8 @@ export {
   type JobName,
   routeQueue,
   sendJobKey,
+  TENANT_JOB_PAYLOAD_KEY,
+  tenantJobName,
 } from './jobs.js';
 export {
   type CreateRuleInput,

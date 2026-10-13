@@ -21,7 +21,14 @@ import {
 import { createDestination } from './destinations.js';
 import { getEvent, insertEvent, markEventRouted } from './events.js';
 import { createInstallation, revokeInstallation } from './installations.js';
-import { enqueueJob, healthJobKey } from './jobs.js';
+import {
+  connectionQueue,
+  enqueueJob,
+  healthJobKey,
+  routeQueue,
+  sendJobKey,
+  tenantJobName,
+} from './jobs.js';
 import {
   createRule,
   deleteRule,
@@ -440,7 +447,10 @@ describe('events', () => {
     const routeJobs = (await listQueuedJobs(env.owner)).filter(
       (j) => j.payload.eventId === first.eventId,
     );
-    expect(routeJobs.map((j) => j.queueName)).toEqual([`route:${a.installationId}`]);
+    expect(routeJobs.map((j) => j.queueName)).toEqual([
+      tenantJobName(a.ws, routeQueue(a.installationId)),
+    ]);
+    expect(routeJobs[0]?.payload).toEqual({ eventId: first.eventId, _ws: a.ws });
   });
 
   it('does not enqueue when the transaction rolls back', async () => {
@@ -551,7 +561,10 @@ describe('deliveries', () => {
       (j) => j.payload.deliveryId === deliveryId,
     );
     expect(sendJobs.map((j) => ({ queueName: j.queueName, key: j.key }))).toEqual([
-      { queueName: `conn:${a.connectionId}`, key: `send:${deliveryId}` },
+      {
+        queueName: tenantJobName(a.ws, connectionQueue(a.connectionId)),
+        key: tenantJobName(a.ws, sendJobKey(deliveryId)),
+      },
     ]);
 
     const ctx = await inWs(a.ws, (t) => loadDeliveryContext(t, deliveryId));
@@ -628,7 +641,9 @@ describe('deliveries', () => {
       ),
     ).rejects.toBeInstanceOf(RepoInputError);
     expect(
-      (await listQueuedJobs(env.owner)).filter((j) => j.queueName === `conn:${other.connectionId}`),
+      (await listQueuedJobs(env.owner)).filter(
+        (j) => j.queueName === tenantJobName(a.ws, connectionQueue(other.connectionId)),
+      ),
     ).toEqual([]);
   });
 
@@ -752,28 +767,76 @@ describe('deliveries outbox and concurrency', () => {
 });
 
 describe('job outbox', () => {
-  it('enqueues through the app role with a replacing job key in tenant and system scope', async () => {
+  it('namespaces tenant job keys and replaces within the namespace; system keys stay raw', async () => {
     const connectionId = randomUUID();
+    const key = healthJobKey(connectionId);
+    for (const maxAttempts of [5, 3]) {
+      await inWs(a.ws, (t) =>
+        enqueueJob(
+          t,
+          'health_check_connection',
+          { connectionId },
+          { jobKey: key, jobKeyMode: 'replace', maxAttempts },
+        ),
+      );
+    }
+    await withSystem(env.db, SYSTEM, (s) =>
+      enqueueJob(s, 'health_check_connection', { connectionId }, { jobKey: key }),
+    );
+    const jobs = (await listQueuedJobs(env.owner)).filter(
+      (j) => j.payload.connectionId === connectionId,
+    );
+    expect(
+      jobs
+        .map((j) => ({ key: j.key, payload: j.payload }))
+        .sort((x, y) => (x.key ?? '').localeCompare(y.key ?? '')),
+    ).toEqual(
+      [
+        { key, payload: { connectionId } },
+        { key: tenantJobName(a.ws, key), payload: { connectionId, _ws: a.ws } },
+      ].sort((x, y) => x.key.localeCompare(y.key)),
+    );
+  });
+
+  it('rejects a tenant payload that already carries _ws', async () => {
+    await expect(
+      inWs(a.ws, (t) =>
+        enqueueJob(t, 'health_check_connection', { connectionId: randomUUID(), _ws: b.ws }),
+      ),
+    ).rejects.toMatchObject({ name: 'RepoInputError', entity: 'job' });
+  });
+
+  it('cannot replace or join another workspace job through a forged key or queue', async () => {
+    const ev = await newEvent(b);
+    const [d] = await inWs(b.ws, (t) =>
+      createDeliveries(t, ev.eventId, [
+        { destinationId: b.destinationId, connectionId: b.connectionId },
+      ]),
+    );
+    const deliveryId = d?.id ?? '';
+    const victimJob = async () =>
+      (await listQueuedJobs(env.owner)).filter((j) => j.payload.deliveryId === deliveryId);
+    const before = await victimJob();
+    expect(before).toHaveLength(1);
     await inWs(a.ws, (t) =>
       enqueueJob(
         t,
-        'health_check_connection',
-        { connectionId },
-        { jobKey: healthJobKey(connectionId) },
+        'send_delivery',
+        { deliveryId },
+        {
+          queueName: connectionQueue(b.connectionId),
+          jobKey: sendJobKey(deliveryId),
+          jobKeyMode: 'replace',
+          runAt: new Date('2099-01-01T00:00:00.000Z'),
+        },
       ),
     );
-    await withSystem(env.db, SYSTEM, (s) =>
-      enqueueJob(
-        s,
-        'health_check_connection',
-        { connectionId },
-        { jobKey: healthJobKey(connectionId), jobKeyMode: 'replace', maxAttempts: 3 },
-      ),
-    );
-    const jobs = (await listQueuedJobs(env.owner)).filter(
-      (j) => j.key === healthJobKey(connectionId),
-    );
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]?.payload).toEqual({ connectionId });
+    const after = await victimJob();
+    expect(after).toHaveLength(2);
+    expect(after.find((j) => j.payload._ws === b.ws)).toEqual(before[0]);
+    expect(after.find((j) => j.payload._ws === a.ws)).toMatchObject({
+      queueName: tenantJobName(a.ws, connectionQueue(b.connectionId)),
+      key: tenantJobName(a.ws, sendJobKey(deliveryId)),
+    });
   });
 });

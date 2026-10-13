@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { newId } from '@owlwire/core';
+import { sql } from 'drizzle-orm';
 import type { OwlwireDb } from '../handle.js';
 import { createApp } from '../repos/apps.js';
 import { createAudience, setAudienceMembers } from '../repos/audiences.js';
 import { SYSTEM_ACTOR } from '../repos/audit.js';
 import { createConnection } from '../repos/connections.js';
+import { q } from '../repos/context.js';
 import { createDeliveries } from '../repos/deliveries.js';
 import { createDestination } from '../repos/destinations.js';
 import { insertEvent } from '../repos/events.js';
@@ -23,6 +26,7 @@ export interface SeededTenant {
   ruleId: string;
   eventId: string;
   deliveryId: string;
+  digestId: string;
   secret: string;
 }
 
@@ -75,6 +79,17 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       { destinationId: dest.id, connectionId: conn.id },
     ]);
     if (!delivery) throw new Error('seed delivery missing');
+    // No P1a repository writes digests, connection counters or catalog types; raw rows (app role, own scope)
+    // give the snapshot and the composite FK tests a real row in every workspace-owned table.
+    const digestId = newId();
+    await q(
+      t,
+    ).execute(sql`insert into digests (id, workspace_id, destination_id, connection_id, window_start, window_end)
+      values (${digestId}, ${workspaceId}, ${dest.id}, ${conn.id}, now(), now() + interval '1 hour')`);
+    await q(t).execute(sql`insert into connection_counters (connection_id, workspace_id, day, sent)
+      values (${conn.id}, ${workspaceId}, '2026-10-12', 1)`);
+    await q(t).execute(sql`insert into catalog_types (app_id, key, name)
+      values (${app.id}, ${`${label}.type`}, ${label})`);
     return {
       workspaceId,
       connectionId: conn.id,
@@ -85,6 +100,7 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       ruleId: rule.id,
       eventId: ev.eventId,
       deliveryId: delivery.id,
+      digestId,
       secret,
     };
   });

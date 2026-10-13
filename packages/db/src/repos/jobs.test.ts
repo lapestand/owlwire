@@ -6,6 +6,8 @@ import {
   JOB_NAMES,
   routeQueue,
   sendJobKey,
+  TENANT_JOB_PAYLOAD_KEY,
+  tenantJobName,
 } from './jobs.js';
 
 describe('job names and keys (contract §9)', () => {
@@ -35,5 +37,11 @@ describe('job names and keys (contract §9)', () => {
       `digest:dest1:${Date.UTC(2026, 9, 12, 9)}`,
     );
     expect(healthJobKey('c1')).toBe('health:c1');
+  });
+
+  it('namespaces tenant queue names and job keys by workspace', () => {
+    expect(tenantJobName('ws1', sendJobKey('d1'))).toBe('w:ws1:send:d1');
+    expect(tenantJobName('ws1', connectionQueue('c1'))).toBe('w:ws1:conn:c1');
+    expect(TENANT_JOB_PAYLOAD_KEY).toBe('_ws');
   });
 });
