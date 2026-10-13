@@ -82,10 +82,54 @@ describe('withAdvisoryLock', () => {
   async function terminateLockHolder(key: number): Promise<void> {
     await pool.query(
       `select pg_terminate_backend(pid) from pg_locks
-       where locktype = 'advisory' and objid = $1 and granted`,
+       where locktype = 'advisory' and objid = $1 and granted
+         and database = (select oid from pg_database where datname = current_database())`,
       [key],
     );
   }
+
+  /** Collects uncaught exceptions (an unhandled pg client 'error' event lands here). */
+  async function captureUncaught(run: () => Promise<void>): Promise<unknown[]> {
+    const seen: unknown[] = [];
+    const onUncaught = (err: unknown) => seen.push(err);
+    process.on('uncaughtException', onUncaught);
+    try {
+      await run();
+      // give the terminated socket time to emit its 'error' event
+      await new Promise((r) => setTimeout(r, 300));
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+    return seen;
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('rejects with the lost session error, without an unhandled client error, when the lock holder is terminated', async () => {
+    const pool1 = createPool(tdb.url, 2);
+    const pool2 = createPool(tdb.url, 2);
+    try {
+      const uncaught = await captureUncaught(async () => {
+        const err = await withAdvisoryLock(pool1, KEY, async () => {
+          await terminateLockHolder(KEY);
+          await sleep(300);
+          return 'ok';
+        }).catch((e: unknown) => e);
+        expect(pgErrorCode(err)).toBe('57P01');
+      });
+      expect(uncaught).toEqual([]);
+      expect(pool1.totalCount).toBe(0);
+      await expect(
+        within(
+          withAdvisoryLock(pool2, KEY, async () => 'ok'),
+          2_000,
+        ),
+      ).resolves.toBe('ok');
+    } finally {
+      await pool1.end();
+      await pool2.end();
+    }
+  });
 
   it('releases the lock when fn throws so another pool acquires it immediately', async () => {
     const pool1 = createPool(tdb.url, 2);
@@ -112,12 +156,16 @@ describe('withAdvisoryLock', () => {
     const pool1 = createPool(tdb.url, 2);
     const pool2 = createPool(tdb.url, 2);
     try {
-      await expect(
-        withAdvisoryLock(pool1, KEY, async () => {
-          await terminateLockHolder(KEY);
-          throw new Error('boom');
-        }),
-      ).rejects.toThrow('boom');
+      const uncaught = await captureUncaught(async () => {
+        await expect(
+          withAdvisoryLock(pool1, KEY, async () => {
+            await terminateLockHolder(KEY);
+            await sleep(300);
+            throw new Error('boom');
+          }),
+        ).rejects.toThrow('boom');
+      });
+      expect(uncaught).toEqual([]);
       expect(pool1.totalCount).toBe(0);
       await expect(
         within(

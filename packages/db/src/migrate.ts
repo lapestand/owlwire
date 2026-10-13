@@ -16,8 +16,11 @@ export const defaultMigrationsFolder = fileURLToPath(new URL('../drizzle', impor
  * Runs fn while holding a session-level advisory lock on a dedicated pool client.
  * The lock holder occupies one connection for the whole call, so N concurrent callers
  * on the same pool need a pool size of at least N+1 when fn itself uses the pool.
- * If unlocking fails the client is destroyed (ending the session releases the lock)
- * and fn's own error, when there is one, is the one rethrown.
+ *
+ * pg-pool stops listening for client 'error' events while a client is checked out, so
+ * this function listens itself: if the server ends the session (57P01 on a restart or
+ * pg_terminate_backend) the lock is gone, the error is surfaced instead of crashing the
+ * process, and the client is destroyed. Whenever fn failed, fn's error wins.
  */
 export async function withAdvisoryLock<T>(
   pool: pg.Pool,
@@ -25,12 +28,24 @@ export async function withAdvisoryLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
+  let lostErr: Error | undefined;
+  const onError = (err: Error) => {
+    lostErr ??= err;
+  };
+  client.on('error', onError);
+  /** Passing an error destroys the client instead of returning it to the pool. */
+  const release = (err?: unknown) => {
+    client.off('error', onError);
+    client.release(err === undefined ? undefined : err instanceof Error ? err : true);
+  };
+
   try {
     await client.query('select pg_advisory_lock($1)', [key]);
   } catch (lockErr) {
-    client.release(lockErr instanceof Error ? lockErr : true);
-    throw lockErr;
+    release(lostErr ?? lockErr ?? true);
+    throw lostErr ?? lockErr;
   }
+
   let result: T | undefined;
   let fnErr: unknown;
   let failed = false;
@@ -40,13 +55,22 @@ export async function withAdvisoryLock<T>(
     failed = true;
     fnErr = err;
   }
-  try {
-    await client.query('select pg_advisory_unlock($1)', [key]);
-  } catch (unlockErr) {
-    client.release(unlockErr instanceof Error ? unlockErr : true);
-    throw failed ? fnErr : unlockErr;
+
+  if (!lostErr) {
+    try {
+      await client.query('select pg_advisory_unlock($1)', [key]);
+    } catch (unlockErr) {
+      const err = lostErr ?? unlockErr;
+      release(err ?? true);
+      throw failed ? fnErr : err;
+    }
   }
-  client.release();
+  if (lostErr) {
+    // the session ended, which released the lock; the client is unusable
+    release(lostErr);
+    throw failed ? fnErr : lostErr;
+  }
+  release();
   if (failed) throw fnErr;
   return result as T;
 }
