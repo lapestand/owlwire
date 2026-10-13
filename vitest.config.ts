@@ -7,6 +7,7 @@ const alias = [
   { find: /^@owlwire\/core\/message$/, replacement: r('./packages/core/src/message.ts') },
   { find: /^@owlwire\/core$/, replacement: r('./packages/core/src/index.ts') },
   { find: /^@owlwire\/crypto$/, replacement: r('./packages/crypto/src/index.ts') },
+  { find: /^@owlwire\/db\/migrate$/, replacement: r('./packages/db/src/migrate-all.ts') },
   { find: /^@owlwire\/db$/, replacement: r('./packages/db/src/index.ts') },
   { find: /^@owlwire\/testing$/, replacement: r('./packages/testing/src/index.ts') },
   { find: /^@owlwire\/contracts$/, replacement: r('./packages/contracts/src/index.ts') },

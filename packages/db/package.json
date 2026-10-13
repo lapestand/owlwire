@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/db",
-  "version": "0.18.2",
+  "version": "0.19.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,6 +8,11 @@
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./migrate": {
+      "source": "./src/migrate-all.ts",
+      "types": "./dist/migrate-all.d.ts",
+      "import": "./dist/migrate-all.js"
     }
   },
   "files": [
@@ -16,14 +21,16 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run --config ../../vitest.config.ts --project unit --passWithNoTests",
     "test:int": "vitest run --config ../../vitest.config.ts --project int --passWithNoTests",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@owlwire/core": "workspace:*",
+    "@owlwire/crypto": "workspace:*",
     "drizzle-orm": "^0.45.4",
+    "graphile-worker": "^0.18.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {

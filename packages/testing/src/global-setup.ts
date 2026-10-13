@@ -1,8 +1,10 @@
 import type { TestProject } from 'vitest/node';
-import { startPostgres } from './postgres.js';
+import { POSTGRES_IMAGE, startPostgres } from './postgres.js';
+import { TEST_OWNER } from './test-roles.js';
 
 export default async function setup(project: TestProject) {
-  const pg = await startPostgres();
+  // Süper kullanıcı TEST_OWNER (owlwire) olur: startTestDatabase sahip rolü olarak bu kullanıcıyı kullanır (R12, R51).
+  const pg = await startPostgres(process.env.OWLWIRE_TEST_PG_IMAGE ?? POSTGRES_IMAGE, TEST_OWNER);
   project.provide('pgAdminUrl', pg.url);
   return async () => {
     await pg.stop();

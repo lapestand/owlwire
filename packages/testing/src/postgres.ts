@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import pg from 'pg';
 
+/** R52: test Postgres imajının tek kaynağı; Spec §4.3'ün desteklenen en düşük ana sürümü (Görev 0 V15). */
 export const POSTGRES_IMAGE = 'postgres:18-alpine';
 
 export interface StartedPostgres {
@@ -9,8 +10,14 @@ export interface StartedPostgres {
   stop(): Promise<void>;
 }
 
-export async function startPostgres(image: string = POSTGRES_IMAGE): Promise<StartedPostgres> {
-  const container = await new PostgreSqlContainer(image).start();
+export async function startPostgres(
+  image: string = POSTGRES_IMAGE,
+  credentials?: { user: string; password: string },
+): Promise<StartedPostgres> {
+  let builder = new PostgreSqlContainer(image);
+  if (credentials)
+    builder = builder.withUsername(credentials.user).withPassword(credentials.password);
+  const container = await builder.start();
   return {
     url: container.getConnectionUri(),
     stop: async () => {
