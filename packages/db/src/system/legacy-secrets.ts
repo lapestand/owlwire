@@ -1,5 +1,6 @@
+import { DecryptError, UnknownKekVersionError } from '@owlwire/crypto';
 import { and, asc, eq, gt } from 'drizzle-orm';
-import { safeErrorMessage } from '../errors.js';
+import { LegacyDecryptFailedError, safeErrorMessage } from '../errors.js';
 import type { OwlwireDb } from '../handle.js';
 import { SYSTEM_ACTOR, writeAudit } from '../repos/audit.js';
 import { sealConnectionConfig } from '../repos/connection-crypto.js';
@@ -13,6 +14,30 @@ export type LegacyDecrypt = (ciphertext: Uint8Array) => Record<string, unknown>;
 export interface LegacyUpgradeResult {
   upgraded: number;
   failed: Array<{ connectionId: string; error: string }>;
+}
+
+/**
+ * Çözücü hatasından yalnız izin listesindeki, içerik taşımayan gerekçe türetilir. Hata mesajı asla kopyalanmaz:
+ * ör. `JSON.parse` SyntaxError'ı düz metni yankılar.
+ */
+function legacyDecryptFailureReason(err: unknown): string {
+  if (err instanceof UnknownKekVersionError && Number.isInteger(err.kekVersion)) {
+    return `no KEK with version ${err.kekVersion}; set OWLWIRE_KEK_PREVIOUS`;
+  }
+  if (err instanceof DecryptError) return 'DecryptError';
+  if (err instanceof SyntaxError) return 'invalid JSON';
+  return 'unrecognised decryptor error';
+}
+
+function decryptOrFail(
+  decryptLegacy: LegacyDecrypt,
+  ciphertext: Uint8Array,
+): Record<string, unknown> {
+  try {
+    return decryptLegacy(ciphertext);
+  } catch (err) {
+    throw new LegacyDecryptFailedError(legacyDecryptFailureReason(err));
+  }
 }
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
@@ -40,7 +65,11 @@ async function upgradeOne(
   const sealed =
     current.configEnc === null
       ? null
-      : await sealConnectionConfig(t, connectionId, decryptLegacy(current.configEnc));
+      : await sealConnectionConfig(
+          t,
+          connectionId,
+          decryptOrFail(decryptLegacy, current.configEnc),
+        );
   await q(t)
     .update(connections)
     .set({ configEnc: sealed, configEncScheme: 'dek_v1', updatedAt: now(t) })
@@ -53,8 +82,10 @@ async function upgradeOne(
  * Kapsamlar iç içe açılamaz: kimlikler sistem transaction'ında sayfa sayfa listelenir, her satır kendi kiracı
  * transaction'ında FOR UPDATE ile kilitlenip şema yeniden denetlenerek dönüştürülür; idempotent ve eşzamanlı
  * çalıştırmaya dayanıklıdır. Bir satırın hatası diğerlerini durdurmaz; `failed[].error` safeErrorMessage'dır,
- * çözülmüş içerik ya da sorgu parametresi taşımaz. Bir şey değiştiyse ya da başarısız olduysa tek bir
- * instance düzeyi `keys.legacy_secrets_upgraded` denetim kaydı (yalnız sayılar) yazılır.
+ * çözücü hataları sabit `LegacyDecryptFailedError`'a sarılır, böylece çözülmüş içerik, şifreli metin ya da
+ * sorgu parametresi taşımaz. En az bir satır dönüştüyse tek bir instance düzeyi `keys.legacy_secrets_upgraded`
+ * denetim kaydı (yalnız sayılar, `failed` dahil) yazılır; yalnız başarısızlık içeren çalıştırma hiçbir şeyi
+ * değiştirmediği için denetime girmez, loglarla raporlanır.
  */
 export async function upgradeLegacyConnectionSecrets(
   scope: SystemScope,
@@ -85,7 +116,7 @@ export async function upgradeLegacyConnectionSecrets(
       }
     }
   }
-  if (result.upgraded > 0 || result.failed.length > 0) {
+  if (result.upgraded > 0) {
     await withSystem(db, scope, (s) =>
       writeAudit(s, {
         workspaceId: null,

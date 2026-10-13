@@ -65,6 +65,17 @@ export class LegacySecretError extends Error {
   }
 }
 
+/**
+ * P0 legacy config çözülemedi. Mesaj yalnız sabit bir gerekçe taşır (izin listesi, `legacyDecryptFailureReason`);
+ * enjekte edilen çözücünün hata metni (düz metin ya da şifreli metin yankılayabilir) ve `cause` taşınmaz.
+ */
+export class LegacyDecryptFailedError extends Error {
+  constructor(readonly reason: string) {
+    super(`legacy connection config could not be decrypted (${reason})`);
+    this.name = 'LegacyDecryptFailedError';
+  }
+}
+
 interface PgLike {
   code?: unknown;
   constraint?: unknown;

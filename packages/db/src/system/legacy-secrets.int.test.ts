@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { createSecretBox } from '@owlwire/crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createSecretBox, DecryptError, UnknownKekVersionError } from '@owlwire/crypto';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { openConnectionConfig } from '../repos/connection-crypto.js';
 import { readConnectionConfig } from '../repos/connections.js';
@@ -60,6 +60,11 @@ describe('upgradeLegacyConnectionSecrets', () => {
         readConnectionConfig(t, withoutConfig, { purpose: 'send' }),
       ),
     ).toBeNull();
+    const { rows: nullRows } = await env.owner.query<{ config_enc_scheme: string }>(
+      'select config_enc_scheme from connections where id = $1',
+      [withoutConfig],
+    );
+    expect(nullRows[0]?.config_enc_scheme).toBe('dek_v1');
 
     expect(await upgradeLegacyConnectionSecrets(SYSTEM, env.db, decryptLegacy)).toEqual({
       upgraded: 0,
@@ -108,10 +113,17 @@ describe('upgradeLegacyConnectionSecrets', () => {
 });
 
 describe('upgradeLegacyConnectionSecrets (soft delete and concurrency)', () => {
-  beforeAll(async () => {
-    // The undecryptable row above stays kek_v0 and would be reported by every later run.
+  beforeEach(async () => {
+    // Undecryptable rows stay kek_v0 and would be reported by every later run.
     await env.owner.query("delete from connections where config_enc_scheme = 'kek_v0'");
   });
+
+  async function auditCount(): Promise<number> {
+    const { rows } = await env.owner.query<{ n: string }>(
+      "select count(*) as n from audit_log where action = 'keys.legacy_secrets_upgraded'",
+    );
+    return Number(rows[0]?.n);
+  }
 
   async function newWorkspace(prefix: string): Promise<string> {
     const ws = randomUUID();
@@ -177,6 +189,7 @@ describe('upgradeLegacyConnectionSecrets (soft delete and concurrency)', () => {
       [ws, `p0e-${ws}`],
     );
     const id = await insertLegacyConnection(ws, { botToken: 'nokey-token' });
+    const before = await auditCount();
 
     const result = await upgradeLegacyConnectionSecrets(SYSTEM, env.db, decryptLegacy);
     expect(result.upgraded).toBe(0);
@@ -185,5 +198,66 @@ describe('upgradeLegacyConnectionSecrets (soft delete and concurrency)', () => {
     ]);
     expect(result.failed[0]?.error).not.toContain('nokey-token');
     expect(result.failed[0]?.error).not.toContain('params:');
+    // Nothing changed, so a failure-only run writes no audit entry (reported through logs instead).
+    expect(await auditCount()).toBe(before);
+  });
+
+  it('never copies a decryptor error message into the result', async () => {
+    const ws = await newWorkspace('p0f');
+    const id = await insertLegacyConnection(ws, { botToken: 'leak-canary-7c1' });
+    const echoing: LegacyDecrypt = (ct) => {
+      throw new Error(`boom leak-canary-7c1 ${Buffer.from(ct).toString('hex')}`);
+    };
+    const before = await auditCount();
+
+    const result = await upgradeLegacyConnectionSecrets(SYSTEM, env.db, echoing);
+
+    expect(result).toEqual({
+      upgraded: 0,
+      failed: [
+        {
+          connectionId: id,
+          error:
+            'LegacyDecryptFailedError: legacy connection config could not be decrypted (unrecognised decryptor error)',
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain('leak-canary-7c1');
+    expect(await auditCount()).toBe(before);
+  });
+
+  it('maps allowlisted decryptor failures to fixed reasons', async () => {
+    const ws = await newWorkspace('p0g');
+    const ids: string[] = [];
+    for (let n = 0; n < 3; n++)
+      ids.push(await insertLegacyConnection(ws, { botToken: 'leak-canary-2b8' }));
+    const parseError = (() => {
+      try {
+        JSON.parse('leak-canary-2b8');
+      } catch (err) {
+        return err;
+      }
+      throw new Error('expected a SyntaxError');
+    })();
+    const errors: unknown[] = [
+      new UnknownKekVersionError(7),
+      new DecryptError('leak-canary-2b8'),
+      parseError,
+    ];
+    // Rows are processed in id order (randomUUID is unordered), so errors are assigned in that order.
+    const failing: LegacyDecrypt = () => {
+      throw errors.shift();
+    };
+
+    const result = await upgradeLegacyConnectionSecrets(SYSTEM, env.db, failing);
+
+    expect(result.upgraded).toBe(0);
+    expect(result.failed.map((f) => f.connectionId)).toEqual([...ids].sort());
+    expect(result.failed.map((f) => f.error.replace(/^.*\((.*)\)$/, '$1'))).toEqual([
+      'no KEK with version 7; set OWLWIRE_KEK_PREVIOUS',
+      'DecryptError',
+      'invalid JSON',
+    ]);
+    expect(JSON.stringify(result)).not.toContain('leak-canary-2b8');
   });
 });

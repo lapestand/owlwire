@@ -1,4 +1,10 @@
-import { createKeyring, createSecretBox, DecryptError, generateKek } from '@owlwire/crypto';
+import {
+  createKeyring,
+  createSecretBox,
+  DecryptError,
+  generateKek,
+  UnknownKekVersionError,
+} from '@owlwire/crypto';
 import type { OwlwireDb } from '@owlwire/db';
 import { describe, expect, it, vi } from 'vitest';
 import { legacyDecryptor, upgradeLegacySecrets } from './legacy-secrets.js';
@@ -23,11 +29,26 @@ describe('legacyDecryptor', () => {
     expect(legacyDecryptor(createKeyring(generateKek(2), old))(ct)).toEqual({ botToken: 'y' });
   });
 
-  it('throws DecryptError without leaking content when no key works', () => {
-    const ct = createSecretBox(createKeyring(generateKek(1))).seal({ botToken: 'z' });
-    const run = () => legacyDecryptor(createKeyring(generateKek(5)))(ct);
+  it('throws DecryptError without leaking content when the KEK does not match', () => {
+    // Same version, different key material: the AEAD check fails.
+    const ct = createSecretBox(createKeyring(generateKek(1))).seal({ botToken: 'leak-canary-9f3' });
+    const run = () => legacyDecryptor(createKeyring(generateKek(1)))(ct);
     expect(run).toThrow(DecryptError);
-    expect(run).not.toThrow(/z/);
+    expect(run).not.toThrow(/leak-canary-9f3/);
+  });
+
+  it('reports a missing KEK version as UnknownKekVersionError naming only the version', () => {
+    const ct = createSecretBox(createKeyring(generateKek(1))).seal({ botToken: 'leak-canary-9f3' });
+    const run = () => legacyDecryptor(createKeyring(generateKek(5)))(ct);
+    expect(run).toThrow(UnknownKekVersionError);
+    expect(run).toThrow(/version 1\b.*OWLWIRE_KEK_PREVIOUS/);
+    expect(run).not.toThrow(/leak-canary-9f3/);
+  });
+
+  it('keeps fixed structural messages from SecretBox', () => {
+    const run = () => legacyDecryptor(createKeyring(generateKek(1)))(Buffer.from([1, 2, 3, 4]));
+    expect(run).toThrow(DecryptError);
+    expect(run).toThrow('unknown secret box format');
   });
 
   it('rejects non-object payloads', () => {
@@ -78,6 +99,24 @@ describe('upgradeLegacySecrets', () => {
     expect(
       JSON.stringify([log.info.mock.calls, log.warn.mock.calls, log.error.mock.calls]),
     ).not.toContain('secret-value');
+  });
+
+  it('uses a distinct summary message when nothing was upgraded but rows failed', async () => {
+    system.backfillWorkspaceKeys.mockResolvedValueOnce(0);
+    system.upgradeLegacyConnectionSecrets.mockResolvedValueOnce({
+      upgraded: 0,
+      failed: [{ connectionId: 'c-2', error: 'LegacyDecryptFailedError: x' }],
+    });
+    const log = logger();
+
+    await upgradeLegacySecrets(db, createKeyring(generateKek(1)), log);
+
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.info).toHaveBeenCalledWith(
+      { keysCreated: 0, upgraded: 0, failed: 1 },
+      'legacy secret upgrade finished with failures',
+    );
+    expect(log.error).toHaveBeenCalledTimes(1);
   });
 
   it('stays quiet when there is nothing to do', async () => {
