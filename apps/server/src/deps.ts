@@ -27,7 +27,15 @@ export function createDeps(
   overrides: Partial<Omit<Deps, 'config'>> = {},
 ): Deps {
   const logger = overrides.logger ?? createLogger(config.logLevel);
-  const pool = overrides.pool ?? createPool(config.databaseUrl);
+  let pool = overrides.pool;
+  if (!pool) {
+    pool = createPool(config.databaseUrl);
+    // Unhandled 'error' events on the pool or on a checked-out client kill the process.
+    pool.on('error', (err) => logger.error({ err }, 'idle database client error'));
+    pool.on('connect', (client) => {
+      client.on('error', (err) => logger.error({ err }, 'database client error'));
+    });
+  }
   const db = overrides.db ?? createDb(pool);
   const clock = overrides.clock ?? systemClock;
   const adapters =

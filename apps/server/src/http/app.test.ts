@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { systemClock } from '@owlwire/core';
 import type { Db } from '@owlwire/db';
+import { HTTPException } from 'hono/http-exception';
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '../logger.js';
 import { type AppDeps, createApp } from './app.js';
@@ -79,6 +80,17 @@ describe('errors', () => {
     expect(text).not.toContain('hunter2');
     expect(JSON.parse(text).code).toBe('internal');
   });
+
+  it('maps a 400 HTTPException such as a malformed JSON body to validation_failed', async () => {
+    const app = makeApp();
+    app.post('/parse', () => {
+      throw new HTTPException(400, { message: 'Malformed JSON in request body' });
+    });
+    const res = await app.request('/parse', { method: 'POST', body: '{not json' });
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
+    expect(((await res.json()) as { code: string }).code).toBe('validation_failed');
+  });
 });
 
 describe('static ui', () => {
@@ -101,6 +113,12 @@ describe('static ui', () => {
   it('refuses path traversal', async () => {
     const res = await app.request('/..%2f..%2f..%2fetc%2fpasswd');
     expect(res.status).toBe(404);
+  });
+
+  it('mounts the v1 api ahead of the static handler', async () => {
+    const res = await app.request('/v1/events', { method: 'POST', body: '{}' });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
   });
 
   it('never answers api paths with html', async () => {

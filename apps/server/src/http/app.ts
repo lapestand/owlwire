@@ -7,6 +7,7 @@ import type { ServerConfig } from '../config/load.js';
 import { requestId } from './middleware/request-id.js';
 import { ProblemError, problem } from './problem.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
+import { v1Routes } from './routes/v1/index.js';
 import { staticHandler } from './static.js';
 import type { AppEnv } from './types.js';
 
@@ -27,12 +28,16 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (err.name === 'BodyLimitError' || (err instanceof HTTPException && err.status === 413)) {
       return problem(c, new ProblemError(413, 'payload_too_large'));
     }
+    if (err instanceof HTTPException && err.status === 400) {
+      return problem(c, new ProblemError(400, 'validation_failed', err.message || undefined));
+    }
     (c.get('log') ?? deps.logger).error({ err }, 'unhandled error');
     return problem(c, new ProblemError(500, 'internal'));
   });
   app.notFound((c) => problem(c, new ProblemError(404, 'not_found')));
 
   app.route('/', healthRoutes(deps.checkReady ?? dbReadiness(deps.db)));
+  app.route('/v1', v1Routes({ db: deps.db }));
 
   if (deps.webDir) app.get('*', staticHandler(deps.webDir));
   return app;
