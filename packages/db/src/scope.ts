@@ -1,6 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { type SQL, sql } from 'drizzle-orm';
-import { type DbInternals, type DrizzleTx, dbInternals, type OwlwireDb } from './handle.js';
+import {
+  bindDrizzle,
+  type DbInternals,
+  type DrizzleTx,
+  dbInternals,
+  type OwlwireDb,
+} from './handle.js';
 
 export interface TenantScope {
   readonly workspaceId: string;
@@ -132,6 +138,14 @@ export function txInternals(t: TenantTx | SystemTx): TxInternals {
 /** Marks the async context of an open scope callback; `open` is cleared when the callback ends. */
 const activeScope = new AsyncLocalStorage<{ open: boolean }>();
 
+/**
+ * Owns the connection of a scoped transaction. drizzle-orm 0.45's pool-level `transaction()` runs BEGIN
+ * outside its try/finally, so a failed BEGIN never released the client (a pool slot leaked for good).
+ * Here the client is checked out explicitly and always released in `finally`; drizzle's transaction runs
+ * on a client-bound instance (no pool branch, no release of its own). Errors that did not come from the
+ * callback body (BEGIN, COMMIT or ROLLBACK failed, or a body error whose rollback then failed) mean the
+ * connection may be broken: the client is released with the error so pg-pool destroys it.
+ */
 async function runScoped<X extends TenantTx | SystemTx, T>(
   db: OwlwireDb,
   gucs: SQL,
@@ -145,18 +159,37 @@ async function runScoped<X extends TenantTx | SystemTx, T>(
   const internals = dbInternals(db);
   const marker = { open: true };
   try {
-    return await activeScope.run(marker, () =>
-      internals.drizzle.transaction(async (tx) => {
-        await tx.execute(gucs);
-        const x = build({ tx, db: internals });
-        try {
-          return await fn(x);
-        } finally {
-          close(x);
-          marker.open = false;
+    return await activeScope.run(marker, async () => {
+      const client = await internals.pool.connect();
+      let bodyFailed = false;
+      let bodyError: unknown;
+      let releaseError: Error | undefined;
+      try {
+        return await bindDrizzle(client).transaction(async (tx) => {
+          const x = build({ tx, db: internals });
+          try {
+            await tx.execute(gucs);
+            return await fn(x);
+          } catch (err) {
+            bodyFailed = true;
+            bodyError = err;
+            throw err;
+          } finally {
+            // Closed before drizzle issues COMMIT or ROLLBACK.
+            close(x);
+            marker.open = false;
+          }
+        });
+      } catch (err) {
+        // Same error as the body threw: drizzle's ROLLBACK succeeded and the connection is reusable.
+        if (!(bodyFailed && err === bodyError)) {
+          releaseError = err instanceof Error ? err : new Error('scoped transaction failed');
         }
-      }),
-    );
+        throw err;
+      } finally {
+        client.release(releaseError);
+      }
+    });
   } finally {
     // Also covers failures before fn runs (connect, BEGIN, GUC step) and COMMIT failures.
     marker.open = false;

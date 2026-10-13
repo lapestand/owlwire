@@ -5,6 +5,9 @@ import type pg from 'pg';
 import { createPool } from './client.js';
 import * as schema from './schema/index.js';
 
+/** Shared by the pool-bound instance and the per-transaction client-bound instances (schema, casing). */
+const DRIZZLE_CONFIG = { schema } as const;
+
 export type Drizzle = NodePgDatabase<typeof schema>;
 export type DrizzleTx = Parameters<Parameters<Drizzle['transaction']>[0]>[0];
 
@@ -51,6 +54,20 @@ export function dbInternals(db: OwlwireDb): DbInternals {
   return readInternals(db);
 }
 
+// pg-pool reuses client objects across checkouts; building a drizzle instance costs ~0.1 ms (schema
+// relations), so one is kept per client and dropped with it.
+const boundDrizzle = new WeakMap<pg.PoolClient, Drizzle>();
+
+/** Paket içi. A drizzle instance bound to one checked-out client, configured like the main instance. */
+export function bindDrizzle(client: pg.PoolClient): Drizzle {
+  let bound = boundDrizzle.get(client);
+  if (!bound) {
+    bound = drizzle({ client, ...DRIZZLE_CONFIG });
+    boundDrizzle.set(client, bound);
+  }
+  return bound;
+}
+
 export function openDatabase(opts: OpenDatabaseOptions): OwlwireDb {
   // P0 createPool: connectionTimeoutMillis 5_000 (Görev 0 V5).
   const pool = createPool(opts.url, opts.maxConnections ?? 10);
@@ -69,7 +86,7 @@ export function openDatabase(opts: OpenDatabaseOptions): OwlwireDb {
     }),
   );
   return new OwlwireDb({
-    drizzle: drizzle({ client: pool, schema }),
+    drizzle: drizzle({ client: pool, ...DRIZZLE_CONFIG }),
     pool,
     keyring: opts.keyring,
     clock: opts.clock,

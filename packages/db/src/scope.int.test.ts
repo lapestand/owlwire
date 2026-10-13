@@ -312,40 +312,81 @@ describe('nested scopes', () => {
   });
 });
 
-describe('scope marker on failures before the callback', () => {
-  it('a continuation left by a scope whose BEGIN failed is not treated as nested', async () => {
-    const broken = openDatabase({
+describe('connection lifecycle', () => {
+  const openOne = () =>
+    openDatabase({
       url: tdb.appUrl,
       keyring: createKeyring(generateKek(1)),
       clock: new FakeClock(new Date(0)),
       maxConnections: 1,
     });
-    const { pool } = dbInternals(broken);
+  const pidIn = (db: OwlwireDb) =>
+    withTenant(db, tenantScope(WS_A), async (t) => {
+      const res = await txInternals(t).tx.execute(sql`select pg_backend_pid() as pid`);
+      return (res.rows[0] as { pid: number }).pid;
+    });
+  const watchReleases = (db: OwlwireDb) => {
+    const released: (Error | undefined)[] = [];
+    dbInternals(db).pool.on('release', (err: Error | undefined) => released.push(err));
+    return released;
+  };
+
+  it('a failed BEGIN gives the pool slot back, destroys the client and leaves no nested marker', async () => {
+    const one = openOne();
+    const released = watchReleases(one);
     let continuation: Promise<unknown> | undefined;
-    let acquired: pg.PoolClient | undefined;
     // 'acquire' fires inside the scope's async context, so the timer inherits the scope marker.
-    pool.once('acquire', (client: pg.PoolClient) => {
-      acquired = client;
+    dbInternals(one).pool.once('acquire', (client: pg.PoolClient) => {
       continuation = new Promise((resolve) => setTimeout(resolve, 50)).then(() =>
         withTenant(single, tenantScope(WS_B), async (t) => t.workspaceId).catch((e: unknown) => e),
       );
-      // Queued ahead of drizzle's BEGIN: leaves the connection in an aborted transaction, so the
+      // Queued ahead of the scope's BEGIN: leaves the connection in an aborted transaction, so the
       // scope's BEGIN fails (25P02) before fn can run.
       client.query('begin').catch(() => undefined);
       client.query('select 1/0').catch(() => undefined);
     });
-    try {
-      const failed = await withTenant(broken, tenantScope(WS_A), async () => 'never').catch(
-        (e: unknown) => e,
+    const failed = await withTenant(one, tenantScope(WS_A), async () => 'never').catch(
+      (e: unknown) => e,
+    );
+    expect(pgErrorOf(failed)?.code).toBe('25P02');
+    expect(await continuation).toBe(WS_B);
+    expect(released).toHaveLength(1);
+    expect(released[0]).toBeInstanceOf(Error);
+    // max 1: this only works if the slot came back.
+    expect(await withTenant(one, tenantScope(WS_B), async (t) => t.workspaceId)).toBe(WS_B);
+    await expect(one.close()).resolves.toBeUndefined();
+  });
+
+  it('a body error with a clean rollback returns the same client to the pool', async () => {
+    const one = openOne();
+    const released = watchReleases(one);
+    const before = await pidIn(one);
+    await expect(
+      withTenant(one, tenantScope(WS_A), async (t) => {
+        await txInternals(t).tx.execute(sql`select 1/0`);
+      }),
+    ).rejects.toBeInstanceOf(Error);
+    expect(await pidIn(one)).toBe(before);
+    expect(released).toEqual([undefined, undefined, undefined]);
+    await one.close();
+  });
+
+  it('a failed COMMIT destroys the client and frees the slot', async () => {
+    const one = openOne();
+    const released = watchReleases(one);
+    const before = await pidIn(one);
+    const failed = await withTenant(one, tenantScope(WS_A), async (t) => {
+      const { tx } = txInternals(t);
+      await tx.execute(
+        sql`create temp table commit_probe (x int unique deferrable initially deferred) on commit drop`,
       );
-      expect(pgErrorOf(failed)?.code).toBe('25P02');
-      expect(await continuation).toBe(WS_B);
-    } finally {
-      // drizzle-orm 0.45 runs BEGIN outside its try/finally, so a failed BEGIN never releases the
-      // client; release it here so the pool can end.
-      acquired?.release(true);
-      await broken.close();
-    }
+      await tx.execute(sql`insert into commit_probe values (1), (1)`);
+      return 'body done';
+    }).catch((e: unknown) => e);
+    expect(pgErrorOf(failed)?.code).toBe('23505');
+    expect(released.at(-1)).toBeInstanceOf(Error);
+    expect(await pidIn(one)).not.toBe(before);
+    await expect(one.close()).resolves.toBeUndefined();
   });
 });
 
