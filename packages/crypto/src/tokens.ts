@@ -15,6 +15,9 @@ export function base62(bytes: Uint8Array, length: number): string {
     out = ALPHABET.charAt(Number(n % 62n)) + out;
     n /= 62n;
   }
+  if (out.length > length) {
+    throw new RangeError(`base62 value needs ${out.length} characters, more than ${length}`);
+  }
   return out.padStart(length, '0');
 }
 

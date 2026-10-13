@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { open, seal } from './aead.js';
+import { jsonBytes, open, seal } from './aead.js';
 import { KEY_BYTES, type Kek, type KekRing } from './keys.js';
 
 const WRAP_FORMAT = 0x01;
@@ -33,7 +33,7 @@ export function unwrapDek(ring: KekRing, wrapped: Buffer): Buffer {
 
 export function encryptJson(dek: Buffer, value: unknown): Buffer {
   const aad = Buffer.of(DATA_FORMAT);
-  const plaintext = Buffer.from(JSON.stringify(value), 'utf8');
+  const plaintext = jsonBytes(value);
   return Buffer.concat([aad, seal(dek, plaintext, aad)]);
 }
 
@@ -43,12 +43,16 @@ export function decryptJson<T>(dek: Buffer, blob: Buffer): T {
   return JSON.parse(plaintext.toString('utf8')) as T;
 }
 
+/** @deprecated P1a: yalnız P0 legacy `config_enc` (kek_v0, 0x02) okuması için (Görev 13); yeni sırlar sealJson + workspace DEK ile yazılır. */
 export interface SecretBox {
   seal(value: unknown): Buffer;
   open<T>(blob: Buffer): T;
 }
 
-/** Self-contained envelope (one DEK per secret); used for connections.config_enc in P0. */
+/**
+ * Self-contained envelope (one DEK per secret); used for connections.config_enc in P0.
+ * @deprecated P1a: yalnız P0 legacy `config_enc` (kek_v0, 0x02) okuması için (Görev 13); yeni sırlar sealJson + workspace DEK ile yazılır.
+ */
 export function createSecretBox(ring: KekRing): SecretBox {
   return {
     seal(value) {
@@ -62,6 +66,7 @@ export function createSecretBox(ring: KekRing): SecretBox {
     open<T>(blob: Buffer): T {
       if (blob.length < 3 || blob[0] !== BOX_FORMAT) throw new Error('unknown secret box format');
       const len = blob.readUInt16BE(1);
+      if (len < 3 || blob.length < 3 + len + 1) throw new Error('secret box is truncated');
       const wrapped = blob.subarray(3, 3 + len);
       const dek = unwrapDek(ring, wrapped);
       return decryptJson<T>(dek, blob.subarray(3 + len));
