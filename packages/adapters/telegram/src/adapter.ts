@@ -7,6 +7,7 @@ import type {
 } from '@owlwire/adapter-sdk';
 import { Api, GrammyError } from 'grammy';
 import { mapTelegramError } from './errors.js';
+import { withNativeAbortSignal } from './fetch.js';
 import { renderTelegramHtml, TELEGRAM_MAX_TEXT } from './render.js';
 
 /** Contents of connections.config_enc for platform = telegram, kind = own_bot. */
@@ -31,8 +32,14 @@ function ownBotToken(conn: ConnectionRef): string | null {
 
 export const createTelegramAdapter: AdapterFactory = (deps, instanceConfig) => {
   const apiRoot = typeof instanceConfig.apiRoot === 'string' ? instanceConfig.apiRoot : undefined;
+  const timeoutSeconds =
+    typeof instanceConfig.timeoutSeconds === 'number' && instanceConfig.timeoutSeconds > 0
+      ? instanceConfig.timeoutSeconds
+      : 30;
+  // grammY hands fetch a polyfilled AbortSignal that Node's native fetch rejects.
+  const fetchFn = withNativeAbortSignal(deps.fetch);
   const apiFor = (token: string) =>
-    new Api(token, { fetch: deps.fetch, timeoutSeconds: 30, ...(apiRoot ? { apiRoot } : {}) });
+    new Api(token, { fetch: fetchFn, timeoutSeconds, ...(apiRoot ? { apiRoot } : {}) });
 
   async function check(conn: ConnectionRef): Promise<Health> {
     const token = ownBotToken(conn);
