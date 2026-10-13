@@ -1,16 +1,29 @@
 {
   "name": "@owlwire/server",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "owlwire": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "drizzle",
+    "public"
+  ],
   "scripts": {
+    "build": "tsup && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
+    "dev": "tsx watch --conditions=source src/main.ts serve",
+    "start": "node dist/main.js serve",
     "test": "vitest run --config ../../vitest.config.ts --project unit --passWithNoTests",
     "test:int": "vitest run --config ../../vitest.config.ts --project int --passWithNoTests"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.4",
+    "commander": "^15.0.0",
     "drizzle-orm": "^0.45.4",
+    "grammy": "^1.46.0",
     "graphile-worker": "^0.18.0",
     "hono": "^4.13.13",
     "pg": "^8.23.1",
@@ -26,6 +39,8 @@
     "@owlwire/crypto": "workspace:*",
     "@owlwire/db": "workspace:*",
     "@owlwire/testing": "workspace:*",
-    "@types/pg": "^8.23.1"
+    "@types/pg": "^8.23.1",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15"
   }
 }
