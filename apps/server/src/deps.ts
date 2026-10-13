@@ -1,7 +1,7 @@
 import { type Clock, systemClock } from '@owlwire/core';
-import { createKeyring, createSecretBox, type Keyring, type SecretBox } from '@owlwire/crypto';
-import { createPool, type OwlwireDb, openDatabase } from '@owlwire/db';
-import type pg from 'pg';
+import { createKeyring, type Keyring } from '@owlwire/crypto';
+import { type OwlwireDb, openDatabase } from '@owlwire/db';
+import pg from 'pg';
 import type { Logger } from 'pino';
 import {
   type AdapterRegistry,
@@ -19,8 +19,6 @@ export interface Deps {
   keyring: Keyring;
   clock: Clock;
   logger: Logger;
-  /** Only for reading P0 legacy config_enc (kek_v0, Task 13); new secrets are sealed inside the repositories. */
-  crypto: SecretBox;
   adapters: AdapterRegistry;
   rand: () => number;
 }
@@ -37,7 +35,12 @@ export function createDeps(
   const logger = overrides.logger ?? createLogger(config.logLevel);
   let pool = overrides.pool;
   if (!pool) {
-    pool = createPool(config.databaseUrl);
+    // Same limits as the @owlwire/db handle's pool: a bounded size and a 5 s connect timeout (P0 Task 0 V5).
+    pool = new pg.Pool({
+      connectionString: config.databaseUrl,
+      max: 10,
+      connectionTimeoutMillis: 5_000,
+    });
     // Unhandled 'error' events on the pool or on a checked-out client kill the process.
     pool.on('error', (err) => logger.error({ err }, 'idle database client error'));
     pool.on('connect', (client) => {
@@ -70,7 +73,6 @@ export function createDeps(
     keyring,
     clock,
     logger,
-    crypto: overrides.crypto ?? createSecretBox(config.kek),
     adapters,
     rand: overrides.rand ?? Math.random,
   };

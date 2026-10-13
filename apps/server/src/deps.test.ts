@@ -17,6 +17,11 @@ describe('createDeps', () => {
     expect(() => deps?.pool.emit('error', new Error('connection reset'))).not.toThrow();
   });
 
+  it('builds the worker pool with a bounded size and a connect timeout', () => {
+    deps = createDeps(testConfig('postgres://user:pass@127.0.0.1:1/none'));
+    expect(deps.pool.options).toMatchObject({ max: 10, connectionTimeoutMillis: 5_000 });
+  });
+
   it('refuses a db override without a pool override instead of opening an unrelated pool', async () => {
     const config = testConfig('postgres://user:pass@127.0.0.1:1/none');
     const base = createDeps(config);

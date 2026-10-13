@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPool } from './client.js';
+import * as root from './index.js';
 
 describe('createPool', () => {
   let pool: ReturnType<typeof createPool> | undefined;
@@ -14,5 +15,12 @@ describe('createPool', () => {
       max: 3,
       connectionTimeoutMillis: 5_000,
     });
+  });
+});
+
+describe('@owlwire/db root export', () => {
+  it('hands out no raw pg pool or Drizzle instance (only the opaque OwlwireDb handle)', () => {
+    expect(Object.keys(root)).not.toContain('createPool');
+    expect(Object.keys(root)).not.toContain('createDb');
   });
 });

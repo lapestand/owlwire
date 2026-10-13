@@ -125,7 +125,7 @@ module.exports = {
       severity: 'error',
       from: { pathNot: '^packages/db/' },
       to: {
-        path: '^packages/db/(src|dist)/(handle|scope|errors|roles|rls-sql|schema/|repos/(?!index\\.)|__test__/)',
+        path: '^packages/db/(src|dist)/(client|handle|scope|errors|roles|rls-sql|schema/|repos/(?!index\\.)|__test__/)',
       },
     },
   ],
