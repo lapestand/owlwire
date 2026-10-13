@@ -17,6 +17,11 @@ const urlAs = (base: string, user: string, password: string) => {
   return u.toString();
 };
 
+async function expectAppRoleError(result: Promise<unknown>, message: RegExp): Promise<void> {
+  await expect(result).rejects.toBeInstanceOf(AppRoleError);
+  await expect(result).rejects.toThrow(message);
+}
+
 beforeAll(async () => {
   tdb = await startTestDatabase({ migrate: migrateAll });
   app = new pg.Pool({ connectionString: tdb.appUrl });
@@ -106,19 +111,21 @@ describe('app role', () => {
     await expect(ensureAppRole(tdb.ownerUrl, tdb.ownerUrl)).resolves.toBe('same');
   });
 
-  it('refuses an existing superuser or BYPASSRLS role as app role', async () => {
+  it('refuses an existing BYPASSRLS role as app role', async () => {
     const evil = `evil_app_${suffix}`;
     await owner.query(`create role ${evil} login password 'x' bypassrls`);
-    await expect(ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, evil, 'x'))).rejects.toBeInstanceOf(
-      AppRoleError,
+    await expectAppRoleError(
+      ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, evil, 'x')),
+      /is SUPERUSER or BYPASSRLS;/,
     );
   });
 
   it('refuses an existing superuser role as app role', async () => {
     const su = `su_app_${suffix}`;
     await owner.query(`create role ${su} login password 'x' superuser`);
-    await expect(ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, su, 'x'))).rejects.toBeInstanceOf(
-      AppRoleError,
+    await expectAppRoleError(
+      ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, su, 'x')),
+      /is SUPERUSER or BYPASSRLS;/,
     );
   });
 
@@ -126,9 +133,10 @@ describe('app role', () => {
     const member = `owner_member_${suffix}`;
     await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
     await owner.query(`grant ${TEST_OWNER.user} to ${member}`);
-    await expect(
+    await expectAppRoleError(
       ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, member, 'x')),
-    ).rejects.toBeInstanceOf(AppRoleError);
+      /member of the owner role/,
+    );
   });
 
   it('refuses an app role that is a member of a BYPASSRLS role', async () => {
@@ -137,9 +145,22 @@ describe('app role', () => {
     await owner.query(`create role ${bypass} nologin bypassrls`);
     await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
     await owner.query(`grant ${bypass} to ${member}`);
-    await expect(
+    await expectAppRoleError(
       ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, member, 'x')),
-    ).rejects.toBeInstanceOf(AppRoleError);
+      /member of a SUPERUSER or BYPASSRLS role/,
+    );
+  });
+
+  it('refuses an app role that is a member of a non-owner superuser role', async () => {
+    const su = `su_grp_${suffix}`;
+    const member = `su_member_${suffix}`;
+    await owner.query(`create role ${su} nologin superuser`);
+    await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
+    await owner.query(`grant ${su} to ${member}`);
+    await expectAppRoleError(
+      ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, member, 'x')),
+      /member of a SUPERUSER or BYPASSRLS role/,
+    );
   });
 
   it('refuses an app role that owns an application relation', async () => {
@@ -149,11 +170,55 @@ describe('app role', () => {
     await owner.query(`create table public.${table} (id int)`);
     await owner.query(`alter table public.${table} owner to ${tableOwner}`);
     try {
-      await expect(
+      await expectAppRoleError(
         ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, tableOwner, 'x')),
-      ).rejects.toBeInstanceOf(AppRoleError);
+        /owns relations/,
+      );
     } finally {
       await owner.query(`drop table public.${table}`);
+    }
+  });
+
+  it('refuses an app role that inherits a role owning an application relation', async () => {
+    const group = `rel_owner_grp_${suffix}`;
+    const member = `rel_owner_member_${suffix}`;
+    const table = `owned_by_grp_${suffix}`;
+    await owner.query(`create role ${group} nologin nosuperuser nobypassrls`);
+    await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
+    await owner.query(`grant ${group} to ${member}`);
+    await owner.query(`create table public.${table} (id int)`);
+    await owner.query(`alter table public.${table} owner to ${group}`);
+    try {
+      await expectAppRoleError(
+        ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, member, 'x')),
+        /owns relations/,
+      );
+    } finally {
+      await owner.query(`drop table public.${table}`);
+    }
+  });
+
+  it('refuses an app role that owns an application schema through membership', async () => {
+    const group = `schema_owner_grp_${suffix}`;
+    const member = `schema_owner_member_${suffix}`;
+    await owner.query(`create role ${group} nologin nosuperuser nobypassrls`);
+    await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
+    await owner.query(`grant ${group} to ${member}`);
+    const existing = await owner.query<{ owner: string }>(
+      "select nspowner::regrole::text as owner from pg_namespace where nspname = 'owlwire_private'",
+    );
+    const previousOwner = existing.rows[0]?.owner;
+    if (previousOwner) await owner.query(`alter schema owlwire_private owner to ${group}`);
+    else await owner.query(`create schema owlwire_private authorization ${group}`);
+    try {
+      await expectAppRoleError(
+        ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, member, 'x')),
+        /owns schemas/,
+      );
+    } finally {
+      if (previousOwner)
+        await owner.query(`alter schema owlwire_private owner to ${previousOwner}`);
+      else await owner.query('drop schema owlwire_private');
     }
   });
 

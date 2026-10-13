@@ -32,13 +32,15 @@ const isDuplicateObject = (err: unknown): boolean => {
 
 /**
  * Rolün kendi bayrakları yetmez: sahip rolünün üyesi sahip sayılır, SUPERUSER/BYPASSRLS bir rolün üyesi
- * SET ROLE ile RLS'i aşabilir, uygulama şemalarında nesne sahibi olan rol o nesnede RLS'e tabi değildir.
+ * SET ROLE ile RLS'i aşabilir, uygulama şemalarında nesne ya da şema sahibi olan rol (doğrudan ya da üyelikle)
+ * o nesnede RLS'e tabi değildir ya da nesneleri değiştirebilir.
  */
 async function assertSubjectToRls(client: pg.Client, appUser: string): Promise<void> {
   const { rows } = await client.query<{
     owner_member: boolean;
     privileged_member: boolean;
     owns_relation: boolean;
+    owns_schema: boolean;
   }>(
     `select
        pg_has_role($1, current_user, 'MEMBER') as owner_member,
@@ -48,9 +50,12 @@ async function assertSubjectToRls(client: pg.Client, appUser: string): Promise<v
        ) as privileged_member,
        exists (
          select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
-         where n.nspname = any($2::text[])
-           and c.relowner = (select oid from pg_roles where rolname = $1)
-       ) as owns_relation`,
+         where n.nspname = any($2::text[]) and pg_has_role($1, c.relowner, 'MEMBER')
+       ) as owns_relation,
+       exists (
+         select 1 from pg_namespace n
+         where n.nspname = any($2::text[]) and pg_has_role($1, n.nspowner, 'MEMBER')
+       ) as owns_schema`,
     [appUser, APP_SCHEMAS],
   );
   const check = rows[0];
@@ -67,6 +72,11 @@ async function assertSubjectToRls(client: pg.Client, appUser: string): Promise<v
   if (check?.owns_relation) {
     throw new AppRoleError(
       `role ${appUser} owns relations in ${APP_SCHEMAS.join(', ')}; the application role must not own tables`,
+    );
+  }
+  if (check?.owns_schema) {
+    throw new AppRoleError(
+      `role ${appUser} owns schemas among ${APP_SCHEMAS.join(', ')}; the application role must not own schemas`,
     );
   }
 }
@@ -89,14 +99,18 @@ async function allowGraphileWorkerTables(client: pg.Client, appUser: string): Pr
     [policy],
   );
   for (const { relname } of tables.rows) {
+    // Transaction içinde çalışır; çakışan bir politika transaction'ı bozmasın diye savepoint kullanılır.
+    await client.query('savepoint create_policy');
     try {
       await client.query(
         `create policy ${client.escapeIdentifier(policy)} on graphile_worker.${client.escapeIdentifier(relname)} ` +
           `for all to ${client.escapeIdentifier(appUser)} using (true) with check (true)`,
       );
+      await client.query('release savepoint create_policy');
     } catch (err) {
       // Advisory lock dışındaki eşzamanlı bir ensureAppRole aynı politikayı eklemiş olabilir.
       if (!isDuplicateObject(err)) throw err;
+      await client.query('rollback to savepoint create_policy');
     }
   }
 }
@@ -154,34 +168,48 @@ export async function ensureAppRole(ownerUrl: string, appUrl: string): Promise<A
     }
     await assertSubjectToRls(client, appUser);
 
-    const dbName = (await client.query<{ db: string }>('select current_database() as db')).rows[0]
-      ?.db;
-    if (!dbName) throw new AppRoleError('could not determine current database');
-    await client.query(`grant connect on database ${client.escapeIdentifier(dbName)} to ${role}`);
-
-    const present = await client.query<{ nspname: string }>(
-      'select nspname from pg_namespace where nspname = any($1::text[])',
-      [APP_SCHEMAS],
-    );
-    for (const { nspname } of present.rows) {
-      const schema = client.escapeIdentifier(nspname);
-      await client.query(`grant usage on schema ${schema} to ${role}`);
-      await client.query(
-        `grant select, insert, update, delete on all tables in schema ${schema} to ${role}`,
-      );
-      await client.query(`grant usage, select on all sequences in schema ${schema} to ${role}`);
-      await client.query(`grant execute on all functions in schema ${schema} to ${role}`);
+    // GRANT'ler, migration defterinin geri alınması ve politikalar tek transaction'da: uygulama rolünün
+    // graphile_worker.migrations üzerinde yetkili göründüğü bir ara durum oluşmaz.
+    await client.query('begin');
+    try {
+      await grantAppAccess(client, appUser);
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback');
+      throw err;
     }
-    // Graphile'ın migration defteri RLS'siz; uygulama rolü onu bozamasın (yalnız _private_* tablolarına erişir).
-    const bookkeeping = await client.query<{ present: boolean }>(
-      "select to_regclass('graphile_worker.migrations') is not null as present",
-    );
-    if (bookkeeping.rows[0]?.present) {
-      await client.query(`revoke all on table graphile_worker.migrations from ${role}`);
-    }
-    await allowGraphileWorkerTables(client, appUser);
   } finally {
     await client.end();
   }
   return 'separate';
+}
+
+async function grantAppAccess(client: pg.Client, appUser: string): Promise<void> {
+  const role = client.escapeIdentifier(appUser);
+  const dbName = (await client.query<{ db: string }>('select current_database() as db')).rows[0]
+    ?.db;
+  if (!dbName) throw new AppRoleError('could not determine current database');
+  await client.query(`grant connect on database ${client.escapeIdentifier(dbName)} to ${role}`);
+
+  const present = await client.query<{ nspname: string }>(
+    'select nspname from pg_namespace where nspname = any($1::text[])',
+    [APP_SCHEMAS],
+  );
+  for (const { nspname } of present.rows) {
+    const schema = client.escapeIdentifier(nspname);
+    await client.query(`grant usage on schema ${schema} to ${role}`);
+    await client.query(
+      `grant select, insert, update, delete on all tables in schema ${schema} to ${role}`,
+    );
+    await client.query(`grant usage, select on all sequences in schema ${schema} to ${role}`);
+    await client.query(`grant execute on all functions in schema ${schema} to ${role}`);
+  }
+  // Graphile'ın migration defteri RLS'siz; uygulama rolü onu bozamasın (yalnız _private_* tablolarına erişir).
+  const bookkeeping = await client.query<{ present: boolean }>(
+    "select to_regclass('graphile_worker.migrations') is not null as present",
+  );
+  if (bookkeeping.rows[0]?.present) {
+    await client.query(`revoke all on table graphile_worker.migrations from ${role}`);
+  }
+  await allowGraphileWorkerTables(client, appUser);
 }
