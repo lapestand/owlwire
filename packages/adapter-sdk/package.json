@@ -1,0 +1,28 @@
+{
+  "name": "@owlwire/adapter-sdk",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "vitest run --config ../../vitest.config.ts --project unit --passWithNoTests"
+  },
+  "dependencies": {
+    "@owlwire/core": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.4"
+  }
+}
