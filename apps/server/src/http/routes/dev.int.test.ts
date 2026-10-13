@@ -1,0 +1,84 @@
+import type { DevDeliveryList } from '@owlwire/contracts';
+import { FakeClock } from '@owlwire/core';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { TEST_DEV_ADMIN_TOKEN } from '../../test/config.js';
+import { ingestFor, seedAndIngest } from '../../test/fixtures.js';
+import { createHarness, type Harness } from '../../test/harness.js';
+import { routeEvent } from '../../worker/tasks/route-event.js';
+import { sendDelivery } from '../../worker/tasks/send-delivery.js';
+import { createApp } from '../app.js';
+
+const clock = new FakeClock(new Date('2026-10-12T10:00:00.000Z'));
+let h: Harness;
+
+beforeAll(async () => {
+  h = await createHarness({ clock });
+});
+afterAll(async () => {
+  await h.close();
+});
+
+function list(query = '', token = TEST_DEV_ADMIN_TOKEN) {
+  return h.app.request(`/api/dev/deliveries${query}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+describe('GET /api/dev/deliveries', () => {
+  it('lists deliveries newest first with event and destination details', async () => {
+    const { seed, eventId: first } = await seedAndIngest(h, {}, { title: 'First', body: 'one' });
+    const { deliveryIds } = await routeEvent(h.deps, { eventId: first });
+    await sendDelivery(h.deps, { deliveryId: deliveryIds[0] ?? '' });
+    clock.advance(60_000);
+    const second = await ingestFor(h, seed, { type: 'attack.incoming', body: 'two' });
+    await routeEvent(h.deps, { eventId: second });
+
+    const res = await list();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as DevDeliveryList;
+    expect(body.deliveries[0]).toMatchObject({
+      eventId: second,
+      eventType: 'attack.incoming',
+      eventTitle: null,
+      status: 'pending',
+      attempts: 0,
+      platform: 'webhook',
+      destinationName: expect.stringMatching(/^webhook:/),
+      deliveredAt: null,
+    });
+    expect(body.deliveries[1]).toMatchObject({
+      eventId: first,
+      eventTitle: 'First',
+      status: 'delivered',
+      attempts: 1,
+      lastError: null,
+      createdAt: '2026-10-12T10:00:00.000Z',
+      deliveredAt: '2026-10-12T10:00:00.000Z',
+    });
+  });
+
+  it('honours the limit parameter and ignores garbage', async () => {
+    expect(((await (await list('?limit=1')).json()) as DevDeliveryList).deliveries).toHaveLength(1);
+    expect((await list('?limit=abc')).status).toBe(200);
+  });
+
+  it('rejects a missing or wrong token', async () => {
+    expect((await list('', 'wrong-token-wrong-token')).status).toBe(401);
+    const res = await h.app.request('/api/dev/deliveries');
+    expect(res.status).toBe(401);
+  });
+
+  it('does not exist when no dev admin token is configured', async () => {
+    const app = createApp({
+      db: h.deps.db,
+      clock: h.deps.clock,
+      logger: h.deps.logger,
+      config: { devAdminToken: null },
+      webDir: null,
+    });
+    const res = await app.request('/api/dev/deliveries', {
+      headers: { authorization: `Bearer ${TEST_DEV_ADMIN_TOKEN}` },
+    });
+    expect(res.status).toBe(404);
+  });
+});

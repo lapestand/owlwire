@@ -6,6 +6,7 @@ import type { Logger } from 'pino';
 import type { ServerConfig } from '../config/load.js';
 import { requestId } from './middleware/request-id.js';
 import { ProblemError, problem } from './problem.js';
+import { devRoutes } from './routes/dev.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
 import { v1Routes } from './routes/v1/index.js';
 import { staticHandler } from './static.js';
@@ -38,6 +39,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route('/', healthRoutes(deps.checkReady ?? dbReadiness(deps.db)));
   app.route('/v1', v1Routes({ db: deps.db }));
+  app.route('/api/dev', devRoutes({ db: deps.db, config: deps.config }));
 
   if (deps.webDir) app.get('*', staticHandler(deps.webDir));
   return app;
