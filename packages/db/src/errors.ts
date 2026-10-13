@@ -109,14 +109,35 @@ function errorName(err: Error): string {
 }
 
 /**
+ * Mesajı girdi değerini yankılayan hatalar: JSON.parse'ın SyntaxError'ı (çözülmüş config gibi düz metni alıntılar) ve
+ * PostgreSQL veri istisnaları (SQLSTATE sınıfı 22, ör. `invalid input syntax for type uuid: "<değer>"`).
+ */
+function echoesInput(err: unknown): boolean {
+  if (err instanceof SyntaxError) return true;
+  const code = (err as PgLike | null)?.code;
+  return typeof code === 'string' && SQLSTATE.test(code) && code.startsWith('22');
+}
+
+/**
+ * I-6: `err` mesajı girdi yankılayan bir hataysa `text` ilk tırnakta (`"` ya da `'`) kesilir ve `[redacted]` eklenir;
+ * değerler tırnak içinde yankılandığı için sabit gerekçe kalır. Diğer hatalarda `text` aynen döner.
+ */
+export function withholdEchoedInput(err: unknown, text: string): string {
+  if (!echoesInput(err)) return text;
+  const quote = text.search(/["']/);
+  return quote === -1 ? text : `${text.slice(0, quote)}[redacted]`;
+}
+
+/**
  * Sistem işlemlerinin sonuç listelerine (`failed[].error`) yazılan güvenli hata metni. Drizzle `DrizzleQueryError`
  * mesajı `Failed query: <sql>\nparams: <değerler>` biçimindedir; değerler sarılı DEK, şifreli config vb. olabilir,
- * bu yüzden `\nparams:` ve sonrası atılır (P0 I-6).
+ * bu yüzden `\nparams:` ve sonrası atılır (P0 I-6). Girdi yankılayan mesajlar `withholdEchoedInput`'tan geçer.
  */
 export function safeErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'unknown error';
   const cut = err.message.indexOf('\nparams:');
-  return `${errorName(err)}: ${cut === -1 ? err.message : err.message.slice(0, cut)}`;
+  const message = cut === -1 ? err.message : err.message.slice(0, cut);
+  return withholdEchoedInput(err, `${errorName(err)}: ${message}`);
 }
 
 /**

@@ -7,6 +7,7 @@ export {
   RepoNotFoundError,
   safeErrorMessage,
   WorkspaceKeyMissingError,
+  withholdEchoedInput,
 } from './errors.js';
 export { type OpenDatabaseOptions, OwlwireDb, openDatabase } from './handle.js';
 export { isQueueSchemaReady } from './readiness.js';

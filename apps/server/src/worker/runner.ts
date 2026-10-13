@@ -9,6 +9,7 @@ import {
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { Deps } from '../deps.js';
+import { scrubQueryParams } from '../logger.js';
 import { ROUTE_EVENT_TASK, SEND_DELIVERY_TASK } from './jobs.js';
 import { routeEvent } from './tasks/route-event.js';
 import { sendDelivery } from './tasks/send-delivery.js';
@@ -22,8 +23,9 @@ const SendDeliveryPayload = z.object({
 });
 
 /**
- * Graphile logs a failed task's error and stores it in the job row; DrizzleQueryError messages carry query
- * parameters, so the error is replaced with its safeErrorMessage before it leaves the task.
+ * Graphile logs a failed task's error and stores its message in `_private_jobs.last_error`; DrizzleQueryError messages
+ * carry query parameters (and JSON SyntaxError / pg data exception messages echo input), so the error is replaced with
+ * its safeErrorMessage, without a cause, before it leaves the task (I-6).
  */
 async function sanitized(fn: () => Promise<unknown>): Promise<void> {
   try {
@@ -74,14 +76,29 @@ export function createTaskList(deps: Deps): TaskList {
   };
 }
 
+/** Graphile `job` nesnesinden yalnız kimlik alanları; `payload` ve `last_error` (önceki hata metni) loglanmaz. */
+function jobSummary(job: unknown): unknown {
+  if (typeof job !== 'object' || job === null) return job;
+  const { id, task_identifier, attempts, max_attempts } = job as Record<string, unknown>;
+  return { id, task_identifier, attempts, max_attempts };
+}
+
 export function graphileLogger(logger: Logger): GraphileLogger {
   return new GraphileLogger((scope) => (level, message, meta) => {
-    const ctx = { ...scope, ...(meta ?? {}) };
+    // I-6: Graphile hatayı meta.error'da verir (pino serializer'ı yalnız `err`'e uygulanır) ve mesaja gömer.
+    const { error, job, ...rest } = (meta ?? {}) as Record<string, unknown>;
+    const ctx = {
+      ...scope,
+      ...rest,
+      ...(job === undefined ? {} : { job: jobSummary(job) }),
+      ...(error === undefined ? {} : { err: error }),
+    };
+    const text = scrubQueryParams(message);
     const lvl = String(level);
-    if (lvl === 'error') logger.error(ctx, message);
-    else if (lvl === 'warning') logger.warn(ctx, message);
-    else if (lvl === 'info') logger.info(ctx, message);
-    else logger.debug(ctx, message);
+    if (lvl === 'error') logger.error(ctx, text);
+    else if (lvl === 'warning') logger.warn(ctx, text);
+    else if (lvl === 'info') logger.info(ctx, text);
+    else logger.debug(ctx, text);
   });
 }
 

@@ -20,10 +20,12 @@ import {
   updateDelivery,
   updateDestinationStatus,
   WorkspaceKeyMissingError,
+  withholdEchoedInput,
   withTenant,
 } from '@owlwire/db';
 import type { Logger } from 'pino';
 import type { AdapterRegistry } from '../../adapters/registry.js';
+import { scrubQueryParams } from '../../logger.js';
 import { resolveJobTenant } from '../job-tenant.js';
 import { enqueueSendDelivery } from '../jobs.js';
 
@@ -74,8 +76,12 @@ function permanentConfigError(err: unknown): string | null {
   return null;
 }
 
+/** Written to deliveries.last_error and logged: without query parameters or echoed input (I-6). */
 function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return withholdEchoedInput(
+    err,
+    scrubQueryParams(err instanceof Error ? err.message : String(err)),
+  );
 }
 
 async function fail(

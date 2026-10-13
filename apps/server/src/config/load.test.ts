@@ -104,6 +104,29 @@ describe('loadConfig', () => {
     );
   });
 
+  it('rejects a malformed OWLWIRE_KEK_PREVIOUS without echoing it and treats an empty one as unset', () => {
+    const secret = randomBytes(32).toString('base64');
+    const errorOf = (fn: () => unknown): unknown => {
+      try {
+        fn();
+      } catch (err) {
+        return err;
+      }
+      return undefined;
+    };
+    for (const bad of ['garbage', `x:${secret}`, '1:', `1:${secret.slice(0, 12)}`, `0:${secret}`]) {
+      const err = errorOf(() =>
+        loadConfig({ ...base, OWLWIRE_KEK_VERSION: '2', OWLWIRE_KEK_PREVIOUS: bad }, noFile),
+      );
+      expect(err).toBeInstanceOf(ConfigError);
+      expect((err as Error).message).toMatch(/OWLWIRE_KEK_PREVIOUS/);
+      expect((err as Error).message).not.toContain(secret.slice(0, 12));
+    }
+    for (const empty of ['', '   ']) {
+      expect(loadConfig({ ...base, OWLWIRE_KEK_PREVIOUS: empty }, noFile).kek.previous).toBeNull();
+    }
+  });
+
   it('merges owlwire.yaml over defaults', () => {
     const c = loadConfig(base, (path) =>
       path === '/etc/owlwire/owlwire.yaml'
