@@ -40,6 +40,20 @@ reconsider a separate system database role instead of the setting in P2.3.
   transaction and requires it to equal `_ws`. If `_ws` is missing or different, the job is dropped with a warning
   that logs ids only, and it is not retried.
 
+### Accepted risk: job rows are readable by every tenant session
+
+Graphile Worker's tables in the `graphile_worker` schema (job rows, queues, tasks and the `jobs` view) have no
+workspace column, so RLS cannot isolate them. `ensureAppRole` gives the app role a `using (true) with check (true)`
+policy on them, because tenant transactions enqueue jobs in the same transaction as the event row (outbox). As a
+result, any session of the app role can read every job row of every workspace, including the payload and its `_ws`.
+Writes are limited by the namespacing above, not by RLS.
+
+This is accepted because repository code never reads job rows in a tenant transaction, payloads hold ids rather than
+secrets or message content, and workers do not trust the row: each worker resolves the workspace from the entity id
+in a system transaction and re-checks `_ws` before it acts. A new job payload must therefore hold only ids. The
+integration test `packages/db/src/graphile-risk.int.test.ts` pins this state, so any change to it is deliberate and
+must update this section.
+
 ## Database role check (`OWLWIRE_ALLOW_INSECURE_DB_ROLE`)
 
 `serve` refuses to start when its database connection can bypass RLS: a superuser, `BYPASSRLS`, a member of any

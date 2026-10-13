@@ -13,6 +13,8 @@ export * from './repos/index.js';
 export { tenantPolicySql } from './rls-sql.js';
 export {
   InvalidScopeError,
+  NestedScopeError,
+  ScopeClosedError,
   type SystemTx,
   type TenantScope,
   TenantTx,
