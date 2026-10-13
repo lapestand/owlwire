@@ -1,4 +1,6 @@
+import { PgDialect } from 'drizzle-orm/pg-core';
 import pg from 'pg';
+import { APP_SCHEMAS, type RlsSubjectFlags, rlsSubjectQuery } from './rls-subject.js';
 
 export type AppRoleMode = 'separate' | 'same';
 
@@ -8,9 +10,6 @@ export class AppRoleError extends Error {
     this.name = 'AppRoleError';
   }
 }
-
-// Uygulama rolünün erişebileceği şemalar. drizzle'ın migration tablosu ("drizzle" şeması) bilerek dışarıda.
-const APP_SCHEMAS = ['public', 'owlwire_private', 'graphile_worker'] as const;
 
 interface RoleRow {
   rolsuper: boolean;
@@ -30,51 +29,34 @@ const isDuplicateObject = (err: unknown): boolean => {
   return code === '42710' || code === '23505';
 };
 
+const dialect = new PgDialect();
+
 /**
  * Rolün kendi bayrakları yetmez: sahip rolünün üyesi sahip sayılır, SUPERUSER/BYPASSRLS bir rolün üyesi
  * SET ROLE ile RLS'i aşabilir, uygulama şemalarında nesne ya da şema sahibi olan rol (doğrudan ya da üyelikle)
- * o nesnede RLS'e tabi değildir ya da nesneleri değiştirebilir.
+ * o nesnede RLS'e tabi değildir ya da nesneleri değiştirebilir. Sorgu açılış denetimiyle ortaktır (`rls-subject.ts`).
  */
 async function assertSubjectToRls(client: pg.Client, appUser: string): Promise<void> {
-  const { rows } = await client.query<{
-    owner_member: boolean;
-    privileged_member: boolean;
-    owns_relation: boolean;
-    owns_schema: boolean;
-  }>(
-    `select
-       pg_has_role($1, current_user, 'MEMBER') as owner_member,
-       exists (
-         select 1 from pg_roles r
-         where (r.rolsuper or r.rolbypassrls) and pg_has_role($1, r.oid, 'MEMBER')
-       ) as privileged_member,
-       exists (
-         select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
-         where n.nspname = any($2::text[]) and pg_has_role($1, c.relowner, 'MEMBER')
-       ) as owns_relation,
-       exists (
-         select 1 from pg_namespace n
-         where n.nspname = any($2::text[]) and pg_has_role($1, n.nspowner, 'MEMBER')
-       ) as owns_schema`,
-    [appUser, APP_SCHEMAS],
-  );
+  const query = dialect.sqlToQuery(rlsSubjectQuery(appUser));
+  const { rows } = await client.query<RlsSubjectFlags>(query.sql, query.params);
   const check = rows[0];
-  if (check?.owner_member) {
+  if (!check) throw new AppRoleError(`role ${appUser} does not exist`);
+  if (check.ownerMember) {
     throw new AppRoleError(
       `role ${appUser} is a member of the owner role; the application role must be subject to row level security`,
     );
   }
-  if (check?.privileged_member) {
+  if (check.privilegedMember) {
     throw new AppRoleError(
       `role ${appUser} is a member of a SUPERUSER or BYPASSRLS role; the application role must be subject to row level security`,
     );
   }
-  if (check?.owns_relation) {
+  if (check.ownsRelation) {
     throw new AppRoleError(
       `role ${appUser} owns relations in ${APP_SCHEMAS.join(', ')}; the application role must not own tables`,
     );
   }
-  if (check?.owns_schema) {
+  if (check.ownsSchema) {
     throw new AppRoleError(
       `role ${appUser} owns schemas among ${APP_SCHEMAS.join(', ')}; the application role must not own schemas`,
     );

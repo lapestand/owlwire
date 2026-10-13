@@ -42,8 +42,11 @@ reconsider a separate system database role instead of the setting in P2.3.
 
 ## Database role check (`OWLWIRE_ALLOW_INSECURE_DB_ROLE`)
 
-`serve` refuses to start when its database connection can bypass RLS: a superuser, `BYPASSRLS`, or the table owner.
-This usually happens when `OWLWIRE_DATABASE_URL` and `OWLWIRE_MIGRATION_DATABASE_URL` use the same role. For a
+`serve` refuses to start when its database connection can bypass RLS: a superuser, `BYPASSRLS`, a member of any
+superuser or `BYPASSRLS` role (it could `SET ROLE`), or the owner of any relation or schema in `public`,
+`owlwire_private` or `graphile_worker`, directly or through membership. It also refuses when a `public` table with a
+`workspace_id` column has RLS disabled. This is the same read-only query that `ensureAppRole` runs at migration time
+(`rlsSubjectQuery` in `packages/db/src/rls-subject.ts`), run for the connection's own role. This usually happens when `OWLWIRE_DATABASE_URL` and `OWLWIRE_MIGRATION_DATABASE_URL` use the same role. For a
 single-role local database, `OWLWIRE_ALLOW_INSECURE_DB_ROLE=true` lets `serve` start and logs each reason as a warning.
 The opt-in is ignored when `NODE_ENV=production`, which the Owlwire image sets.
 

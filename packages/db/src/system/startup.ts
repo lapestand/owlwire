@@ -2,6 +2,7 @@ import { DecryptError, type Keyring, unwrapWorkspaceDek } from '@owlwire/crypto'
 import { asc, sql } from 'drizzle-orm';
 import { dbInternals, type OwlwireDb } from '../handle.js';
 import { q } from '../repos/context.js';
+import { type RlsSubjectFlags, rlsBypassReasons, rlsSubjectQuery } from '../rls-subject.js';
 import { workspaceKeys } from '../schema/index.js';
 import { type SystemScope, withSystem } from '../scope.js';
 
@@ -39,42 +40,39 @@ export class KeyringCoverageError extends Error {
   }
 }
 
-interface RlsRow {
-  isSuper: boolean;
-  bypassRls: boolean;
-  ownsTables: boolean;
-  memberOfOwner: boolean;
-  rlsEnabled: boolean;
-}
-
 /**
- * Bağlantının rolü RLS'e gerçekten tabi mi: süper kullanıcı, BYPASSRLS, tablo sahibi (ya da sahibin üyesi) RLS'i
- * aşar. `workspaces` tablosu temsilcidir (bütün kiracı tabloları aynı sahiptedir).
+ * Bağlantının rolü RLS'e gerçekten tabi mi: `ensureAppRole` ile aynı salt okunur denetim (`rlsSubjectQuery`) kendi
+ * `current_user`'ı için çalışır — süper kullanıcı, BYPASSRLS, SUPERUSER/BYPASSRLS bir rolün üyeliği, uygulama
+ * şemalarında herhangi bir ilişkinin ya da şemanın (doğrudan ya da üyelikle) sahipliği. Ayrıca `workspace_id`
+ * kolonlu her `public` tablosunda RLS açık olmalıdır.
  */
 export async function checkRlsEnforcement(
   scope: SystemScope,
   db: OwlwireDb,
 ): Promise<{ enforced: boolean; reasons: string[] }> {
-  const row = await withSystem(db, scope, async (s) => {
-    const res = await q(s).execute(sql`
-      select r.rolsuper as "isSuper",
-             r.rolbypassrls as "bypassRls",
-             t.tableowner = current_user as "ownsTables",
-             pg_has_role(current_user, t.tableowner, 'MEMBER') as "memberOfOwner",
-             c.relrowsecurity as "rlsEnabled"
-      from pg_roles r
-      cross join pg_tables t
-      join pg_class c on c.relname = t.tablename and c.relnamespace = 'public'::regnamespace
-      where r.rolname = current_user and t.schemaname = 'public' and t.tablename = 'workspaces'`);
-    return res.rows[0] as RlsRow | undefined;
+  const result = await withSystem(db, scope, async (s) => {
+    const migrated = await q(s).execute(
+      sql`select to_regclass('public.workspaces') is not null as "present"`,
+    );
+    if (!(migrated.rows[0] as { present: boolean } | undefined)?.present) return null;
+    const subject = await q(s).execute(rlsSubjectQuery(null));
+    const unprotected = await q(s).execute(sql`
+      select c.relname as "table"
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      join pg_attribute a on a.attrelid = c.oid and a.attname = 'workspace_id' and not a.attisdropped
+      where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity
+      order by c.relname`);
+    return {
+      flags: subject.rows[0] as RlsSubjectFlags | undefined,
+      unprotected: (unprotected.rows as Array<{ table: string }>).map((r) => r.table),
+    };
   });
-  if (!row) return { enforced: false, reasons: ['workspaces table not found; run migrations'] };
-  const reasons: string[] = [];
-  if (row.isSuper) reasons.push('application role is SUPERUSER');
-  if (row.bypassRls) reasons.push('application role has BYPASSRLS');
-  if (row.ownsTables) reasons.push('application role owns the tables');
-  else if (row.memberOfOwner) reasons.push('application role is a member of the table owner role');
-  if (!row.rlsEnabled) reasons.push('RLS is not enabled on workspaces');
+  if (!result) return { enforced: false, reasons: ['workspaces table not found; run migrations'] };
+  const reasons = result.flags
+    ? rlsBypassReasons(result.flags)
+    : ['application role not found in pg_roles'];
+  for (const table of result.unprotected) reasons.push(`RLS is not enabled on ${table}`);
   return { enforced: reasons.length === 0, reasons };
 }
 
