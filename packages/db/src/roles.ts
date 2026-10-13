@@ -205,6 +205,18 @@ async function grantAppAccess(client: pg.Client, appUser: string): Promise<void>
     await client.query(`grant usage, select on all sequences in schema ${schema} to ${role}`);
     await client.query(`grant execute on all functions in schema ${schema} to ${role}`);
   }
+  // Final review ruling: audit_log is append-only for the app role, and workspace keys are never deleted by it (a
+  // deleted key loses every secret of the workspace; rotation only UPDATEs them). Re-applied on every run because the
+  // blanket grant above restores them. Workspace deletion still cascades: FK actions run as the table owner.
+  const restricted = await client.query<{ audit: boolean; keys: boolean }>(
+    "select to_regclass('public.audit_log') is not null as audit, to_regclass('public.workspace_keys') is not null as keys",
+  );
+  if (restricted.rows[0]?.audit) {
+    await client.query(`revoke update, delete, truncate on table public.audit_log from ${role}`);
+  }
+  if (restricted.rows[0]?.keys) {
+    await client.query(`revoke delete, truncate on table public.workspace_keys from ${role}`);
+  }
   // Graphile'ın migration defteri RLS'siz; uygulama rolü onu bozamasın (yalnız _private_* tablolarına erişir).
   // Yalnız okuma kalır: worker `run()` açılışta defterden şema sürümünü okur; sürüm güncelse hiçbir şey yazmaz
   // (şemayı migrateAll sahip rolüyle önceden kurar).

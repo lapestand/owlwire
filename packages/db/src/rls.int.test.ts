@@ -90,6 +90,10 @@ const TENANT_TABLES = [
   'audit_log',
 ] as const;
 
+/** Privileges the app role does not hold at all (roles.ts grantAppAccess). */
+const NO_UPDATE: ReadonlySet<string> = new Set(['audit_log']);
+const NO_DELETE: ReadonlySet<string> = new Set(['audit_log', 'workspace_keys']);
+
 describe.each(TENANT_TABLES)('%s', (table) => {
   it('tenant A sees only its own rows', async () => {
     const { rows } = await asApp<{ ws: string }>(
@@ -108,18 +112,21 @@ describe.each(TENANT_TABLES)('%s', (table) => {
   });
 
   it('tenant A cannot update or delete B rows', async () => {
-    const upd = await asApp(
+    const update = asApp(
       { tenant: a.workspaceId },
       `update ${table} set workspace_id = workspace_id where workspace_id = $1`,
       [b.workspaceId],
     );
-    expect(upd.rowCount).toBe(0);
-    const del = await asApp(
+    const remove = asApp(
       { tenant: a.workspaceId },
       `delete from ${table} where workspace_id = $1`,
       [b.workspaceId],
     );
-    expect(del.rowCount).toBe(0);
+    // Final review ruling: audit_log is append-only and workspace_keys rows are never deleted by the app role.
+    if (NO_UPDATE.has(table)) await expect(update).rejects.toMatchObject({ code: '42501' });
+    else expect((await update).rowCount).toBe(0);
+    if (NO_DELETE.has(table)) await expect(remove).rejects.toMatchObject({ code: '42501' });
+    else expect((await remove).rowCount).toBe(0);
   });
 
   it('system mode sees both tenants', async () => {

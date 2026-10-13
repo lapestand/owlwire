@@ -6,7 +6,9 @@
   forgets a `workspace_id` filter. It does not protect against SQL injection (see the accepted risk below).
 - **Roles.** The application role (`owlwire_app`) does not own any table, and every workspace table has RLS enabled.
   Request code runs only inside transactions opened by `withTenant`, which sets `owlwire.workspace_id` and clears
-  `owlwire.system` for that transaction.
+  `owlwire.system` for that transaction. The app role cannot UPDATE, DELETE or TRUNCATE `audit_log` (the audit trail
+  is append-only) and cannot DELETE or TRUNCATE `workspace_keys` (rotation only updates them). Deleting a workspace
+  still removes both through the foreign key cascade.
 - **System mode.** Cross-tenant work (`withSystem`) turns `owlwire.system = 'on'` on for one transaction. Only
   `withSystem` in `packages/db/src/scope.ts` writes that value. `scripts/check-system-guc.mjs`, which runs in
   `pnpm lint`, rejects any other write that turns it on in `apps/`, `packages/`, `deploy/` and `docker/` (code, SQL,

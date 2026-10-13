@@ -83,6 +83,57 @@ describe('app role', () => {
     }
   });
 
+  it('can only append to audit_log, cannot delete workspace_keys, and can still update them', async () => {
+    for (const statement of [
+      'update audit_log set action = action',
+      'delete from audit_log',
+      'truncate audit_log',
+      'delete from workspace_keys',
+      'truncate workspace_keys',
+    ]) {
+      await expect(app.query(statement), statement).rejects.toMatchObject({ code: '42501' });
+    }
+    // Rotation re-wraps keys with UPDATE ... FOR UPDATE; RLS hides every row without a workspace setting.
+    await expect(app.query('select 1 from workspace_keys for update')).resolves.toMatchObject({
+      rowCount: 0,
+    });
+    await expect(
+      app.query('update workspace_keys set kek_version = kek_version'),
+    ).resolves.toMatchObject({ rowCount: 0 });
+  });
+
+  it('still inserts audit rows and keys, and deleting a workspace cascades to them', async () => {
+    const client = await app.connect();
+    try {
+      await client.query('begin');
+      const id = randomUUID();
+      await client.query("select set_config('owlwire.workspace_id', $1, true)", [id]);
+      await client.query(
+        "insert into workspaces (id, name, slug, kind) values ($1, 'w', $2, 'personal')",
+        [id, `cascade_${suffix}`],
+      );
+      await client.query(
+        "insert into workspace_keys (workspace_id, wrapped_dek, kek_version) values ($1, '\\x00', 1)",
+        [id],
+      );
+      await client.query(
+        "insert into audit_log (id, workspace_id, action, target_type, target_id) values ($1, $2, 'workspace.created', 'workspace', $3)",
+        [randomUUID(), id, id],
+      );
+      // FK actions run as the table owner, so the revoked privileges do not block the cascade.
+      const deleted = await client.query('delete from workspaces where id = $1', [id]);
+      expect(deleted.rowCount).toBe(1);
+      const left = await client.query<{ n: number }>(
+        'select (select count(*) from workspace_keys where workspace_id = $1) + (select count(*) from audit_log where workspace_id = $1) as n',
+        [id],
+      );
+      expect(Number(left.rows[0]?.n)).toBe(0);
+    } finally {
+      await client.query('rollback');
+      client.release();
+    }
+  });
+
   it('can enqueue graphile worker jobs', async () => {
     await expect(
       app.query(`select graphile_worker.add_job('noop_test', '{}'::json)`),
