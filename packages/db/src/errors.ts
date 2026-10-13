@@ -38,7 +38,9 @@ export class RepoConflictError extends Error {
 
 export class WorkspaceKeyMissingError extends Error {
   constructor(readonly workspaceId: string) {
-    super(`workspace ${workspaceId} has no data encryption key; run legacy secret upgrade`);
+    super(
+      `workspace ${workspaceId} has no data encryption key; run the system backfill (backfillWorkspaceKeys)`,
+    );
     this.name = 'WorkspaceKeyMissingError';
   }
 }

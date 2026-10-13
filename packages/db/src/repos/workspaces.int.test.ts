@@ -11,7 +11,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { createTestWorkspace } from '../__test__/fixtures.js';
-import { RepoConflictError, WorkspaceKeyMissingError } from '../errors.js';
+import { pgErrorCode, RepoConflictError, WorkspaceKeyMissingError } from '../errors.js';
 import { workspaceKeys, workspaces } from '../schema/index.js';
 import { SYSTEM, tenantScope, withTenant } from '../scope.js';
 import { backfillWorkspaceKeys } from '../system/workspace-keys.js';
@@ -130,13 +130,16 @@ describe('createWorkspace', () => {
   it('cannot create a workspace whose id differs from the tenant scope (RLS)', async () => {
     const scoped = newId();
     const foreign = newId();
-    await expect(
-      withTenant(env.db, tenantScope(scoped), (t) =>
-        q(t)
-          .insert(workspaces)
-          .values({ id: foreign, name: 'f', slug: `f-${foreign}`, kind: 'community' }),
-      ),
-    ).rejects.toThrow();
+    const err = await withTenant(env.db, tenantScope(scoped), (t) =>
+      q(t)
+        .insert(workspaces)
+        .values({ id: foreign, name: 'f', slug: `f-${foreign}`, kind: 'community' }),
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    // RLS WITH CHECK ihlali: 42501, eşlenmeden olduğu gibi fırlatılır.
+    expect(pgErrorCode(err)).toBe('42501');
     const { rows } = await env.owner.query(
       'select count(*)::int as n from workspaces where id = $1',
       [foreign],
@@ -235,5 +238,42 @@ describe('backfillWorkspaceKeys', () => {
       [ids],
     );
     expect(audit.rows[0]?.n).toBe(3);
+  });
+
+  it('skips a workspace hard-deleted between listing and key creation and continues', async () => {
+    const [gone, kept] = [randomUUID(), randomUUID()].sort();
+    for (const id of [gone, kept]) {
+      await env.owner.query(
+        "insert into workspaces (id, name, slug, kind) values ($1, 'legacy', $2, 'community')",
+        [id, `legacy-${id}`],
+      );
+    }
+    // Silme commit edilmeden önce listeleme satırı hâlâ görür; anahtar insert'ünün FK denetimi silen
+    // transaction'ı bekler, commit sonrası 23503 alır.
+    const deleter = await env.owner.connect();
+    try {
+      await deleter.query('begin');
+      await deleter.query('delete from workspaces where id = $1', [gone]);
+      const run = backfillWorkspaceKeys(SYSTEM, env.db);
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const { rows } = await env.owner.query<{ n: number }>(
+          "select count(*)::int as n from pg_stat_activity where usename = 'owlwire_app' and wait_event_type = 'Lock'",
+        );
+        if ((rows[0]?.n ?? 0) > 0) break;
+        if (Date.now() > deadline)
+          throw new Error('backfill never blocked on the deleted workspace');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await deleter.query('commit');
+      expect(await run).toBe(1);
+    } finally {
+      deleter.release();
+    }
+    const { rows } = await env.owner.query<{ workspace_id: string }>(
+      'select workspace_id from workspace_keys where workspace_id = any($1)',
+      [[gone, kept]],
+    );
+    expect(rows.map((r) => r.workspace_id)).toEqual([kept]);
   });
 });

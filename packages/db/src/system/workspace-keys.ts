@@ -1,4 +1,5 @@
 import { eq, isNull } from 'drizzle-orm';
+import { RepoNotFoundError } from '../errors.js';
 import type { OwlwireDb } from '../handle.js';
 import { type AuditActor, SYSTEM_ACTOR, writeAudit } from '../repos/audit.js';
 import { q } from '../repos/context.js';
@@ -12,6 +13,10 @@ import { type SystemScope, tenantScope, withSystem, withTenant } from '../scope.
  * listelenir, sonra her workspace için ayrı bir kiracı transaction'ında anahtar ve `keys.dek_created`
  * denetim kaydı birlikte yazılır. İdempotent ve eşzamanlı çalıştırmaya dayanıklı: `ifMissing`
  * (ON CONFLICT DO NOTHING) yarışı kaybeden çağrıda false döner, kayıt ve denetim tekrarlanmaz.
+ * Soft-delete edilmiş (deleted_at dolu) workspace'ler bilerek dahildir: sırları geri yükleme ya da
+ * temizlik için hâlâ çözülebilmelidir; buraya deleted_at filtresi eklemeyin.
+ * Listeleme ile anahtar yazımı arasında hard-delete edilen workspace (FK ihlali, RepoNotFoundError)
+ * atlanır ve sayılmaz; diğer hatalar yayılır.
  */
 export async function backfillWorkspaceKeys(
   scope: SystemScope,
@@ -29,18 +34,25 @@ export async function backfillWorkspaceKeys(
   });
   let created = 0;
   for (const id of ids) {
-    const inserted = await withTenant(db, tenantScope(id), async (t) => {
-      const did = await insertWorkspaceKey(t, { ifMissing: true });
-      if (did) {
-        await writeAudit(t, {
-          action: 'keys.dek_created',
-          actor,
-          targetType: 'keys',
-          targetId: id,
-        });
-      }
-      return did;
-    });
+    let inserted: boolean;
+    try {
+      inserted = await withTenant(db, tenantScope(id), async (t) => {
+        const did = await insertWorkspaceKey(t, { ifMissing: true });
+        if (did) {
+          await writeAudit(t, {
+            action: 'keys.dek_created',
+            actor,
+            targetType: 'keys',
+            targetId: id,
+          });
+        }
+        return did;
+      });
+    } catch (err) {
+      // Workspace listelemeden sonra silindi; anahtar gereksiz.
+      if (err instanceof RepoNotFoundError) continue;
+      throw err;
+    }
     if (inserted) created++;
   }
   return created;
