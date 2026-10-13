@@ -122,6 +122,46 @@ export async function getDestinationsByIds(
     .where(visible(t, inArray(destinations.id, [...new Set(ids)])));
 }
 
+/**
+ * Paket içi (index'ten dışa verilmez). Kimliklerin hepsinin görünür olduğunu kanıtlar ve bağlantılarını `FOR SHARE`
+ * kilitler; böylece eşzamanlı `deleteConnection` ya bu transaction'dan önce biter (hedef görünmez,
+ * RepoNotFoundError) ya da bitmesini bekleyip bu transaction'ın yazdığı kural hedeflerini, üyelikleri ve bekleyen
+ * teslimatları da temizler. Bağlantılar kimliğe göre sıralı kilitlenir; kilitten sonra görünürlük yeniden okunur
+ * (READ COMMITTED: yeni anlık görüntü). Görünmeyen (bilinmeyen, başka workspace'in, yumuşak silinmiş ya da
+ * bağlantısı silinmiş) ilk kimlik RepoNotFoundError('destination') verir. Kilitlenme uyarısı `createDestination`
+ * ile aynıdır: çağıran aynı transaction'da bağlantı satırını güncelledikten sonra bunu çağırmamalıdır.
+ */
+export async function lockVisibleDestinations(
+  t: TenantTx,
+  ids: readonly string[],
+): Promise<DestinationRow[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const first = await q(t)
+    .select({ connectionId: destinations.connectionId })
+    .from(destinations)
+    .where(visible(t, inArray(destinations.id, unique)));
+  const connectionIds = [...new Set(first.map((r) => r.connectionId))].sort();
+  if (connectionIds.length > 0) {
+    await q(t)
+      .select({ id: connections.id })
+      .from(connections)
+      .where(
+        and(eq(connections.workspaceId, t.workspaceId), inArray(connections.id, connectionIds)),
+      )
+      .orderBy(asc(connections.id))
+      .for('share');
+  }
+  const rows = await q(t)
+    .select()
+    .from(destinations)
+    .where(visible(t, inArray(destinations.id, unique)));
+  const seen = new Set(rows.map((r) => r.id));
+  const missing = unique.find((id) => !seen.has(id));
+  if (missing !== undefined) throw new RepoNotFoundError('destination', missing);
+  return rows;
+}
+
 export async function updateDestinationStatus(
   t: TenantTx,
   id: string,

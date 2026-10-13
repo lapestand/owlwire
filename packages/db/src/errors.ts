@@ -36,6 +36,17 @@ export class RepoConflictError extends Error {
   }
 }
 
+/** Çağıranın girdisi geçersiz (ör. boş idempotency anahtarı, hedefin bağlantısıyla uyuşmayan kuyruk). Değer içermez. */
+export class RepoInputError extends Error {
+  constructor(
+    readonly entity: string,
+    readonly reason: string,
+  ) {
+    super(`invalid ${entity} input: ${reason}`);
+    this.name = 'RepoInputError';
+  }
+}
+
 export class WorkspaceKeyMissingError extends Error {
   constructor(readonly workspaceId: string) {
     super(

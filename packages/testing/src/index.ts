@@ -1,4 +1,5 @@
 export * from './context.js';
+export { listQueuedJobs, type QueuedJob } from './jobs.js';
 export * from './postgres.js';
 export {
   type StartTestDatabaseOptions,

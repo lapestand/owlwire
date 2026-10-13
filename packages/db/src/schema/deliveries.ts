@@ -6,6 +6,7 @@ import {
   integer,
   pgTable,
   text,
+  timestamp,
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
@@ -38,7 +39,10 @@ export const deliveries = pgTable(
     lastError: text('last_error'),
     platformMessageId: text('platform_message_id'),
     digestId: uuid('digest_id'),
-    createdAt: tstz('created_at').notNull().defaultNow(),
+    // ms precision: the listDeliveries keyset cursor is a JS Date, so stored values must not be finer than that
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date', precision: 3 })
+      .notNull()
+      .defaultNow(),
     updatedAt: tstz('updated_at').notNull().defaultNow(),
     deliveredAt: tstz('delivered_at'),
   },

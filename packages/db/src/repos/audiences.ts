@@ -1,11 +1,11 @@
 import { newId } from '@owlwire/core';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { mapPgErrors, RepoNotFoundError } from '../errors.js';
-import { audienceMembers, audiences, connections, destinations } from '../schema/index.js';
+import { audienceMembers, audiences, destinations } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
 import { type AuditActor, writeAudit } from './audit.js';
 import { now, q } from './context.js';
-import { visible as visibleDestination } from './destinations.js';
+import { lockVisibleDestinations, visible as visibleDestination } from './destinations.js';
 
 export type AudienceRow = typeof audiences.$inferSelect;
 
@@ -93,31 +93,7 @@ export async function setAudienceMembers(
 ): Promise<void> {
   await assertAudience(t, audienceId, true);
   const unique = [...new Set(destinationIds)];
-  if (unique.length > 0) {
-    const first = await q(t)
-      .select({ connectionId: destinations.connectionId })
-      .from(destinations)
-      .where(visibleDestination(t, inArray(destinations.id, unique)));
-    const connectionIds = [...new Set(first.map((r) => r.connectionId))].sort();
-    if (connectionIds.length > 0) {
-      await q(t)
-        .select({ id: connections.id })
-        .from(connections)
-        .where(
-          and(eq(connections.workspaceId, t.workspaceId), inArray(connections.id, connectionIds)),
-        )
-        .orderBy(asc(connections.id))
-        .for('share');
-    }
-    // Kilit alındıktan sonra yeniden doğrula (READ COMMITTED: yeni anlık görüntü).
-    const visibleNow = await q(t)
-      .select({ id: destinations.id })
-      .from(destinations)
-      .where(visibleDestination(t, inArray(destinations.id, unique)));
-    const seen = new Set(visibleNow.map((r) => r.id));
-    const missing = unique.find((id) => !seen.has(id));
-    if (missing !== undefined) throw new RepoNotFoundError('destination', missing);
-  }
+  await lockVisibleDestinations(t, unique);
   const removed = await q(t)
     .delete(audienceMembers)
     .where(
