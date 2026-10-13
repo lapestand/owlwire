@@ -1,5 +1,5 @@
 import { DecryptError, UnknownKekVersionError } from '@owlwire/crypto';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import { LegacyDecryptFailedError, safeErrorMessage } from '../errors.js';
 import type { OwlwireDb } from '../handle.js';
 import { SYSTEM_ACTOR, writeAudit } from '../repos/audit.js';
@@ -13,7 +13,8 @@ export type LegacyDecrypt = (ciphertext: Uint8Array) => Record<string, unknown>;
 
 export interface LegacyUpgradeResult {
   upgraded: number;
-  failed: Array<{ connectionId: string; error: string }>;
+  /** `missingKekVersion`: yalnız KEK sürümü yapılandırılmadığı için açılamayan satırlarda dolu. */
+  failed: Array<{ connectionId: string; error: string; missingKekVersion?: number }>;
 }
 
 /**
@@ -36,7 +37,11 @@ function decryptOrFail(
   try {
     return decryptLegacy(ciphertext);
   } catch (err) {
-    throw new LegacyDecryptFailedError(legacyDecryptFailureReason(err));
+    const missing =
+      err instanceof UnknownKekVersionError && Number.isInteger(err.kekVersion)
+        ? err.kekVersion
+        : undefined;
+    throw new LegacyDecryptFailedError(legacyDecryptFailureReason(err), missing);
   }
 }
 
@@ -112,7 +117,13 @@ export async function upgradeLegacyConnectionSecrets(
         );
         if (changed) result.upgraded++;
       } catch (err) {
-        result.failed.push({ connectionId: row.id, error: safeErrorMessage(err) });
+        result.failed.push({
+          connectionId: row.id,
+          error: safeErrorMessage(err),
+          ...(err instanceof LegacyDecryptFailedError && err.missingKekVersion !== undefined
+            ? { missingKekVersion: err.missingKekVersion }
+            : {}),
+        });
       }
     }
   }
@@ -129,4 +140,18 @@ export async function upgradeLegacyConnectionSecrets(
     );
   }
   return result;
+}
+
+/** Hâlâ P0 biçiminde (`kek_v0`, KEK ile doğrudan mühürlü) duran bağlantı sırrı sayısı; soft-delete edilmişler dahil. */
+export async function countLegacyConnectionSecrets(
+  scope: SystemScope,
+  db: OwlwireDb,
+): Promise<number> {
+  const rows = await withSystem(db, scope, (s) =>
+    q(s)
+      .select({ n: sql<number>`count(*)::int` })
+      .from(connections)
+      .where(eq(connections.configEncScheme, 'kek_v0')),
+  );
+  return rows[0]?.n ?? 0;
 }

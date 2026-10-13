@@ -70,7 +70,11 @@ export class LegacySecretError extends Error {
  * enjekte edilen çözücünün hata metni (düz metin ya da şifreli metin yankılayabilir) ve `cause` taşınmaz.
  */
 export class LegacyDecryptFailedError extends Error {
-  constructor(readonly reason: string) {
+  /** `missingKekVersion`: şifreli metnin KEK sürümü anahtarlıkta yok (yapılandırma eksiği). */
+  constructor(
+    readonly reason: string,
+    readonly missingKekVersion?: number,
+  ) {
     super(`legacy connection config could not be decrypted (${reason})`);
     this.name = 'LegacyDecryptFailedError';
   }

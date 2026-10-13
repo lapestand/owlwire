@@ -1,5 +1,5 @@
 import { DecryptError, rewrapWorkspaceDek, UnknownKekVersionError } from '@owlwire/crypto';
-import { and, asc, eq, gt, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, lt, sql } from 'drizzle-orm';
 import { RepoNotFoundError, safeErrorMessage } from '../errors.js';
 import { dbInternals, type OwlwireDb } from '../handle.js';
 import { type AuditActor, SYSTEM_ACTOR, writeAudit } from '../repos/audit.js';
@@ -83,7 +83,10 @@ export interface RotateResult {
   currentVersion: number;
   rotated: number;
   failed: Array<{ workspaceId: string; error: string }>;
-  /** Çalışma sonunda güncel sürüm dışında kalan anahtarlar: sürüm → adet. Boşsa OWLWIRE_KEK_PREVIOUS kaldırılabilir. */
+  /**
+   * Çalışma sonunda güncel sürüm dışında kalan anahtarlar: sürüm → adet (güncelden yüksek sürümler dahil; onlar
+   * hiç çevrilmez). Boşsa workspace anahtarları açısından OWLWIRE_KEK_PREVIOUS kaldırılabilir.
+   */
   remainingByVersion: Map<number, number>;
 }
 
@@ -125,7 +128,8 @@ async function rotateOne(t: TenantTx, currentVersion: number): Promise<boolean> 
     .where(where)
     .for('update');
   const row = locked[0];
-  if (!row || row.kekVersion === currentVersion) return false;
+  // Yalnız eski sürümler çevrilir; güncelden yüksek sürüm (OWLWIRE_KEK ile PREVIOUS yer değiştirmiş) düşürülmez.
+  if (!row || row.kekVersion >= currentVersion) return false;
   let next: { wrapped: Buffer; kekVersion: number };
   try {
     next = rewrapWorkspaceDek(keyringOf(t), row.wrappedDek, row.kekVersion, t.workspaceId);
@@ -148,8 +152,10 @@ async function rotateOne(t: TenantTx, currentVersion: number): Promise<boolean> 
 }
 
 /**
- * Güncel KEK dışındaki sürümle sarılı bütün workspace DEK'lerini güncel KEK ile yeniden sarar (veri yeniden
- * şifrelenmez). Kapsamlar iç içe açılamaz: kimlikler sistem transaction'ında sayfa sayfa listelenir, her workspace
+ * Güncel KEK'ten DÜŞÜK sürümle sarılı bütün workspace DEK'lerini güncel KEK ile yeniden sarar (veri yeniden
+ * şifrelenmez). Sürüm düşürme yapılmaz: güncelden yüksek sürümdeki anahtarlar (OWLWIRE_KEK ile OWLWIRE_KEK_PREVIOUS
+ * yer değiştirmiş ya da yarım geri alınmış yapılandırma) olduğu gibi kalır ve `remainingByVersion`'da görünür;
+ * çağıran bunu yapılandırma hatası saymalıdır. Kapsamlar iç içe açılamaz: kimlikler sistem transaction'ında sayfa sayfa listelenir, her workspace
  * kendi kiracı transaction'ında FOR UPDATE ile kilitlenip sürümü kilit altında yeniden denetlenerek çevrilir.
  * Bu yüzden idempotenttir, kesilirse yeniden çalıştırma kaldığı yerden bitirir, eşzamanlı iki çalıştırma aynı
  * satırı iki kez çevirmez. Soft-delete edilmiş workspace'ler bilerek dahildir (sırları çözülebilir kalmalı);
@@ -173,7 +179,7 @@ export async function rotateWorkspaceKeys(
         .select({ workspaceId: workspaceKeys.workspaceId })
         .from(workspaceKeys)
         .where(
-          and(ne(workspaceKeys.kekVersion, currentVersion), gt(workspaceKeys.workspaceId, after)),
+          and(lt(workspaceKeys.kekVersion, currentVersion), gt(workspaceKeys.workspaceId, after)),
         )
         .orderBy(asc(workspaceKeys.workspaceId))
         .limit(batchSize),

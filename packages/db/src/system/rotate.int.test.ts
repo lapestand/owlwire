@@ -182,4 +182,20 @@ describe('rotateWorkspaceKeys', () => {
       expect(row.data).toEqual({ fromVersion: 6, toVersion: 7 });
     }
   });
+
+  it('never re-wraps a newer key down when OWLWIRE_KEK and OWLWIRE_KEK_PREVIOUS are swapped', async () => {
+    expect(await versions()).toEqual({ 7: 6 });
+    const { rows: before } = await env.owner.query<{ n: number }>(
+      "select count(*)::int as n from audit_log where action = 'keys.kek_rotated'",
+    );
+    const result = await rotateWorkspaceKeys(SYSTEM, env.open(createKeyring(v6, v7)));
+    expect(result).toMatchObject({ currentVersion: 6, rotated: 0, failed: [] });
+    expect(result.remainingByVersion).toEqual(new Map([[7, 6]]));
+    expect(await versions()).toEqual({ 7: 6 });
+    const { rows: after } = await env.owner.query<{ n: number }>(
+      "select count(*)::int as n from audit_log where action = 'keys.kek_rotated'",
+    );
+    expect(after[0]?.n).toBe(before[0]?.n);
+    await expectAllConfigsReadable(env.open(createKeyring(v7)));
+  });
 });

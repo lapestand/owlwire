@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { safeErrorMessage } from '@owlwire/db';
+import { systemClock } from '@owlwire/core';
+import { createKeyring } from '@owlwire/crypto';
+import { openDatabase, safeErrorMessage } from '@owlwire/db';
 import { Command, Option } from 'commander';
 import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
 import { createDeps, type Deps } from './deps.js';
@@ -73,17 +75,26 @@ keys
     're-wrap all workspace data keys with OWLWIRE_KEK (requires OWLWIRE_KEK_PREVIOUS for older keys)',
   )
   .action(async () => {
-    // Application role with system scope (OWLWIRE_DATABASE_URL); the migration role is not needed.
-    const deps = createDeps(readConfig());
+    // Application role with system scope (OWLWIRE_DATABASE_URL); the migration role is not needed. Only the
+    // keyring, a logger and the db handle are built: no adapters, SecretBox or worker pool (createDeps).
+    const config = readConfig();
+    const logger = createLogger(config.logLevel);
+    const keyring = createKeyring(config.kek.current, config.kek.previous);
+    const db = openDatabase({
+      url: config.databaseUrl,
+      keyring,
+      clock: systemClock,
+      onPoolError: (err) => logger.error({ err }, 'database client error'),
+    });
     try {
       process.exitCode = await runKeysRotate({
-        db: deps.db,
-        keyring: deps.keyring,
-        logger: deps.logger,
+        db,
+        keyring,
+        logger,
         out: (line) => process.stdout.write(`${line}\n`),
       });
     } finally {
-      await closeDeps(deps);
+      await db.close();
     }
   });
 

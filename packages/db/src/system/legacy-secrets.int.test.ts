@@ -5,7 +5,11 @@ import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { openConnectionConfig } from '../repos/connection-crypto.js';
 import { readConnectionConfig } from '../repos/connections.js';
 import { SYSTEM, tenantScope, withTenant } from '../scope.js';
-import { type LegacyDecrypt, upgradeLegacyConnectionSecrets } from './legacy-secrets.js';
+import {
+  countLegacyConnectionSecrets,
+  type LegacyDecrypt,
+  upgradeLegacyConnectionSecrets,
+} from './legacy-secrets.js';
 import { backfillWorkspaceKeys } from './workspace-keys.js';
 
 let env: DbTestEnv;
@@ -258,6 +262,13 @@ describe('upgradeLegacyConnectionSecrets (soft delete and concurrency)', () => {
       'DecryptError',
       'invalid JSON',
     ]);
+    // Only the configuration gap carries a structured version (callers map it to a config error).
+    expect(result.failed.map((f) => f.missingKekVersion)).toEqual([7, undefined, undefined]);
+    const { rows } = await env.owner.query<{ n: number }>(
+      "select count(*)::int as n from connections where config_enc_scheme = 'kek_v0'",
+    );
+    expect(rows[0]?.n).toBeGreaterThanOrEqual(3);
+    expect(await countLegacyConnectionSecrets(SYSTEM, env.db)).toBe(rows[0]?.n);
     expect(JSON.stringify(result)).not.toContain('leak-canary-2b8');
   });
 });

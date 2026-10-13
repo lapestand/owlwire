@@ -1,4 +1,4 @@
-import { DecryptError, unwrapWorkspaceDek } from '@owlwire/crypto';
+import { DecryptError, type Keyring, unwrapWorkspaceDek } from '@owlwire/crypto';
 import { asc, sql } from 'drizzle-orm';
 import { dbInternals, type OwlwireDb } from '../handle.js';
 import { q } from '../repos/context.js';
@@ -112,4 +112,9 @@ export async function assertKeyringCoversKeys(scope: SystemScope, db: OwlwireDb)
   if (missing.length > 0 || mismatched.length > 0) {
     throw new KeyringCoverageError(missing, mismatched);
   }
+}
+
+/** `db` bu anahtarlıkla (aynı nesne) mi açıldı; anahtarlığı ayrıca alan sistem komutları için koruma. */
+export function isOpenedWithKeyring(db: OwlwireDb, keyring: Keyring): boolean {
+  return dbInternals(db).keyring === keyring;
 }

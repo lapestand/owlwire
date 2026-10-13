@@ -2,6 +2,7 @@ export { listSystemAuditLog } from '../repos/audit.js';
 export { SYSTEM, type SystemScope, SystemTx, withSystem } from '../scope.js';
 export { type DevDeliveryRow, listDevDeliveries } from './dev-deliveries.js';
 export {
+  countLegacyConnectionSecrets,
   type LegacyDecrypt,
   type LegacyUpgradeResult,
   upgradeLegacyConnectionSecrets,
@@ -17,6 +18,7 @@ export { getInstanceSetting, InvalidSettingValueError, setInstanceSetting } from
 export {
   assertKeyringCoversKeys,
   checkRlsEnforcement,
+  isOpenedWithKeyring,
   KeyringCoverageError,
   RlsNotEnforcedError,
 } from './startup.js';
