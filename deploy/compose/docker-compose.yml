@@ -28,9 +28,10 @@ services:
     env_file: .env
     environment:
       # P0 has a single database role (owner); P1a adds owlwire_app and OWLWIRE_MIGRATION_DATABASE_URL (R12)
-      OWLWIRE_DATABASE_URL: postgres://owlwire:${OWLWIRE_DB_OWNER_PASSWORD}@postgres:5432/owlwire
+      OWLWIRE_DATABASE_URL: postgres://owlwire:${OWLWIRE_DB_OWNER_PASSWORD:?set OWLWIRE_DB_OWNER_PASSWORD in .env}@postgres:5432/owlwire
     ports:
-      - "8080:8080"
+      # loopback only; put a reverse proxy with TLS in front for remote access
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy

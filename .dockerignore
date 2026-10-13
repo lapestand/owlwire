@@ -2,7 +2,14 @@
 **/dist
 **/.turbo
 **/coverage
+**/*.tsbuildinfo
 apps/server/drizzle
 apps/server/public
 .git
-deploy/compose/.env
+.github
+.superpowers
+docs
+dev
+**/.env
+**/.env.*
+!**/.env.example
