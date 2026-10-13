@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { isUuid } from '@owlwire/core';
 import { type SQL, sql } from 'drizzle-orm';
 import {
   bindDrizzle,
@@ -43,10 +44,8 @@ export class NestedScopeError extends Error {
   }
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export function tenantScope(workspaceId: string): TenantScope {
-  if (typeof workspaceId !== 'string' || !UUID_RE.test(workspaceId)) {
+  if (!isUuid(workspaceId)) {
     throw new InvalidScopeError('workspaceId must be a UUID');
   }
   return Object.freeze({ workspaceId: workspaceId.toLowerCase() });

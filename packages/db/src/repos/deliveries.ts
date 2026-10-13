@@ -1,10 +1,10 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import { and, desc, eq, lt, or, type SQL } from 'drizzle-orm';
 import { mapPgErrors, RepoInputError, RepoNotFoundError } from '../errors.js';
 import { deliveries } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
 import { type ConnectionRow, getConnection, readConnectionConfig } from './connections.js';
-import { now, q } from './context.js';
+import { assertIdShape, now, q } from './context.js';
 import { type DestinationRow, getDestination, lockVisibleDestinations } from './destinations.js';
 import { type EventRow, getEvent } from './events.js';
 import { connectionQueue, enqueueJob, sendJobKey } from './jobs.js';
@@ -59,6 +59,7 @@ export async function createDeliveries(
   targets: readonly NewDeliveryTarget[],
 ): Promise<DeliveryRow[]> {
   if (targets.length === 0) return [];
+  assertIdShape('event', eventId);
   const event = await getEvent(t, eventId);
   if (!event) throw new RepoNotFoundError('event', eventId);
   const byDestination = new Map(targets.map((target) => [target.destinationId, target]));
@@ -110,11 +111,16 @@ export async function createDeliveries(
 }
 
 export async function getDelivery(t: TenantTx, id: string): Promise<DeliveryRow | null> {
+  if (!isUuid(id)) return null;
   const rows = await q(t).select().from(deliveries).where(byId(t, id));
   return rows[0] ?? null;
 }
 
 export async function updateDelivery(t: TenantTx, id: string, patch: DeliveryPatch): Promise<void> {
+  assertIdShape('delivery', id);
+  if (patch.digestId != null && !isUuid(patch.digestId)) {
+    throw new RepoInputError('delivery', 'digestId must be a uuid');
+  }
   const rows = await q(t)
     .update(deliveries)
     .set({ ...patch, updatedAt: now(t) })
@@ -126,7 +132,7 @@ export async function updateDelivery(t: TenantTx, id: string, patch: DeliveryPat
 /**
  * En yeni önce, (created_at, id) anahtar kümesi imleciyle. `created_at` timestamptz(3)'tür (migration
  * 0005): imleç bir JS Date (ms) olduğundan saklanan değer daha ince olsaydı aynı ms içindeki satırlar atlanırdı.
- * `limit` 1..200 aralığına sıkıştırılır (varsayılan 50).
+ * `limit` 1..200 aralığına sıkıştırılır (varsayılan 50). Geçersiz imleç (tarih ya da UUID olmayan kimlik) RepoInputError.
  */
 export async function listDeliveries(
   t: TenantTx,
@@ -136,6 +142,10 @@ export async function listDeliveries(
   const limit = Math.min(Math.max(requested, 1), 200);
   const conditions: SQL[] = [eq(deliveries.workspaceId, t.workspaceId)];
   if (opts.before) {
+    const { createdAt, id } = opts.before;
+    if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime()) || !isUuid(id)) {
+      throw new RepoInputError('delivery', 'before must hold a valid createdAt and a uuid id');
+    }
     const cursor = or(
       lt(deliveries.createdAt, opts.before.createdAt),
       and(eq(deliveries.createdAt, opts.before.createdAt), lt(deliveries.id, opts.before.id)),

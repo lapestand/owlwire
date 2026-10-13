@@ -1,9 +1,9 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import { and, asc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
 import { mapPgErrors, RepoNotFoundError } from '../errors.js';
 import { connections, destinations } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
-import { now, q } from './context.js';
+import { assertIdShape, MALFORMED_ID, now, q } from './context.js';
 
 export type DestinationRow = typeof destinations.$inferSelect;
 type DestinationInsert = typeof destinations.$inferInsert;
@@ -51,6 +51,7 @@ export async function createDestination(
   t: TenantTx,
   input: CreateDestinationInput,
 ): Promise<DestinationRow> {
+  assertIdShape('connection', input.connectionId);
   const conn = await q(t)
     .select({ id: connections.id })
     .from(connections)
@@ -88,6 +89,7 @@ export async function createDestination(
 }
 
 export async function getDestination(t: TenantTx, id: string): Promise<DestinationRow | null> {
+  if (!isUuid(id)) return null;
   const rows = await q(t)
     .select()
     .from(destinations)
@@ -101,6 +103,7 @@ export async function listDestinations(
 ): Promise<DestinationRow[]> {
   const extra: SQL[] = [];
   if (filter.connectionId !== undefined) {
+    if (!isUuid(filter.connectionId)) return [];
     extra.push(eq(destinations.connectionId, filter.connectionId));
   }
   return q(t)
@@ -115,11 +118,12 @@ export async function getDestinationsByIds(
   t: TenantTx,
   ids: readonly string[],
 ): Promise<DestinationRow[]> {
-  if (ids.length === 0) return [];
+  const unique = [...new Set(ids)].filter(isUuid);
+  if (unique.length === 0) return [];
   return q(t)
     .select()
     .from(destinations)
-    .where(visible(t, inArray(destinations.id, [...new Set(ids)])));
+    .where(visible(t, inArray(destinations.id, unique)));
 }
 
 /**
@@ -137,6 +141,7 @@ export async function lockVisibleDestinations(
 ): Promise<DestinationRow[]> {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return [];
+  if (!unique.every(isUuid)) throw new RepoNotFoundError('destination', MALFORMED_ID);
   const first = await q(t)
     .select({ connectionId: destinations.connectionId })
     .from(destinations)
@@ -168,6 +173,7 @@ export async function updateDestinationStatus(
   status: 'active' | 'broken',
   reason: string | null,
 ): Promise<void> {
+  assertIdShape('destination', id);
   const rows = await q(t)
     .update(destinations)
     .set({ status, statusReason: reason })

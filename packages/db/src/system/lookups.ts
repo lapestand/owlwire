@@ -1,3 +1,4 @@
+import { isUuid } from '@owlwire/core';
 import { asc, eq } from 'drizzle-orm';
 import { q } from '../repos/context.js';
 import type { WorkspaceRow } from '../repos/workspaces.js';
@@ -17,8 +18,6 @@ export type InstallationAuthRecord = Pick<
   'id' | 'workspaceId' | 'appId' | 'status' | 'grantedTypes'
 >;
 export type TenantEntityKind = 'event' | 'delivery' | 'digest' | 'connection' | 'installation';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Kiracılar arası tek okuma: token hash'inden kurulum kimliği ve workspace'i. İçerik döndürmez.
@@ -51,7 +50,7 @@ export async function resolveWorkspaceOf(
   kind: TenantEntityKind,
   id: string,
 ): Promise<string | null> {
-  if (typeof id !== 'string' || !UUID_RE.test(id)) return null;
+  if (!isUuid(id)) return null;
   const tx = q(s);
   let rows: Array<{ workspaceId: string }>;
   switch (kind) {

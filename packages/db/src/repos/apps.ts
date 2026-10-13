@@ -1,4 +1,4 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import { and, asc, eq, getTableColumns, or } from 'drizzle-orm';
 import { mapPgErrors } from '../errors.js';
 import { apps } from '../schema/index.js';
@@ -65,6 +65,7 @@ export async function createApp(
 
 /** Kendi app'leri ve onaylı public app'ler görünür (RLS ile aynı kural, açıkça da filtrelenir). */
 export async function getApp(t: TenantTx, id: string): Promise<AppRow | null> {
+  if (!isUuid(id)) return null;
   const rows = await q(t)
     .select(appColumns)
     .from(apps)

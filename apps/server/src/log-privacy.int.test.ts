@@ -1,6 +1,5 @@
 import { type ChannelAdapter, createFakeAdapter } from '@owlwire/adapter-sdk';
 import { newId } from '@owlwire/core';
-import { getDelivery, tenantScope, withTenant } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './http/app.js';
 import { createLogger } from './logger.js';
@@ -62,6 +61,11 @@ const SECRET_CHECKS = {
     add: `alter table events add constraint events_no_secret_ck check (position('SECRET' in message::text) = 0) not valid`,
     drop: 'alter table events drop constraint events_no_secret_ck',
   },
+  /** A uuid cast in a CHECK raises a real 22P02 whose message quotes the inserted value. */
+  eventsUuidKey: {
+    add: `alter table events add constraint events_key_uuid_ck check (idempotency_key::uuid is not null) not valid`,
+    drop: 'alter table events drop constraint events_key_uuid_ck',
+  },
   deliveries: {
     add: `alter table deliveries add constraint deliveries_no_secret_ck check (position('SECRET' in last_error) = 0) not valid`,
     drop: 'alter table deliveries drop constraint deliveries_no_secret_ck',
@@ -82,11 +86,13 @@ describe('log privacy with real failing queries (I-6)', () => {
     const s = await seed();
     const { lines, logger } = capture();
 
-    // 22P02: the value is a query parameter and pg echoes it in its message.
+    // 22P02: the value is a query parameter and pg echoes it in its message. Repositories reject malformed ids
+    // before SQL, so a uuid cast in a temporary CHECK on a text column produces the real error.
     const badId = botTokenLike('UUID');
-    const dataErr = await withTenant(h.deps.db, tenantScope(s.workspaceId), (t) =>
-      getDelivery(t, badId),
-    ).catch((e: unknown) => e);
+    let dataErr: unknown;
+    await withSecretCheck('eventsUuidKey', async () => {
+      dataErr = await ingestFor(h, s, { idempotencyKey: badId }).catch((e: unknown) => e);
+    });
     expect(rawText(dataErr)).toContain(badId);
 
     // 23514: the value is a query parameter and pg puts the failing row into `detail`.
@@ -106,7 +112,7 @@ describe('log privacy with real failing queries (I-6)', () => {
     const [dataLine, , , checkLine] = lines.map((l) => JSON.parse(l));
     expect(dataLine.err.cause).toMatchObject({ code: '22P02' });
     // The cause echoes the value, so the wrapper's message is withheld from its first quote as well.
-    expect(dataLine.err.message).toBe('Failed query: select [redacted]');
+    expect(dataLine.err.message).toBe('Failed query: insert into [redacted]');
     expect(dataLine.err.cause.message).toBe('invalid input syntax for type uuid: [redacted]');
     expect(checkLine.err.message).toMatch(
       /^Failed query: insert into "events" .*\nparams: \[redacted\]$/s,
@@ -178,27 +184,29 @@ describe('log privacy with real failing queries (I-6)', () => {
     const badId = botTokenLike('PROBE');
     // A raw task: it does not wrap itself; startWorker registers it through sanitizeTaskList.
     const probe = async () => {
-      await withTenant(h.deps.db, tenantScope(s.workspaceId), (t) => getDelivery(t, badId));
+      await ingestFor(h, s, { idempotencyKey: badId });
     };
-    const runner = await startWorker(
-      { ...h.deps, logger },
-      { pollInterval: 100, extraTasks: { log_privacy_probe: probe } },
-    );
-    try {
-      await h.ownerPool.query(`select graphile_worker.add_job('log_privacy_probe', '{}'::json)`);
-      await waitFor(async () => {
-        const { rows } = await h.ownerPool.query(
-          `select 1 from graphile_worker.jobs where task_identifier = 'log_privacy_probe' and last_error is not null`,
-        );
-        return rows.length > 0;
-      });
-    } finally {
-      await runner.stop();
-    }
+    await withSecretCheck('eventsUuidKey', async () => {
+      const runner = await startWorker(
+        { ...h.deps, logger },
+        { pollInterval: 100, extraTasks: { log_privacy_probe: probe } },
+      );
+      try {
+        await h.ownerPool.query(`select graphile_worker.add_job('log_privacy_probe', '{}'::json)`);
+        await waitFor(async () => {
+          const { rows } = await h.ownerPool.query(
+            `select 1 from graphile_worker.jobs where task_identifier = 'log_privacy_probe' and last_error is not null`,
+          );
+          return rows.length > 0;
+        });
+      } finally {
+        await runner.stop();
+      }
+    });
     const { rows } = await h.ownerPool.query<{ last_error: string }>(
       `select last_error from graphile_worker.jobs where task_identifier = 'log_privacy_probe'`,
     );
-    expect(rows[0]?.last_error).toBe('DrizzleQueryError: Failed query: select [redacted]');
+    expect(rows[0]?.last_error).toBe('DrizzleQueryError: Failed query: insert into [redacted]');
     const all = lines.join('\n');
     expect(all).toContain('Failed task');
     expect(all).not.toContain(SECRET);

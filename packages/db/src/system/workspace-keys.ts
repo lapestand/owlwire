@@ -1,3 +1,4 @@
+import { ZERO_UUID } from '@owlwire/core';
 import { DecryptError, rewrapWorkspaceDek, UnknownKekVersionError } from '@owlwire/crypto';
 import { and, asc, eq, gt, isNull, lt, sql } from 'drizzle-orm';
 import { RepoNotFoundError, safeErrorMessage } from '../errors.js';
@@ -89,8 +90,6 @@ export interface RotateResult {
    */
   remainingByVersion: Map<number, number>;
 }
-
-const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 
 /** Paket içi: sürümü bilinen bir KEK sarılı DEK'i açamadı (yanlış anahtar ya da bozuk satır). */
 class WrongKekError extends Error {

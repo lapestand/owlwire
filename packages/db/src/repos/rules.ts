@@ -1,11 +1,11 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import type { Severity } from '@owlwire/core/message';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { mapPgErrors, RepoInputError, RepoNotFoundError } from '../errors.js';
 import { audiences, installations, rules, ruleTargets } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
 import { type AuditActor, writeAudit } from './audit.js';
-import { now, q } from './context.js';
+import { assertIdShape, MALFORMED_ID, now, q } from './context.js';
 import { lockVisibleDestinations } from './destinations.js';
 
 export type RuleRow = typeof rules.$inferSelect;
@@ -57,6 +57,7 @@ function splitTargets(targets: readonly RuleTargetInput[]): SplitTargets {
 async function assertTargets(t: TenantTx, split: SplitTargets): Promise<void> {
   await lockVisibleDestinations(t, split.destinationIds);
   if (split.audienceIds.length === 0) return;
+  if (!split.audienceIds.every(isUuid)) throw new RepoNotFoundError('audience', MALFORMED_ID);
   const own = await q(t)
     .select({ id: audiences.id })
     .from(audiences)
@@ -125,6 +126,7 @@ export async function createRule(
   input: CreateRuleInput,
   actor: AuditActor,
 ): Promise<RuleWithTargets> {
+  assertIdShape('installation', input.installationId);
   const inst = await q(t)
     .select({ id: installations.id })
     .from(installations)
@@ -187,6 +189,7 @@ export async function updateRule(
   patch: UpdateRulePatch,
   actor: AuditActor,
 ): Promise<RuleWithTargets> {
+  assertIdShape('rule', id);
   const split = patch.targets !== undefined ? splitTargets(patch.targets) : null;
   if (split) await assertTargets(t, split);
   const rows = await q(t)
@@ -226,6 +229,7 @@ export async function updateRule(
 
 /** Hedefler `ON DELETE CASCADE` ile birlikte silinir. */
 export async function deleteRule(t: TenantTx, id: string, actor: AuditActor): Promise<void> {
+  assertIdShape('rule', id);
   const rows = await q(t).delete(rules).where(byId(t, id)).returning({ id: rules.id });
   if (!rows[0]) throw new RepoNotFoundError('rule', id);
   await writeAudit(t, { action: 'rule.deleted', actor, targetType: 'rule', targetId: id });
@@ -245,6 +249,7 @@ export async function listRulesForInstallation(
   t: TenantTx,
   installationId: string,
 ): Promise<RuleWithTargets[]> {
+  if (!isUuid(installationId)) return [];
   const rows = await q(t)
     .select()
     .from(rules)

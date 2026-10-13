@@ -1,8 +1,7 @@
+import { isUuid } from '@owlwire/core';
 import { type OwlwireDb, TENANT_JOB_PAYLOAD_KEY, type TenantScope } from '@owlwire/db';
 import type { Logger } from 'pino';
 import { resolveTenant, type TenantEntityKind } from '../system/tenant-resolver.js';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Task 12 ruling: a worker never trusts the payload for scope. The workspace is resolved from the entity id in a
@@ -27,7 +26,7 @@ export async function resolveJobTenant(
       {
         [`${job.kind}Id`]: job.id,
         workspaceId: scope.workspaceId,
-        jobWorkspaceId: typeof ws === 'string' && UUID_RE.test(ws) ? ws : null,
+        jobWorkspaceId: isUuid(ws) ? ws : null,
         jobWorkspaceKey: TENANT_JOB_PAYLOAD_KEY,
       },
       `${job.task}: job workspace does not match the ${job.kind}; dropping the job`,

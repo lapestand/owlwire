@@ -1,4 +1,4 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import { and, asc, eq, getTableColumns, inArray, isNull } from 'drizzle-orm';
 import { LegacySecretError, mapPgErrors, RepoNotFoundError } from '../errors.js';
 import {
@@ -11,7 +11,7 @@ import {
 import type { TenantTx } from '../scope.js';
 import { type AuditActor, writeAudit } from './audit.js';
 import { openConnectionConfig, sealConnectionConfig } from './connection-crypto.js';
-import { now, q } from './context.js';
+import { assertIdShape, now, q } from './context.js';
 
 type ConnectionSelect = typeof connections.$inferSelect;
 /** Şifreli yapılandırma satır tipinde yoktur; yalnız `readConnectionConfig` ile, amaç belirtilerek okunur. */
@@ -80,6 +80,7 @@ export async function createConnection(
 }
 
 export async function getConnection(t: TenantTx, id: string): Promise<ConnectionRow | null> {
+  if (!isUuid(id)) return null;
   const rows = await q(t).select(publicColumns).from(connections).where(byId(t, id));
   return rows[0] ?? null;
 }
@@ -101,6 +102,7 @@ export async function readConnectionConfig(
   id: string,
   opts: ReadConfigOptions,
 ): Promise<Record<string, unknown> | null> {
+  assertIdShape('connection', id);
   const rows = await q(t)
     .select({ configEnc: connections.configEnc, configEncScheme: connections.configEncScheme })
     .from(connections)
@@ -128,6 +130,7 @@ export async function updateConnectionConfig(
   config: Record<string, unknown> | null,
   actor: AuditActor,
 ): Promise<void> {
+  assertIdShape('connection', id);
   // Varlık önce kilitlenerek denetlenir: eksik, silinmiş ya da yabancı kimlik DEK'e dokunmadan RepoNotFoundError alır.
   const existing = await q(t)
     .select({ id: connections.id })
@@ -155,6 +158,7 @@ export async function updateConnectionStatus(
   status: ConnectionStatus,
   reason: string | null,
 ): Promise<void> {
+  assertIdShape('connection', id);
   const rows = await q(t)
     .update(connections)
     .set({ status, statusReason: reason, updatedAt: now(t) })
@@ -169,6 +173,7 @@ export async function updateConnectionStatus(
  * da silinir. v2.2 R125: bağlantının `pending|scheduled` teslimatları aynı transaction'da başarısız işaretlenir.
  */
 export async function deleteConnection(t: TenantTx, id: string, actor: AuditActor): Promise<void> {
+  assertIdShape('connection', id);
   const ts = now(t);
   const rows = await q(t)
     .update(connections)

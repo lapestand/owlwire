@@ -1,10 +1,10 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { mapPgErrors, RepoNotFoundError } from '../errors.js';
 import { audienceMembers, audiences, destinations } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
 import { type AuditActor, writeAudit } from './audit.js';
-import { now, q } from './context.js';
+import { assertIdShape, now, q } from './context.js';
 import { lockVisibleDestinations, visible as visibleDestination } from './destinations.js';
 
 export type AudienceRow = typeof audiences.$inferSelect;
@@ -13,6 +13,7 @@ const byId = (t: TenantTx, id: string) =>
   and(eq(audiences.workspaceId, t.workspaceId), eq(audiences.id, id));
 
 async function assertAudience(t: TenantTx, id: string, lock = false): Promise<void> {
+  assertIdShape('audience', id);
   const query = q(t).select({ id: audiences.id }).from(audiences).where(byId(t, id));
   const rows = lock ? await query.for('update') : await query;
   if (!rows[0]) throw new RepoNotFoundError('audience', id);
@@ -55,6 +56,7 @@ export async function listAudiences(t: TenantTx): Promise<AudienceRow[]> {
  * verir ve RepoConflictError'a eşlenir. Üyelikler `ON DELETE CASCADE` ile birlikte gider.
  */
 export async function deleteAudience(t: TenantTx, id: string, actor: AuditActor): Promise<void> {
+  assertIdShape('audience', id);
   const rows = await mapPgErrors(
     'audience',
     id,
@@ -153,7 +155,8 @@ export async function expandAudiences(
 ): Promise<Map<string, string[]>> {
   const result = new Map<string, string[]>();
   if (audienceIds.length === 0) return result;
-  const ids = [...new Set(audienceIds)];
+  const ids = [...new Set(audienceIds)].filter(isUuid);
+  if (ids.length === 0) return result;
   const own = await q(t)
     .select({ id: audiences.id })
     .from(audiences)

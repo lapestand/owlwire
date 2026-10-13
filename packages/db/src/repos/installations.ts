@@ -1,11 +1,11 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import { and, asc, eq, getTableColumns } from 'drizzle-orm';
-import { mapPgErrors, RepoNotFoundError } from '../errors.js';
+import { mapPgErrors, RepoInputError, RepoNotFoundError } from '../errors.js';
 import { installations } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
 import { getApp } from './apps.js';
 import { type AuditActor, writeAudit } from './audit.js';
-import { now, q } from './context.js';
+import { assertIdShape, now, q } from './context.js';
 
 type InstallationSelect = typeof installations.$inferSelect;
 /** Token hash'i satır tipinde yoktur; token ile kimlik doğrulama yalnız `@owlwire/db/system` üzerindendir. */
@@ -43,6 +43,10 @@ export async function createInstallation(
   input: CreateInstallationInput,
   actor: AuditActor,
 ): Promise<InstallationRow> {
+  assertIdShape('app', input.appId);
+  if (input.createdByUserId != null && !isUuid(input.createdByUserId)) {
+    throw new RepoInputError('installation', 'createdByUserId must be a uuid');
+  }
   const app = await getApp(t, input.appId);
   if (!app) throw new RepoNotFoundError('app', input.appId);
   const id = newId();
@@ -75,6 +79,7 @@ export async function createInstallation(
 }
 
 export async function getInstallation(t: TenantTx, id: string): Promise<InstallationRow | null> {
+  if (!isUuid(id)) return null;
   const rows = await q(t).select(installationColumns).from(installations).where(byId(t, id));
   return rows[0] ?? null;
 }
@@ -94,6 +99,7 @@ export async function revokeInstallation(
   actor: AuditActor,
   opts: { reason?: InstallationRevokeReason } = {},
 ): Promise<void> {
+  assertIdShape('installation', id);
   const changed = await q(t)
     .update(installations)
     .set({ status: 'revoked', revokedAt: now(t) })

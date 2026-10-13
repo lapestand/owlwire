@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { newId } from './ids.js';
+import { isUuid, newId, ZERO_UUID } from './ids.js';
 
 describe('newId', () => {
   it('produces UUIDv7 strings', () => {
@@ -12,5 +12,16 @@ describe('newId', () => {
     const ids = Array.from({ length: 1000 }, () => newId());
     expect(new Set(ids).size).toBe(1000);
     expect([...ids].sort()).toEqual(ids);
+  });
+});
+
+describe('isUuid', () => {
+  it('accepts canonical uuids in either case and rejects everything else', () => {
+    expect(isUuid(newId())).toBe(true);
+    expect(isUuid(newId().toUpperCase())).toBe(true);
+    expect(isUuid(ZERO_UUID)).toBe(true);
+    for (const bad of ['not-a-uuid', '', ` ${ZERO_UUID}`, `${ZERO_UUID}0`, 42, null, undefined]) {
+      expect(isUuid(bad)).toBe(false);
+    }
   });
 });

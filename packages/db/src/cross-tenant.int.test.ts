@@ -877,6 +877,146 @@ describe('composite foreign keys reject victim ids under the app role', () => {
   });
 });
 
+const MALFORMED = 'not-a-uuid';
+/** Every id the cases can pass is malformed; the workspace id too (only the forged `_ws` payload reads it). */
+const malformedVictim: SeededTenant = {
+  workspaceId: MALFORMED,
+  connectionId: MALFORMED,
+  destinationId: MALFORMED,
+  audienceId: MALFORMED,
+  appId: MALFORMED,
+  installationId: MALFORMED,
+  ruleId: MALFORMED,
+  eventId: MALFORMED,
+  deliveryId: MALFORMED,
+  digestId: MALFORMED,
+  secret: MALFORMED,
+};
+
+/** Runs in the attacker scope as the app role and always rolls back; returns the outcome. */
+async function tryMalformed(
+  run: (t: TenantTx) => Promise<unknown>,
+): Promise<{ ok: true; value: unknown } | { ok: false; err: unknown }> {
+  let value: unknown;
+  try {
+    await inScope(env.db, attacker.workspaceId, async (t) => {
+      value = await run(t);
+      throw new RollbackControl();
+    });
+  } catch (err) {
+    if (err instanceof RollbackControl) return { ok: true, value };
+    return { ok: false, err };
+  }
+  return { ok: true, value };
+}
+
+/** Id positions the cases above do not reach. */
+const MALFORMED_EXTRA: Array<
+  [string, (t: TenantTx) => Promise<unknown>, Expected['name'] | 'AuditDataError']
+> = [
+  [
+    'listDeliveries cursor id',
+    (t) => repos.listDeliveries(t, { before: { createdAt: new Date(), id: MALFORMED } }),
+    'RepoInputError',
+  ],
+  [
+    'createInstallation createdByUserId',
+    (t) =>
+      repos.createInstallation(
+        t,
+        {
+          appId: attacker.appId,
+          tokenHash: `malformed-${randomUUID()}`,
+          tokenPrefix: 'ow_inst_bad',
+          createdByUserId: MALFORMED,
+        },
+        SYSTEM_ACTOR,
+      ),
+    'RepoInputError',
+  ],
+  [
+    'updateDelivery patch digestId',
+    (t) => repos.updateDelivery(t, attacker.deliveryId, { digestId: MALFORMED }),
+    'RepoInputError',
+  ],
+  [
+    'writeAudit actor id',
+    (t) =>
+      repos.writeAudit(t, {
+        action: 'rule.deleted',
+        actor: { kind: 'installation', installationId: MALFORMED },
+        targetType: 'rule',
+        targetId: 'r',
+      }),
+    'AuditDataError',
+  ],
+  [
+    'setAudienceMembers audience id',
+    (t) => repos.setAudienceMembers(t, MALFORMED, [], SYSTEM_ACTOR),
+    'RepoNotFoundError',
+  ],
+  [
+    'createRule audience target',
+    (t) =>
+      repos.createRule(
+        t,
+        {
+          installationId: attacker.installationId,
+          name: 'bad',
+          types: ['*'],
+          targets: [{ audienceId: MALFORMED }],
+        },
+        SYSTEM_ACTOR,
+      ),
+    'RepoNotFoundError',
+  ],
+];
+
+describe('malformed ids never reach SQL (no pg 22P02)', () => {
+  describe.each(attackCases)('%s', (_name, c) => {
+    it(`with '${MALFORMED}' is ${c.kind === 'denied' ? 'RepoNotFoundError' : 'answered like an unknown id'}`, async () => {
+      const out = await tryMalformed((t) => c.run(t, malformedVictim, attacker));
+      if (c.kind === 'denied') {
+        expect(out.ok).toBe(false);
+        const err = out.ok ? null : out.err;
+        expect(pgErrorOf(err)).toBeNull();
+        expect(err).toBeInstanceOf(RepoNotFoundError);
+        expect(err).toMatchObject({ entity: c.entity });
+        expect((err as Error).message).not.toContain(MALFORMED);
+      } else {
+        expect(out.ok ? null : pgErrorOf(out.err)).toBeNull();
+        expect(out.ok).toBe(true);
+      }
+    });
+  });
+
+  describe.each(EXTRA_ATTACKS)('%s', (_name, run, expected) => {
+    it(`with '${MALFORMED}' is rejected without a pg error`, async () => {
+      const out = await tryMalformed((t) => run(t, malformedVictim, attacker));
+      const err = out.ok ? null : out.err;
+      expect(pgErrorOf(err)).toBeNull();
+      const want = expected(malformedVictim);
+      expect(err).toBeInstanceOf(
+        want.name === 'RepoInputError' ? RepoInputError : RepoNotFoundError,
+      );
+      if (want.name === 'RepoNotFoundError') expect(err).toMatchObject({ entity: want.entity });
+    });
+  });
+
+  it.each(MALFORMED_EXTRA)('%s is rejected without a pg error', async (_name, run, name) => {
+    const out = await tryMalformed(run);
+    const err = out.ok ? null : out.err;
+    expect(pgErrorOf(err)).toBeNull();
+    expect(err).toBeInstanceOf(
+      name === 'RepoInputError'
+        ? RepoInputError
+        : name === 'AuditDataError'
+          ? repos.AuditDataError
+          : RepoNotFoundError,
+    );
+  });
+});
+
 describe('after all attacks', () => {
   it('leaves the victim workspace byte-for-byte unchanged', async () => {
     expect(await snapshot(victim)).toEqual(before);

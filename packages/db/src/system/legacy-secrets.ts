@@ -1,3 +1,4 @@
+import { ZERO_UUID } from '@owlwire/core';
 import { DecryptError, UnknownKekVersionError } from '@owlwire/crypto';
 import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import { LegacyDecryptFailedError, safeErrorMessage } from '../errors.js';
@@ -45,7 +46,6 @@ function decryptOrFail(
   }
 }
 
-const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 const BATCH = 100;
 
 /**

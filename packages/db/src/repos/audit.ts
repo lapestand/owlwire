@@ -1,4 +1,4 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import { and, desc, eq, isNull, lt, or, type SQL } from 'drizzle-orm';
 import { auditLog } from '../schema/index.js';
 import { SystemTx, type TenantTx } from '../scope.js';
@@ -172,6 +172,13 @@ export async function writeAudit(
   if (!(AUDIT_ACTIONS as readonly string[]).includes(entry.action)) {
     throw new AuditDataError(`unknown audit action: ${entry.action}`);
   }
+  const actorId =
+    entry.actor.kind === 'user'
+      ? entry.actor.userId
+      : entry.actor.kind === 'installation'
+        ? entry.actor.installationId
+        : null;
+  if (actorId !== null && !isUuid(actorId)) throw new AuditDataError('actor id must be a uuid');
   const data = canonicalAuditData(entry.data ?? {});
   const workspaceId = t instanceof SystemTx ? (entry.workspaceId ?? null) : t.workspaceId;
   await q(t)
@@ -188,8 +195,6 @@ export async function writeAudit(
       createdAt: now(t),
     });
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ListAuditOptions {
   limit?: number;
@@ -211,7 +216,7 @@ async function listAudit(
     if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) {
       throw new AuditDataError('before.createdAt must be a valid Date');
     }
-    if (typeof id !== 'string' || !UUID_RE.test(id)) {
+    if (!isUuid(id)) {
       throw new AuditDataError('before.id must be a uuid');
     }
   }

@@ -1,10 +1,10 @@
-import { newId } from '@owlwire/core';
+import { isUuid, newId } from '@owlwire/core';
 import type { Message, Severity } from '@owlwire/core/message';
 import { and, eq } from 'drizzle-orm';
 import { mapPgErrors, RepoInputError, RepoNotFoundError } from '../errors.js';
 import { events, installations } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
-import { now, q } from './context.js';
+import { assertIdShape, now, q } from './context.js';
 import { enqueueJob, routeQueue } from './jobs.js';
 
 export type EventRow = typeof events.$inferSelect;
@@ -32,6 +32,7 @@ export async function insertEvent(
   if (typeof input.idempotencyKey !== 'string' || input.idempotencyKey.length === 0) {
     throw new RepoInputError('event', 'idempotencyKey must be a non-empty string');
   }
+  assertIdShape('installation', input.installationId);
   const inst = await q(t)
     .select({ id: installations.id })
     .from(installations)
@@ -85,6 +86,7 @@ export async function insertEvent(
 }
 
 export async function getEvent(t: TenantTx, id: string): Promise<EventRow | null> {
+  if (!isUuid(id)) return null;
   const rows = await q(t)
     .select()
     .from(events)
@@ -93,6 +95,7 @@ export async function getEvent(t: TenantTx, id: string): Promise<EventRow | null
 }
 
 export async function markEventRouted(t: TenantTx, id: string): Promise<void> {
+  assertIdShape('event', id);
   const rows = await q(t)
     .update(events)
     .set({ routedAt: now(t) })
