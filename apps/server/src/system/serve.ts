@@ -7,7 +7,7 @@ import { startWorker } from '../worker/runner.js';
 import { upgradeLegacySecrets } from './legacy-secrets.js';
 import { migrateDatabase } from './migrate.js';
 import { createShutdown } from './shutdown.js';
-import { runStartupChecks } from './startup-checks.js';
+import { assertLegacySecretsCovered, runStartupChecks } from './startup-checks.js';
 
 export interface RunningServer {
   port: number | null;
@@ -86,7 +86,8 @@ export interface ServeCommandHooks {
 
 /**
  * `owlwire serve` (contract §11.2, R97): signal handlers are registered BEFORE migrating. Order: migrateDatabase ->
- * createDeps -> runStartupChecks -> upgradeLegacySecrets -> startServer. Shutdown is P0's createShutdown (25 s limit,
+ * createDeps -> runStartupChecks -> upgradeLegacySecrets (refuses to start when a legacy secret's KEK version is not
+ * configured) -> startServer. Shutdown is P0's createShutdown (25 s limit,
  * exit 1 when the worker crashes) and calls `exit` exactly once.
  *
  * A signal during the migration shuts down at once (nothing is open yet; the migration transaction rolls back with
@@ -138,10 +139,11 @@ export async function runServeCommand(
       }),
     );
     if (stopping) return;
-    await step(
+    const legacy = await step(
       (hooks.upgrade ?? upgradeLegacySecrets)(created.db, created.keyring, created.logger),
     );
     if (stopping) return;
+    assertLegacySecretsCovered(legacy);
     await step(
       (hooks.start ?? startServer)(created, config.role, { port: config.port, webDir }).then(
         (r) => {

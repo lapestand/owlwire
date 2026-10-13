@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createLogger } from '../logger.js';
 import { testConfig } from '../test/config.js';
 import { type RunningServer, runServeCommand, type ServeCommandHooks } from './serve.js';
+import { LegacyKeyringCoverageError } from './startup-checks.js';
 
 const config = () => testConfig('postgres://u:p@127.0.0.1:1/none');
 const silent = createLogger('silent');
@@ -93,6 +94,44 @@ describe('runServeCommand', () => {
     await expect(done).resolves.toBeUndefined();
     await vi.waitFor(() => expect(exits).toEqual([0]));
     expect(stopServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to start when legacy secrets need a KEK version the keyring lacks', async () => {
+    const start = vi.fn();
+    const { handlers, exits, hooks } = harness({
+      upgrade: async () => ({
+        keysCreated: 0,
+        upgraded: 1,
+        failed: [
+          { connectionId: 'c1', error: 'x', missingKekVersion: 3 },
+          { connectionId: 'c2', error: 'y', missingKekVersion: 3 },
+          { connectionId: 'c3', error: 'DecryptError' },
+        ],
+      }),
+      start,
+    });
+    const err = await runServeCommand(config(), silent, null, hooks).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LegacyKeyringCoverageError);
+    expect((err as LegacyKeyringCoverageError).missingKekVersions).toEqual([3]);
+    expect(start).not.toHaveBeenCalled();
+    handlers.get('SIGTERM')?.();
+    await vi.waitFor(() => expect(exits).toEqual([0]));
+  });
+
+  it('starts when legacy failures are not caused by a missing KEK version', async () => {
+    const stop = vi.fn(async () => undefined);
+    const { handlers, exits, hooks } = harness({
+      upgrade: async () => ({
+        keysCreated: 0,
+        upgraded: 0,
+        failed: [{ connectionId: 'c3', error: 'DecryptError' }],
+      }),
+      start: async () => ({ port: 1, worker: null, stop }),
+    });
+    await runServeCommand(config(), silent, null, hooks);
+    handlers.get('SIGTERM')?.();
+    await vi.waitFor(() => expect(exits).toEqual([0]));
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it('passes the insecure database role opt-in and NODE_ENV to the startup checks', async () => {

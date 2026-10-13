@@ -45,5 +45,10 @@ reconsider a separate system database role instead of the setting in P2.3.
 `serve` refuses to start when its database connection can bypass RLS: a superuser, `BYPASSRLS`, or the table owner.
 This usually happens when `OWLWIRE_DATABASE_URL` and `OWLWIRE_MIGRATION_DATABASE_URL` use the same role. For a
 single-role local database, `OWLWIRE_ALLOW_INSECURE_DB_ROLE=true` lets `serve` start and logs each reason as a warning.
-The opt-in is ignored when `NODE_ENV=production`, which the Owlwire image sets. A keyring that does not cover the
-stored workspace keys stops startup in every environment.
+The opt-in is ignored when `NODE_ENV=production`, which the Owlwire image sets.
+
+Two keyring checks stop startup in every environment. First, the keyring must hold, with the right key material, every
+KEK version that wraps a stored workspace key. Second, the startup legacy upgrade tries to open every P0 (`kek_v0`)
+connection secret; if any is sealed with a KEK version that is not configured, `serve` upgrades the ones it can open
+and then refuses to start, naming the missing version (set `OWLWIRE_KEK_PREVIOUS` to it). A legacy secret that fails
+for another reason (a corrupt row) is logged and does not block startup.

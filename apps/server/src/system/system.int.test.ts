@@ -1,5 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { systemClock } from '@owlwire/core';
-import { createKeyring, generateKek, generateToken, hashToken, tokenPrefix } from '@owlwire/crypto';
+import {
+  createKeyring,
+  createSecretBox,
+  generateKek,
+  generateToken,
+  hashToken,
+  tokenPrefix,
+} from '@owlwire/crypto';
 import {
   createApp,
   createInstallation,
@@ -20,8 +28,13 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { formatSeedResult, seedDevWorkspace } from './dev-seed.js';
 import { authenticateInstallationToken } from './installation-auth.js';
+import { upgradeLegacySecrets } from './legacy-secrets.js';
 import { migrateDatabase } from './migrate.js';
-import { runStartupChecks } from './startup-checks.js';
+import {
+  assertLegacySecretsCovered,
+  LegacyKeyringCoverageError,
+  runStartupChecks,
+} from './startup-checks.js';
 import { resolveTenant } from './tenant-resolver.js';
 
 let tdb: TestDatabase;
@@ -106,6 +119,48 @@ describe('startup checks', () => {
     expect((err as KeyringCoverageError).missingVersions).toEqual([]);
     expect((err as KeyringCoverageError).mismatchedVersions).toEqual([1]);
     expect((err as Error).message).not.toMatch(/[A-Za-z0-9+/]{40,}={0,2}/);
+  });
+});
+
+describe('legacy secret coverage at startup', () => {
+  it('refuses to start when a kek_v0 secret is sealed with a KEK version missing from the keyring', async () => {
+    const { workspaceId } = await seedDevWorkspace(db, { platform: 'telegram' });
+    const kek9 = generateKek(9);
+    const ids = [randomUUID(), randomUUID()];
+    const sealed = [
+      createSecretBox(createKeyring(kek9)).seal({ botToken: 'legacy-v9' }),
+      createSecretBox(keyring).seal({ botToken: 'legacy-v1' }),
+    ];
+    for (const [i, id] of ids.entries()) {
+      await owner.query(
+        "insert into connections (id, workspace_id, platform, kind, display_name, config_enc, config_enc_scheme) values ($1, $2, 'telegram', 'own_bot', 'legacy', $3, 'kek_v0')",
+        [id, workspaceId, sealed[i]],
+      );
+    }
+    const logger = { ...silent, error: () => undefined };
+    try {
+      const result = await upgradeLegacySecrets(db, keyring, logger);
+      expect(result.upgraded).toBe(1);
+      const err = (() => {
+        try {
+          assertLegacySecretsCovered(result);
+        } catch (e) {
+          return e;
+        }
+        return null;
+      })();
+      expect(err).toBeInstanceOf(LegacyKeyringCoverageError);
+      expect((err as LegacyKeyringCoverageError).missingKekVersions).toEqual([9]);
+      expect((err as Error).message).toContain('KEK v9');
+      expect((err as Error).message).not.toContain('legacy-v9');
+      // With the old KEK configured the remaining secret upgrades and startup goes ahead.
+      const both = createKeyring(keyring.current, kek9);
+      const second = await upgradeLegacySecrets(open(tdb.appUrl, both), both, logger);
+      expect(second).toMatchObject({ upgraded: 1, failed: [] });
+      expect(() => assertLegacySecretsCovered(second)).not.toThrow();
+    } finally {
+      await owner.query('delete from connections where id = any($1::uuid[])', [ids]);
+    }
   });
 });
 

@@ -2,6 +2,7 @@ import type { OwlwireDb } from '@owlwire/db';
 import {
   assertKeyringCoversKeys,
   checkRlsEnforcement,
+  type LegacyUpgradeResult,
   RlsNotEnforcedError,
   SYSTEM,
 } from '@owlwire/db/system';
@@ -38,4 +39,28 @@ export async function runStartupChecks(
     }
   }
   await assertKeyringCoversKeys(SYSTEM, db);
+}
+
+/** Legacy (`kek_v0`) connection secrets are sealed with KEK versions the keyring does not hold. Versions only. */
+export class LegacyKeyringCoverageError extends Error {
+  constructor(readonly missingKekVersions: readonly number[]) {
+    super(
+      `legacy connection secrets are sealed with KEK ${missingKekVersions.map((v) => `v${v}`).join(', ')}, ` +
+        'which is not in the keyring; set OWLWIRE_KEK_PREVIOUS="<version>:<base64>" to that key and restart',
+    );
+    this.name = 'LegacyKeyringCoverageError';
+  }
+}
+
+/**
+ * Final review M6: the startup legacy upgrade tries to open every `kek_v0` secret with the injected SecretBox
+ * decryptor (db never learns that format). When any failed only because its KEK version is not configured, serve
+ * refuses to start instead of running with connections whose every delivery would fail permanently. Rows that did
+ * open are already upgraded; other failures (corrupt rows) are logged by the upgrade and do not block startup.
+ */
+export function assertLegacySecretsCovered(result: Pick<LegacyUpgradeResult, 'failed'>): void {
+  const missing = [
+    ...new Set(result.failed.flatMap((f) => (f.missingKekVersion ? [f.missingKekVersion] : []))),
+  ].sort((a, b) => a - b);
+  if (missing.length > 0) throw new LegacyKeyringCoverageError(missing);
 }
