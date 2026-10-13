@@ -41,6 +41,7 @@ export default defineConfig({
           name: 'int',
           include: ['{apps,packages}/**/src/**/*.int.test.ts', 'src/**/*.int.test.ts'],
           exclude,
+          globalSetup: [r('./packages/testing/src/global-setup.ts')],
           testTimeout: 60_000,
           hookTimeout: 180_000,
         },
