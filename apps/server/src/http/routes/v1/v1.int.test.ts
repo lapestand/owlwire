@@ -168,6 +168,14 @@ describe('POST /v1/events', () => {
     expect((await postEvent({ events: [{ type: 'a', body: 'x' }] })).status).toBe(422);
   });
 
+  it('rejects non http urls such as javascript: with validation_failed', async () => {
+    const res = await postEvent({ type: 'a', body: 'x', url: 'javascript:alert(1)' });
+    expect(res.status).toBe(422);
+    const problem = (await res.json()) as { code: string; detail: string };
+    expect(problem.code).toBe('validation_failed');
+    expect(problem.detail).toMatch(/url/);
+  });
+
   it('rejects types that are not granted to the installation', async () => {
     await h.deps.db
       .update(installations)

@@ -40,6 +40,27 @@ describe('EventInput', () => {
   });
 });
 
+describe('EventInput url schemes', () => {
+  it.each([
+    'javascript:alert(1)',
+    'data:text/html,<b>x</b>',
+    'ftp://example.com/a',
+    'file:///etc/passwd',
+  ])('rejects %s for url and imageUrl', (bad) => {
+    expect(EventInput.safeParse({ type: 'a', body: 'x', url: bad }).success).toBe(false);
+    expect(EventInput.safeParse({ type: 'a', body: 'x', imageUrl: bad }).success).toBe(false);
+  });
+
+  it('accepts http and https urls', () => {
+    expect(EventInput.safeParse({ type: 'a', body: 'x', url: 'http://e.com/a' }).success).toBe(
+      true,
+    );
+    expect(
+      EventInput.safeParse({ type: 'a', body: 'x', imageUrl: 'https://e.com/a.png' }).success,
+    ).toBe(true);
+  });
+});
+
 describe('HookJsonInput', () => {
   it('requires a body and allows a title', () => {
     expect(HookJsonInput.safeParse({ title: 't', body: 'b' }).success).toBe(true);

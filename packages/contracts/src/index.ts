@@ -1,6 +1,9 @@
 import { SEVERITIES } from '@owlwire/core/message';
 import { z } from 'zod';
 
+/** Links end up in chat messages and the web UI, so only http and https are allowed. */
+const HttpUrl = z.url({ protocol: /^https?$/ });
+
 export const EventInput = z.object({
   type: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,63}$/),
   severity: z.enum(SEVERITIES).optional(),
@@ -16,8 +19,8 @@ export const EventInput = z.object({
     )
     .max(20)
     .optional(),
-  url: z.string().url().optional(),
-  imageUrl: z.string().url().optional(),
+  url: HttpUrl.optional(),
+  imageUrl: HttpUrl.optional(),
   groupKey: z.string().max(128).optional(),
   summary: z.string().max(256).optional(),
   locale: z.string().max(16).optional(),
