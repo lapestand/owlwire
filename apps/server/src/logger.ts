@@ -1,5 +1,5 @@
 import type { Fn } from '@owlwire/adapter-sdk';
-import { withholdEchoedInput } from '@owlwire/core';
+import { errorName, scrubQueryParams, withholdEchoedInput } from '@owlwire/core';
 import { type DestinationStream, type LogFn, type Logger, pino } from 'pino';
 
 export const REDACT_PATHS = [
@@ -19,7 +19,6 @@ export const REDACT_PATHS = [
   '*.authorization',
 ];
 
-const PARAMS_MARKER = /\n[ \t]*params:/;
 /** Bound for the structural walk over log objects, error fields and `cause` chains. */
 const MAX_DEPTH = 8;
 /** DrizzleQueryError `params` and pg error fields that can carry row values, hints or SQL with literals (I-6). */
@@ -32,19 +31,6 @@ const FRAME = /^\s+at /;
  * again would cut a rebuilt stack at its `params: [redacted]` line and lose the frames.
  */
 const SANITIZED = new WeakSet<object>();
-
-/**
- * I-6: Drizzle'ın `Failed query: <sql>\nparams: <değerler>` metninde `\nparams:`'tan metnin sonuna kadar her şey atılır.
- * Parametreler çok satırlı olabilir ve satırları `at ` ile başlayabilir; bu yüzden kesim yığın çerçevesi aramaz.
- */
-export function scrubQueryParams(text: string): string {
-  const m = PARAMS_MARKER.exec(text);
-  return m ? `${text.slice(0, m.index)}\nparams: [redacted]` : text;
-}
-
-function errorType(err: Error): string {
-  return err.constructor.name === 'Error' ? err.name : err.constructor.name;
-}
 
 /** Loglanabilir hata mesajı: sorgu parametreleri atılır, girdi yankılayan mesajlar (SyntaxError, pg 22xxx, P0001) kesilir. */
 function loggableMessage(err: Error): string {
@@ -64,8 +50,27 @@ function stackFrames(err: Error): string[] {
   return rest.filter((line) => FRAME.test(line));
 }
 
+/**
+ * Plain-text form of an error for places without a logger (the CLI fatal handler): `<name>: <message>` with the query
+ * params cut and echoed input withheld, the original frames only (never lines from the message), then the same for
+ * each Error in the `cause` chain. Non-Error values give a fixed text.
+ */
+export function safeErrorText(err: unknown): string {
+  if (!(err instanceof Error)) return 'unknown error';
+  const lines: string[] = [];
+  const seen = new Set<Error>();
+  let cur: unknown = err;
+  for (let depth = 0; cur instanceof Error && !seen.has(cur) && depth < MAX_DEPTH; depth++) {
+    seen.add(cur);
+    lines.push(`${depth === 0 ? '' : 'caused by: '}${errorName(cur)}: ${loggableMessage(cur)}`);
+    lines.push(...stackFrames(cur));
+    cur = cur.cause;
+  }
+  return lines.join('\n');
+}
+
 function serializeError(err: Error, depth: number, path: Set<object>): Record<string, unknown> {
-  const type = errorType(err);
+  const type = errorName(err);
   const message = loggableMessage(err);
   const out: Record<string, unknown> = { type, message };
   if (typeof err.stack === 'string')
@@ -128,7 +133,7 @@ export function serializeErr(err: unknown): unknown {
 
 /** `%s`/`%o` ile biçimlenen argümanlar: Error güvenli metne, string ve nesneler temizlenmiş kopyaya döner. */
 function interpolationArg(arg: unknown): unknown {
-  if (arg instanceof Error) return `${errorType(arg)}: ${loggableMessage(arg)}`;
+  if (arg instanceof Error) return `${errorName(arg)}: ${loggableMessage(arg)}`;
   return sanitize(arg, 0, new Set(), false);
 }
 

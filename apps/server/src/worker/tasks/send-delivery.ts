@@ -11,6 +11,7 @@ import {
   computeBackoffMs,
   DEFAULT_MAX_ATTEMPTS,
   type Message,
+  scrubQueryParams,
   withholdEchoedInput,
 } from '@owlwire/core';
 import { DecryptError, UnknownKekVersionError } from '@owlwire/crypto';
@@ -30,7 +31,6 @@ import {
 } from '@owlwire/db';
 import type { Logger } from 'pino';
 import type { AdapterRegistry } from '../../adapters/registry.js';
-import { scrubQueryParams } from '../../logger.js';
 import { resolveJobTenant } from '../job-tenant.js';
 import { enqueueSendDelivery } from '../jobs.js';
 

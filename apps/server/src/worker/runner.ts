@@ -1,3 +1,4 @@
+import { scrubQueryParams } from '@owlwire/core';
 import { safeErrorMessage } from '@owlwire/db';
 import {
   Logger as GraphileLogger,
@@ -9,7 +10,6 @@ import {
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { Deps } from '../deps.js';
-import { scrubQueryParams } from '../logger.js';
 import { ROUTE_EVENT_TASK, SEND_DELIVERY_TASK } from './jobs.js';
 import { routeEvent } from './tasks/route-event.js';
 import { sendDelivery } from './tasks/send-delivery.js';

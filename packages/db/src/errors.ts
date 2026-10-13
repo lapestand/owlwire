@@ -1,5 +1,4 @@
-import { withholdEchoedInput } from '@owlwire/core';
-import { DrizzleQueryError } from 'drizzle-orm';
+import { cutQueryParams, errorName, withholdEchoedInput } from '@owlwire/core';
 
 const SQLSTATE = /^[0-9A-Z]{5}$/;
 
@@ -102,13 +101,6 @@ export function pgErrorOf(err: unknown): { code: string; constraint?: string } |
   return null;
 }
 
-function errorName(err: Error): string {
-  // drizzle-orm 0.45 does not set `name` on DrizzleQueryError, so it would read as plain 'Error'.
-  if (err instanceof DrizzleQueryError) return 'DrizzleQueryError';
-  if (err.name !== 'Error') return err.name;
-  return err.constructor?.name || 'Error';
-}
-
 /**
  * Sistem işlemlerinin sonuç listelerine (`failed[].error`) yazılan güvenli hata metni. Drizzle `DrizzleQueryError`
  * mesajı `Failed query: <sql>\nparams: <değerler>` biçimindedir; değerler sarılı DEK, şifreli config vb. olabilir,
@@ -116,9 +108,7 @@ function errorName(err: Error): string {
  */
 export function safeErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'unknown error';
-  const cut = err.message.indexOf('\nparams:');
-  const message = cut === -1 ? err.message : err.message.slice(0, cut);
-  return withholdEchoedInput(err, `${errorName(err)}: ${message}`);
+  return withholdEchoedInput(err, `${errorName(err)}: ${cutQueryParams(err.message)}`);
 }
 
 /**

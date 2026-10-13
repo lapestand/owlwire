@@ -1,5 +1,6 @@
+import { scrubQueryParams } from '@owlwire/core';
 import { describe, expect, it } from 'vitest';
-import { createLogger, REDACT_PATHS, scrubQueryParams, toAdapterLogger } from './logger.js';
+import { createLogger, REDACT_PATHS, safeErrorText, toAdapterLogger } from './logger.js';
 
 function capture() {
   const lines: string[] = [];
@@ -253,5 +254,43 @@ describe('query parameter redaction (I-6)', () => {
     expect(lines.join('\n')).not.toContain('SECRET-JSON');
     expect(JSON.parse(lines[0] ?? '{}').err).toMatchObject({ type: 'SyntaxError' });
     expect(JSON.parse(lines[0] ?? '{}').err.stack).toMatch(/\n\s+at /);
+  });
+});
+
+describe('safeErrorText (CLI fatal path)', () => {
+  it('never prints query params, even lines starting with "at", along the whole cause chain', () => {
+    const inner = queryError(['inner\n    at leak (x.js:1:1) SECRET-INNER']);
+    const err = queryError(
+      ['Standup\nat 10:00 SECRET-STANDUP', 'body\n    at fake (frame.js:1:1) SECRET-FRAME'],
+      inner,
+    );
+    const text = safeErrorText(err);
+    expect(text).not.toMatch(/SECRET-(INNER|STANDUP|FRAME)/);
+    expect(text).not.toContain('frame.js');
+    const lines = text.split('\n');
+    expect(lines[0]).toBe(
+      'DrizzleQueryError: Failed query: update connections set config_enc = $1 where id = $2',
+    );
+    expect(
+      lines.filter((l) => l.startsWith('caused by: DrizzleQueryError: Failed query')),
+    ).toHaveLength(1);
+    expect(lines.filter((l) => /^\s+at /.test(l)).length).toBeGreaterThan(1);
+    expect(text).toContain('logger.test.ts');
+  });
+
+  it('withholds echoed input and handles non-errors and cycles', () => {
+    const data = Object.assign(new Error('invalid input syntax for type uuid: "SECRET-ID"'), {
+      code: '22P02',
+    });
+    expect(safeErrorText(data)).not.toContain('SECRET-ID');
+    expect(safeErrorText('SECRET-STRING')).toBe('unknown error');
+    const a = new Error('a');
+    const b = new Error('b', { cause: a });
+    Object.assign(a, { cause: b });
+    expect(
+      safeErrorText(a)
+        .split('\n')
+        .filter((l) => !/^\s+at /.test(l)),
+    ).toEqual(['Error: a', 'caused by: Error: b']);
   });
 });

@@ -34,3 +34,30 @@ export function withholdEchoedInput(err: unknown, text: string): string {
   const quote = text.search(/["']/);
   return quote === -1 ? text : `${text.slice(0, quote)}[redacted]`;
 }
+
+/** Start of Drizzle's `params:` block in `Failed query: <sql>\nparams: <values>` (leading indentation allowed). */
+const QUERY_PARAMS_MARKER = /\n[ \t]*params:/;
+
+/**
+ * I-6: the text before the first `params:` line. Everything from the marker to the end is dropped: parameter values
+ * can span lines and those lines can start with `at `, so the cut never looks for stack frames.
+ */
+export function cutQueryParams(text: string): string {
+  const m = QUERY_PARAMS_MARKER.exec(text);
+  return m ? text.slice(0, m.index) : text;
+}
+
+/** Like {@link cutQueryParams}, but leaves a `params: [redacted]` marker where the values were. */
+export function scrubQueryParams(text: string): string {
+  const cut = cutQueryParams(text);
+  return cut === text ? text : `${cut}\nparams: [redacted]`;
+}
+
+/**
+ * Display name of an error: its `name` unless that is the generic `Error`, else its constructor's name (drizzle-orm
+ * does not set `name` on DrizzleQueryError).
+ */
+export function errorName(err: Error): string {
+  if (err.name && err.name !== 'Error') return err.name;
+  return err.constructor?.name || 'Error';
+}

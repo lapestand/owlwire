@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withholdEchoedInput } from './redaction.js';
+import { cutQueryParams, errorName, scrubQueryParams, withholdEchoedInput } from './redaction.js';
 
 const pgErr = (code: string, message: string) => Object.assign(new Error(message), { code });
 
@@ -40,5 +40,29 @@ describe('withholdEchoedInput', () => {
     const eof = new SyntaxError('Unexpected end of JSON input');
     expect(withholdEchoedInput(eof, eof.message)).toBe(eof.message);
     expect(withholdEchoedInput('not an error', 'a "b"')).toBe('a "b"');
+  });
+});
+
+describe('query params scrubbing', () => {
+  const text = 'Failed query: select $1\n  params: SECRET\n    at fake (x.js:1:1) SECRET-2';
+
+  it('cuts everything from the first params marker, frames-looking lines included', () => {
+    expect(cutQueryParams(text)).toBe('Failed query: select $1');
+    expect(scrubQueryParams(text)).toBe('Failed query: select $1\nparams: [redacted]');
+  });
+
+  it('leaves text without a params marker unchanged', () => {
+    expect(cutQueryParams('no params here')).toBe('no params here');
+    expect(scrubQueryParams('params: inline only')).toBe('params: inline only');
+  });
+});
+
+describe('errorName', () => {
+  it('prefers a specific name and falls back to the constructor name', () => {
+    class DriverError extends Error {}
+    expect(errorName(new TypeError('x'))).toBe('TypeError');
+    expect(errorName(new DriverError('x'))).toBe('DriverError');
+    expect(errorName(Object.assign(new Error('x'), { name: 'Named' }))).toBe('Named');
+    expect(errorName(new Error('x'))).toBe('Error');
   });
 });

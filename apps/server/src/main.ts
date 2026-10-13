@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { systemClock } from '@owlwire/core';
 import { createKeyring } from '@owlwire/crypto';
-import { openDatabase, safeErrorMessage } from '@owlwire/db';
+import { openDatabase } from '@owlwire/db';
 import { Command, Option } from 'commander';
 import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
 import { createDeps, type Deps } from './deps.js';
-import { createLogger } from './logger.js';
+import { createLogger, safeErrorText } from './logger.js';
 import { formatSeedResult, seedDevWorkspace } from './system/dev-seed.js';
 import { runKeysRotate } from './system/keys-rotate.js';
 import { migrateDatabase } from './system/migrate.js';
@@ -150,9 +150,8 @@ program.parseAsync(process.argv).catch((err: unknown) => {
     process.stderr.write(`configuration error: ${err.message}\n`);
     process.exit(2);
   }
-  // safeErrorMessage drops DrizzleQueryError's "params:" (wrapped keys, ciphertext); only the frames are kept.
-  const frames =
-    err instanceof Error ? (err.stack ?? '').split('\n').filter((l) => /^\s+at /.test(l)) : [];
-  process.stderr.write(`${[safeErrorMessage(err), ...frames].join('\n')}\n`);
+  // safeErrorText cuts DrizzleQueryError's "params:" (wrapped keys, ciphertext) and takes frames only from the
+  // stack below the message header, for the whole cause chain (I-6).
+  process.stderr.write(`${safeErrorText(err)}\n`);
   process.exit(1);
 });
