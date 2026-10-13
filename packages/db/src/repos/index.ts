@@ -15,3 +15,9 @@ export {
   type SystemAuditEntry,
   writeAudit,
 } from './audit.js';
+export {
+  type CreateWorkspaceInput,
+  createWorkspace,
+  getWorkspace,
+  type WorkspaceRow,
+} from './workspaces.js';

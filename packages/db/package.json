@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/db",
-  "version": "0.23.1",
+  "version": "0.24.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,6 +13,11 @@
       "source": "./src/migrate-all.ts",
       "types": "./dist/migrate-all.d.ts",
       "import": "./dist/migrate-all.js"
+    },
+    "./system": {
+      "source": "./src/system/index.ts",
+      "types": "./dist/system/index.d.ts",
+      "import": "./dist/system/index.js"
     }
   },
   "files": [
