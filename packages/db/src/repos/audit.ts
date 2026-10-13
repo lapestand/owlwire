@@ -105,11 +105,18 @@ const normalizeKey = (key: string): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
 
-/** Strips a trailing plural/hash marker so `tokens`, `credentials` and `password_hash` match. */
-const looksSecret = (normalized: string): boolean =>
-  SECRET_KEY_SUFFIXES.some((suffix) =>
-    [normalized, normalized.replace(/(s|hash|value)$/, '')].some((n) => n.endsWith(suffix)),
-  );
+/** Trailing plural/hash/value markers, stripped repeatedly so `tokens`, `password_hash` and `tokenHashes` match. */
+const STRIPPED_SUFFIX = /(hashes|values|hash|value|s)$/;
+
+const looksSecret = (normalized: string): boolean => {
+  let n = normalized;
+  for (;;) {
+    if (SECRET_KEY_SUFFIXES.some((suffix) => n.endsWith(suffix))) return true;
+    const stripped = n.replace(STRIPPED_SUFFIX, '');
+    if (stripped === n) return false;
+    n = stripped;
+  }
+};
 
 /**
  * Denetim kaydına sır yazılmasını engeller: anahtar adı sır gibi görünen her alan reddedilir.

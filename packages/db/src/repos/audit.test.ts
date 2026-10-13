@@ -19,6 +19,10 @@ describe('assertAuditDataSafe', () => {
     [{ password_hash: 'x' }],
     [{ credentials: 'x' }],
     [{ privateKeyPem: 'x' }],
+    [{ secretValues: ['x'] }],
+    [{ tokenHashes: ['x'] }],
+    [{ passwordHashes: ['x'] }],
+    [{ api_key_values: ['x'] }],
   ])('rejects %j', (data) => {
     expect(() => assertAuditDataSafe(data)).toThrow(AuditDataError);
   });
@@ -27,6 +31,7 @@ describe('assertAuditDataSafe', () => {
     [{ tokenPrefix: 'ow_inst_abcd' }],
     [{ fieldNames: ['config', 'token'] }],
     [{ fromVersion: 1, toVersion: 2 }],
+    [{ processes: 2, hashes: ['a'], values: [1] }],
     [{}],
   ])('accepts %j', (data) => {
     expect(() => assertAuditDataSafe(data)).not.toThrow();
