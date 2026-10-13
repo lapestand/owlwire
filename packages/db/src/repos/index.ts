@@ -16,6 +16,28 @@ export {
   writeAudit,
 } from './audit.js';
 export {
+  type ConnectionRow,
+  type ConnectionStatus,
+  type CreateConnectionInput,
+  createConnection,
+  deleteConnection,
+  getConnection,
+  listConnections,
+  type ReadConfigOptions,
+  readConnectionConfig,
+  updateConnectionConfig,
+  updateConnectionStatus,
+} from './connections.js';
+export {
+  type CreateDestinationInput,
+  createDestination,
+  type DestinationRow,
+  getDestination,
+  getDestinationsByIds,
+  listDestinations,
+  updateDestinationStatus,
+} from './destinations.js';
+export {
   type CreateWorkspaceInput,
   createWorkspace,
   getWorkspace,
