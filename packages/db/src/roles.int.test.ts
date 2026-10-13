@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { startTestDatabase, TEST_APP, type TestDatabase } from '@owlwire/testing';
+import { startTestDatabase, TEST_APP, TEST_OWNER, type TestDatabase } from '@owlwire/testing';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrateAll } from './migrate-all.js';
@@ -41,7 +41,7 @@ describe('app role', () => {
     const { rows } = await app.query<{ owner: string }>(
       "select tableowner as owner from pg_tables where schemaname = 'public' and tablename = 'workspaces'",
     );
-    expect(rows[0]?.owner).not.toBe(TEST_APP.user);
+    expect(rows[0]?.owner).toBe(TEST_OWNER.user);
   });
 
   it('cannot create tables in public', async () => {
@@ -51,12 +51,46 @@ describe('app role', () => {
   });
 
   it('can read and write application tables', async () => {
-    await expect(app.query('select count(*) from workspaces')).resolves.toBeDefined();
+    const client = await app.connect();
+    try {
+      await client.query('begin');
+      const id = (
+        await client.query<{ id: string }>(
+          "insert into workspaces (id, name, slug, kind) values (gen_random_uuid(), 'w', $1, 'personal') returning id",
+          [`rw_${suffix}`],
+        )
+      ).rows[0]?.id;
+      expect(id).toBeDefined();
+      const updated = await client.query("update workspaces set name = 'w2' where id = $1", [id]);
+      expect(updated.rowCount).toBe(1);
+      const read = await client.query<{ name: string }>(
+        'select name from workspaces where id = $1',
+        [id],
+      );
+      expect(read.rows[0]?.name).toBe('w2');
+      const deleted = await client.query('delete from workspaces where id = $1', [id]);
+      expect(deleted.rowCount).toBe(1);
+    } finally {
+      await client.query('rollback');
+      client.release();
+    }
   });
 
   it('can enqueue graphile worker jobs', async () => {
     await expect(
       app.query(`select graphile_worker.add_job('noop_test', '{}'::json)`),
+    ).resolves.toBeDefined();
+  });
+
+  it('cannot modify graphile worker migration bookkeeping', async () => {
+    await expect(app.query('delete from graphile_worker.migrations')).rejects.toMatchObject({
+      code: '42501',
+    });
+    await expect(
+      app.query('insert into graphile_worker.migrations (id) values (999999)'),
+    ).rejects.toMatchObject({ code: '42501' });
+    await expect(
+      app.query(`select graphile_worker.add_job('noop_test_after_revoke', '{}'::json)`),
     ).resolves.toBeDefined();
   });
 
@@ -78,6 +112,49 @@ describe('app role', () => {
     await expect(ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, evil, 'x'))).rejects.toBeInstanceOf(
       AppRoleError,
     );
+  });
+
+  it('refuses an existing superuser role as app role', async () => {
+    const su = `su_app_${suffix}`;
+    await owner.query(`create role ${su} login password 'x' superuser`);
+    await expect(ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, su, 'x'))).rejects.toBeInstanceOf(
+      AppRoleError,
+    );
+  });
+
+  it('refuses an app role that is a member of the owner role', async () => {
+    const member = `owner_member_${suffix}`;
+    await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
+    await owner.query(`grant ${TEST_OWNER.user} to ${member}`);
+    await expect(
+      ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, member, 'x')),
+    ).rejects.toBeInstanceOf(AppRoleError);
+  });
+
+  it('refuses an app role that is a member of a BYPASSRLS role', async () => {
+    const bypass = `bypass_grp_${suffix}`;
+    const member = `bypass_member_${suffix}`;
+    await owner.query(`create role ${bypass} nologin bypassrls`);
+    await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
+    await owner.query(`grant ${bypass} to ${member}`);
+    await expect(
+      ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, member, 'x')),
+    ).rejects.toBeInstanceOf(AppRoleError);
+  });
+
+  it('refuses an app role that owns an application relation', async () => {
+    const tableOwner = `table_owner_${suffix}`;
+    const table = `owned_by_app_${suffix}`;
+    await owner.query(`create role ${tableOwner} login password 'x' nosuperuser nobypassrls`);
+    await owner.query(`create table public.${table} (id int)`);
+    await owner.query(`alter table public.${table} owner to ${tableOwner}`);
+    try {
+      await expect(
+        ensureAppRole(tdb.ownerUrl, urlAs(tdb.appUrl, tableOwner, 'x')),
+      ).rejects.toBeInstanceOf(AppRoleError);
+    } finally {
+      await owner.query(`drop table public.${table}`);
+    }
   });
 
   it('leaves the password of an existing role untouched', async () => {

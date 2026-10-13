@@ -20,7 +20,7 @@ export async function migrateAll(opts: MigrateAllOptions): Promise<{ appRole: Ap
   const ignore = () => {};
   ownerPool.on('error', ignore);
   ownerPool.on('connect', (client) => client.on('error', ignore));
-  let appRole: AppRoleMode = 'same';
+  let appRole: AppRoleMode | undefined;
   try {
     await runMigrations(ownerPool, {
       afterMigrate: async () => {
@@ -31,6 +31,7 @@ export async function migrateAll(opts: MigrateAllOptions): Promise<{ appRole: Ap
   } finally {
     await ownerPool.end();
   }
+  if (appRole === undefined) throw new Error('migrateAll: afterMigrate did not run');
   return { appRole };
 }
 

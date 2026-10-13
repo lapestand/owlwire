@@ -31,6 +31,47 @@ const isDuplicateObject = (err: unknown): boolean => {
 };
 
 /**
+ * Rolün kendi bayrakları yetmez: sahip rolünün üyesi sahip sayılır, SUPERUSER/BYPASSRLS bir rolün üyesi
+ * SET ROLE ile RLS'i aşabilir, uygulama şemalarında nesne sahibi olan rol o nesnede RLS'e tabi değildir.
+ */
+async function assertSubjectToRls(client: pg.Client, appUser: string): Promise<void> {
+  const { rows } = await client.query<{
+    owner_member: boolean;
+    privileged_member: boolean;
+    owns_relation: boolean;
+  }>(
+    `select
+       pg_has_role($1, current_user, 'MEMBER') as owner_member,
+       exists (
+         select 1 from pg_roles r
+         where (r.rolsuper or r.rolbypassrls) and pg_has_role($1, r.oid, 'MEMBER')
+       ) as privileged_member,
+       exists (
+         select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+         where n.nspname = any($2::text[])
+           and c.relowner = (select oid from pg_roles where rolname = $1)
+       ) as owns_relation`,
+    [appUser, APP_SCHEMAS],
+  );
+  const check = rows[0];
+  if (check?.owner_member) {
+    throw new AppRoleError(
+      `role ${appUser} is a member of the owner role; the application role must be subject to row level security`,
+    );
+  }
+  if (check?.privileged_member) {
+    throw new AppRoleError(
+      `role ${appUser} is a member of a SUPERUSER or BYPASSRLS role; the application role must be subject to row level security`,
+    );
+  }
+  if (check?.owns_relation) {
+    throw new AppRoleError(
+      `role ${appUser} owns relations in ${APP_SCHEMAS.join(', ')}; the application role must not own tables`,
+    );
+  }
+}
+
+/**
  * Graphile Worker kendi tablolarında RLS'i açar ama politika tanımlamaz: yalnız tablo sahibi ve BYPASSRLS
  * rolleri erişir. Uygulama rolü işleri olay kaydıyla aynı transaction'da add_job ile eklediği için (outbox)
  * her RLS'li graphile_worker tablosuna yalnız bu role açık bir politika eklenir. Graphile migration'ları
@@ -111,6 +152,7 @@ export async function ensureAppRole(ownerUrl: string, appUrl: string): Promise<A
         `role ${appUser} is SUPERUSER or BYPASSRLS; the application role must be subject to row level security`,
       );
     }
+    await assertSubjectToRls(client, appUser);
 
     const dbName = (await client.query<{ db: string }>('select current_database() as db')).rows[0]
       ?.db;
@@ -129,6 +171,13 @@ export async function ensureAppRole(ownerUrl: string, appUrl: string): Promise<A
       );
       await client.query(`grant usage, select on all sequences in schema ${schema} to ${role}`);
       await client.query(`grant execute on all functions in schema ${schema} to ${role}`);
+    }
+    // Graphile'ın migration defteri RLS'siz; uygulama rolü onu bozamasın (yalnız _private_* tablolarına erişir).
+    const bookkeeping = await client.query<{ present: boolean }>(
+      "select to_regclass('graphile_worker.migrations') is not null as present",
+    );
+    if (bookkeeping.rows[0]?.present) {
+      await client.query(`revoke all on table graphile_worker.migrations from ${role}`);
     }
     await allowGraphileWorkerTables(client, appUser);
   } finally {
