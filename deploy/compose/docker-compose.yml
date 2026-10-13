@@ -1,0 +1,37 @@
+name: owlwire
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: owlwire
+      POSTGRES_PASSWORD: ${OWLWIRE_DB_OWNER_PASSWORD:?set OWLWIRE_DB_OWNER_PASSWORD in .env}
+      POSTGRES_DB: owlwire
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U owlwire -d owlwire"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  owlwire:
+    image: ghcr.io/owlwire/owlwire:dev
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    command: ["serve", "--role", "all"]
+    env_file: .env
+    environment:
+      # P0 has a single database role (owner); P1a adds owlwire_app and OWLWIRE_MIGRATION_DATABASE_URL (R12)
+      OWLWIRE_DATABASE_URL: postgres://owlwire:${OWLWIRE_DB_OWNER_PASSWORD}@postgres:5432/owlwire
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

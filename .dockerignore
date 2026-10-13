@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+apps/server/drizzle
+apps/server/public
+.git
+deploy/compose/.env
