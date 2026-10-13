@@ -1,4 +1,13 @@
 export {
+  type AudienceRow,
+  createAudience,
+  deleteAudience,
+  expandAudiences,
+  listAudienceMembers,
+  listAudiences,
+  setAudienceMembers,
+} from './audiences.js';
+export {
   AUDIT_ACTIONS,
   AUDIT_TARGET_TYPES,
   type AuditAction,

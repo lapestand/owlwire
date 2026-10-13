@@ -28,7 +28,7 @@ const liveConnectionIds = (t: TenantTx) =>
  * R101: yumuşak silinmiş hedefler ve bağlantısı silinmiş hedefler tenant fonksiyonlarında yoktur. Bağlantı koşulu,
  * `deleted_at`'i ayrı tutulan iki kolonun (connections, destinations) ayrışabileceği durumları da kapatır.
  */
-const visible = (t: TenantTx, ...extra: SQL[]) =>
+export const visible = (t: TenantTx, ...extra: SQL[]) =>
   and(
     eq(destinations.workspaceId, t.workspaceId),
     isNull(destinations.deletedAt),
