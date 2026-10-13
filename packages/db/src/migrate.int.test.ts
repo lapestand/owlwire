@@ -17,6 +17,7 @@ import {
   rules,
   ruleTargets,
   runMigrations,
+  withAdvisoryLock,
   workspaces,
 } from './index.js';
 
@@ -63,6 +64,71 @@ describe('runMigrations', () => {
         'instance_settings',
       ]),
     );
+  });
+});
+
+describe('withAdvisoryLock', () => {
+  const KEY = 0x7465_7374;
+
+  function within<T>(p: Promise<T>, ms: number): Promise<T> {
+    return Promise.race([
+      p,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('lock not acquired')), ms),
+      ),
+    ]);
+  }
+
+  async function terminateLockHolder(key: number): Promise<void> {
+    await pool.query(
+      `select pg_terminate_backend(pid) from pg_locks
+       where locktype = 'advisory' and objid = $1 and granted`,
+      [key],
+    );
+  }
+
+  it('releases the lock when fn throws so another pool acquires it immediately', async () => {
+    const pool1 = createPool(tdb.url, 2);
+    const pool2 = createPool(tdb.url, 2);
+    try {
+      await expect(
+        withAdvisoryLock(pool1, KEY, async () => {
+          throw new Error('boom');
+        }),
+      ).rejects.toThrow('boom');
+      await expect(
+        within(
+          withAdvisoryLock(pool2, KEY, async () => 'ok'),
+          2_000,
+        ),
+      ).resolves.toBe('ok');
+    } finally {
+      await pool1.end();
+      await pool2.end();
+    }
+  });
+
+  it('keeps the fn error and destroys the client when unlocking fails', async () => {
+    const pool1 = createPool(tdb.url, 2);
+    const pool2 = createPool(tdb.url, 2);
+    try {
+      await expect(
+        withAdvisoryLock(pool1, KEY, async () => {
+          await terminateLockHolder(KEY);
+          throw new Error('boom');
+        }),
+      ).rejects.toThrow('boom');
+      expect(pool1.totalCount).toBe(0);
+      await expect(
+        within(
+          withAdvisoryLock(pool2, KEY, async () => 'ok'),
+          2_000,
+        ),
+      ).resolves.toBe('ok');
+    } finally {
+      await pool1.end();
+      await pool2.end();
+    }
   });
 });
 

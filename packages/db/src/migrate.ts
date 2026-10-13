@@ -12,6 +12,13 @@ export const MIGRATION_LOCK_KEY = 0x6f776c77;
  */
 export const defaultMigrationsFolder = fileURLToPath(new URL('../drizzle', import.meta.url));
 
+/**
+ * Runs fn while holding a session-level advisory lock on a dedicated pool client.
+ * The lock holder occupies one connection for the whole call, so N concurrent callers
+ * on the same pool need a pool size of at least N+1 when fn itself uses the pool.
+ * If unlocking fails the client is destroyed (ending the session releases the lock)
+ * and fn's own error, when there is one, is the one rethrown.
+ */
 export async function withAdvisoryLock<T>(
   pool: pg.Pool,
   key: number,
@@ -20,14 +27,28 @@ export async function withAdvisoryLock<T>(
   const client = await pool.connect();
   try {
     await client.query('select pg_advisory_lock($1)', [key]);
-    try {
-      return await fn();
-    } finally {
-      await client.query('select pg_advisory_unlock($1)', [key]);
-    }
-  } finally {
-    client.release();
+  } catch (lockErr) {
+    client.release(lockErr instanceof Error ? lockErr : true);
+    throw lockErr;
   }
+  let result: T | undefined;
+  let fnErr: unknown;
+  let failed = false;
+  try {
+    result = await fn();
+  } catch (err) {
+    failed = true;
+    fnErr = err;
+  }
+  try {
+    await client.query('select pg_advisory_unlock($1)', [key]);
+  } catch (unlockErr) {
+    client.release(unlockErr instanceof Error ? unlockErr : true);
+    throw failed ? fnErr : unlockErr;
+  }
+  client.release();
+  if (failed) throw fnErr;
+  return result as T;
 }
 
 export interface MigrateOptions {
