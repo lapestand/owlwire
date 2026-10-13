@@ -53,11 +53,11 @@ describe('p1a tables', () => {
     ]);
   });
 
-  it('defaults connections.config_enc_scheme to kek_v0 and rejects unknown schemes', async () => {
+  it('defaults connections.config_enc_scheme to dek_v1 (migration 0006) and rejects unknown schemes', async () => {
     const { rows } = await owner.query('select config_enc_scheme from connections where id = $1', [
       a.connectionId,
     ]);
-    expect(rows[0]?.config_enc_scheme).toBe('kek_v0');
+    expect(rows[0]?.config_enc_scheme).toBe('dek_v1');
     await expect(
       owner.query("update connections set config_enc_scheme = 'plain' where id = $1", [
         a.connectionId,

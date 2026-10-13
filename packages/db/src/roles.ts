@@ -205,11 +205,14 @@ async function grantAppAccess(client: pg.Client, appUser: string): Promise<void>
     await client.query(`grant execute on all functions in schema ${schema} to ${role}`);
   }
   // Graphile'ın migration defteri RLS'siz; uygulama rolü onu bozamasın (yalnız _private_* tablolarına erişir).
+  // Yalnız okuma kalır: worker `run()` açılışta defterden şema sürümünü okur; sürüm güncelse hiçbir şey yazmaz
+  // (şemayı migrateAll sahip rolüyle önceden kurar).
   const bookkeeping = await client.query<{ present: boolean }>(
     "select to_regclass('graphile_worker.migrations') is not null as present",
   );
   if (bookkeeping.rows[0]?.present) {
     await client.query(`revoke all on table graphile_worker.migrations from ${role}`);
+    await client.query(`grant select on table graphile_worker.migrations to ${role}`);
   }
   await allowGraphileWorkerTables(client, appUser);
 }

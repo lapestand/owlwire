@@ -1,4 +1,4 @@
-import { eq, isNull } from 'drizzle-orm';
+import { eq, isNull, sql } from 'drizzle-orm';
 import { RepoNotFoundError } from '../errors.js';
 import type { OwlwireDb } from '../handle.js';
 import { type AuditActor, SYSTEM_ACTOR, writeAudit } from '../repos/audit.js';
@@ -56,4 +56,18 @@ export async function backfillWorkspaceKeys(
     if (inserted) created++;
   }
   return created;
+}
+
+/** KEK sürümü başına workspace anahtarı sayısı (açılış denetimi: anahtarlık saklı her sürümü kapsamalı). */
+export async function countKeysByVersion(
+  scope: SystemScope,
+  db: OwlwireDb,
+): Promise<Map<number, number>> {
+  const rows = await withSystem(db, scope, (s) =>
+    q(s)
+      .select({ version: workspaceKeys.kekVersion, n: sql<number>`count(*)::int` })
+      .from(workspaceKeys)
+      .groupBy(workspaceKeys.kekVersion),
+  );
+  return new Map(rows.map((r) => [r.version, r.n]));
 }

@@ -43,6 +43,13 @@
       "when": 1791909746439,
       "tag": "0005_deliveries_created_at_ms",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791912575612,
+      "tag": "0006_connections_scheme_default_dek_v1",
+      "breakpoints": true
     }
   ]
 }

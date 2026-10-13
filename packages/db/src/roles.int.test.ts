@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { startTestDatabase, TEST_APP, TEST_OWNER, type TestDatabase } from '@owlwire/testing';
+import { Logger as GraphileLogger, run } from 'graphile-worker';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrateAll } from './migrate-all.js';
@@ -98,6 +99,24 @@ describe('app role', () => {
     await expect(
       app.query(`select graphile_worker.add_job('noop_test_after_revoke', '{}'::json)`),
     ).resolves.toBeDefined();
+  });
+
+  it('can start graphile worker at runtime (its migration check reads the bookkeeping)', async () => {
+    const pool = new pg.Pool({ connectionString: tdb.appUrl, max: 2 });
+    pool.on('error', () => undefined);
+    pool.on('connect', (client) => client.on('error', () => undefined));
+    try {
+      const runner = await run({
+        pgPool: pool,
+        taskList: { noop_runtime_test: async () => undefined },
+        noHandleSignals: true,
+        pollInterval: 60_000,
+        logger: new GraphileLogger(() => () => undefined),
+      });
+      await runner.stop();
+    } finally {
+      await pool.end();
+    }
   });
 
   it('is idempotent and serialised by the advisory lock when migrateAll runs concurrently', async () => {

@@ -22,7 +22,7 @@ export const connections = pgTable(
     lastHealthAt: tstz('last_health_at'),
     configEncScheme: text('config_enc_scheme', { enum: ['kek_v0', 'dek_v1'] })
       .notNull()
-      .default('kek_v0'),
+      .default('dek_v1'),
     deletedAt: tstz('deleted_at'),
   },
   (t) => [

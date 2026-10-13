@@ -333,17 +333,20 @@ describe('connection lifecycle', () => {
 
   it('a failed BEGIN gives the pool slot back, destroys the client and leaves no nested marker', async () => {
     const one = openOne();
+    // The pool's only client goes back idle inside an aborted transaction, so the scope's BEGIN
+    // fails (25P02) before fn can run. Queries are awaited one by one: queuing them on a client
+    // that is already executing triggers pg's DeprecationWarning.
+    const poisoned = await dbInternals(one).pool.connect();
+    await poisoned.query('begin');
+    await poisoned.query('select 1/0').catch(() => undefined);
+    poisoned.release();
     const released = watchReleases(one);
     let continuation: Promise<unknown> | undefined;
     // 'acquire' fires inside the scope's async context, so the timer inherits the scope marker.
-    dbInternals(one).pool.once('acquire', (client: pg.PoolClient) => {
+    dbInternals(one).pool.once('acquire', () => {
       continuation = new Promise((resolve) => setTimeout(resolve, 50)).then(() =>
         withTenant(single, tenantScope(WS_B), async (t) => t.workspaceId).catch((e: unknown) => e),
       );
-      // Queued ahead of the scope's BEGIN: leaves the connection in an aborted transaction, so the
-      // scope's BEGIN fails (25P02) before fn can run.
-      client.query('begin').catch(() => undefined);
-      client.query('select 1/0').catch(() => undefined);
     });
     const failed = await withTenant(one, tenantScope(WS_A), async () => 'never').catch(
       (e: unknown) => e,
