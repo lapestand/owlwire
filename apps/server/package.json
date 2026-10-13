@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/server",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "private": true,
   "type": "module",
   "bin": {
@@ -39,6 +39,7 @@
     "@owlwire/crypto": "workspace:*",
     "@owlwire/db": "workspace:*",
     "@owlwire/testing": "workspace:*",
+    "@owlwire/web": "workspace:*",
     "@types/pg": "^8.23.1",
     "tsup": "^8.5.1",
     "tsx": "^4.23.15"

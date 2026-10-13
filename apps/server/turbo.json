@@ -2,6 +2,8 @@
   "extends": ["//"],
   "tasks": {
     "build": {
+      "dependsOn": ["^build", "@owlwire/web#build"],
+      "inputs": ["$TURBO_DEFAULT$", "../web/dist/**", "../../packages/db/drizzle/**"],
       "outputs": ["dist/**", "drizzle/**", "public/**"]
     }
   }
