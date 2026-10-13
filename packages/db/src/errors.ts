@@ -1,15 +1,13 @@
+import { DrizzleQueryError } from 'drizzle-orm';
+
 const SQLSTATE = /^[0-9A-Z]{5}$/;
+
+/** How far `pgErrorOf`/`pgErrorCode` follow the `cause` chain (Drizzle wraps the pg error once or twice). */
+const MAX_CAUSE_DEPTH = 5;
 
 /** Returns the Postgres SQLSTATE of an error, following Drizzle's `cause` wrapping. */
 export function pgErrorCode(err: unknown): string | undefined {
-  let cur: unknown = err;
-  for (let depth = 0; depth < 5; depth++) {
-    if (typeof cur !== 'object' || cur === null) return undefined;
-    const code = (cur as { code?: unknown }).code;
-    if (typeof code === 'string' && SQLSTATE.test(code)) return code;
-    cur = (cur as { cause?: unknown }).cause;
-  }
-  return undefined;
+  return pgErrorOf(err)?.code;
 }
 
 export class RepoNotFoundError extends Error {
@@ -17,8 +15,9 @@ export class RepoNotFoundError extends Error {
     readonly entity: string,
     readonly id: string,
     readonly constraint?: string,
+    options?: ErrorOptions,
   ) {
-    super(`${entity} not found: ${id}`);
+    super(`${entity} not found: ${id}`, options);
     this.name = 'RepoNotFoundError';
   }
 }
@@ -27,8 +26,12 @@ export class RepoConflictError extends Error {
   constructor(
     readonly entity: string,
     readonly constraint?: string,
+    options?: ErrorOptions,
   ) {
-    super(`${entity} conflicts with an existing row${constraint ? ` (${constraint})` : ''}`);
+    super(
+      `${entity} conflicts with an existing row${constraint ? ` (${constraint})` : ''}`,
+      options,
+    );
     this.name = 'RepoConflictError';
   }
 }
@@ -57,7 +60,7 @@ interface PgLike {
 
 export function pgErrorOf(err: unknown): { code: string; constraint?: string } | null {
   let cur: unknown = err;
-  for (let depth = 0; depth < 4 && cur !== null && typeof cur === 'object'; depth++) {
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cur !== null && typeof cur === 'object'; depth++) {
     const e = cur as PgLike;
     if (typeof e.code === 'string' && SQLSTATE.test(e.code)) {
       return {
@@ -70,6 +73,13 @@ export function pgErrorOf(err: unknown): { code: string; constraint?: string } |
   return null;
 }
 
+function errorName(err: Error): string {
+  // drizzle-orm 0.45 does not set `name` on DrizzleQueryError, so it would read as plain 'Error'.
+  if (err instanceof DrizzleQueryError) return 'DrizzleQueryError';
+  if (err.name !== 'Error') return err.name;
+  return err.constructor?.name || 'Error';
+}
+
 /**
  * Sistem işlemlerinin sonuç listelerine (`failed[].error`) yazılan güvenli hata metni. Drizzle `DrizzleQueryError`
  * mesajı `Failed query: <sql>\nparams: <değerler>` biçimindedir; değerler sarılı DEK, şifreli config vb. olabilir,
@@ -78,10 +88,15 @@ export function pgErrorOf(err: unknown): { code: string; constraint?: string } |
 export function safeErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'unknown error';
   const cut = err.message.indexOf('\nparams:');
-  return `${err.name}: ${cut === -1 ? err.message : err.message.slice(0, cut)}`;
+  return `${errorName(err)}: ${cut === -1 ? err.message : err.message.slice(0, cut)}`;
 }
 
-/** Not: PostgreSQL hata veren bir ifadeden sonra transaction'ı iptal eder; eşlenen hata da withTenant'ı geri alır. */
+/**
+ * Not: PostgreSQL hata veren bir ifadeden sonra transaction'ı iptal eder; eşlenen hata da withTenant'ı geri alır.
+ * Eşlenen hata özgün hatayı `cause` olarak taşır; özgün DrizzleQueryError mesajı sorgu parametrelerini içerir,
+ * bu yüzden loglarken `safeErrorMessage` / log redaksiyonu (Görev 16A) kullanılır.
+ * 42501 (RLS WITH CHECK ihlali) kiracı açısından "hedef görünmüyor" demektir ve RepoNotFoundError'a eşlenir.
+ */
 export async function mapPgErrors<T>(
   entity: string,
   id: string,
@@ -92,11 +107,14 @@ export async function mapPgErrors<T>(
     return await fn();
   } catch (err) {
     const pg = pgErrorOf(err);
-    if (pg?.code === '23505') throw new RepoConflictError(entity, pg.constraint);
+    if (pg?.code === '23505') throw new RepoConflictError(entity, pg.constraint, { cause: err });
     if (pg?.code === '23503') {
-      if (opts.fkViolation === 'conflict') throw new RepoConflictError(entity, pg.constraint);
-      throw new RepoNotFoundError(entity, id, pg.constraint);
+      if (opts.fkViolation === 'conflict') {
+        throw new RepoConflictError(entity, pg.constraint, { cause: err });
+      }
+      throw new RepoNotFoundError(entity, id, pg.constraint, { cause: err });
     }
+    if (pg?.code === '42501') throw new RepoNotFoundError(entity, id, undefined, { cause: err });
     throw err;
   }
 }

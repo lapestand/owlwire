@@ -29,6 +29,7 @@ let readInternals: (db: OwlwireDb) => DbInternals;
 /** Opak tutamaç: Drizzle'a paket dışından erişilemez. */
 export class OwlwireDb {
   readonly #internals: DbInternals;
+  #closing: Promise<void> | undefined;
 
   constructor(internals: DbInternals) {
     this.#internals = internals;
@@ -38,8 +39,10 @@ export class OwlwireDb {
     readInternals = (db) => db.#internals;
   }
 
-  async close(): Promise<void> {
-    await this.#internals.pool.end();
+  /** İdempotent: ikinci çağrı aynı kapanışı bekler (pg-pool `end()` iki kez çağrılınca hata verir). */
+  close(): Promise<void> {
+    this.#closing ??= this.#internals.pool.end();
+    return this.#closing;
   }
 }
 
@@ -53,8 +56,18 @@ export function openDatabase(opts: OpenDatabaseOptions): OwlwireDb {
   const pool = createPool(opts.url, opts.maxConnections ?? 10);
   // pg-pool'da dinleyicisiz 'error' olayı süreci düşürür (P0 createDeps ile aynı koruma).
   const onError = opts.onPoolError ?? (() => undefined);
-  pool.on('error', onError);
-  pool.on('connect', (client) => client.on('error', onError));
+  // Boştaki istemci hatasını pg-pool kendi idle dinleyicisiyle havuz 'error' olayına çevirir; kullanımdaki
+  // istemcide o dinleyici sökülür, bu yüzden istemci dinleyicimiz yalnız ödünç alınmış istemciler için
+  // bildirir. Her hata onPoolError'a tam bir kez ulaşır.
+  const checkedOut = new WeakSet<pg.PoolClient>();
+  pool.on('error', (err) => onError(err));
+  pool.on('acquire', (client) => checkedOut.add(client));
+  pool.on('release', (_err, client) => checkedOut.delete(client));
+  pool.on('connect', (client) =>
+    client.on('error', (err) => {
+      if (checkedOut.has(client)) onError(err);
+    }),
+  );
   return new OwlwireDb({
     drizzle: drizzle({ client: pool, schema }),
     pool,

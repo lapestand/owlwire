@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { FakeClock } from '@owlwire/core';
 import { createKeyring, generateKek } from '@owlwire/crypto';
 import { startTestDatabase, type TestDatabase } from '@owlwire/testing';
@@ -5,11 +6,17 @@ import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type RawTenant, seedRawTenant } from './__test__/raw-seed.js';
+import { mapPgErrors, pgErrorOf, RepoNotFoundError, safeErrorMessage } from './errors.js';
 import { dbInternals, type OwlwireDb, openDatabase } from './handle.js';
 import { migrateAll } from './migrate-all.js';
+import { workspaces } from './schema/index.js';
 import {
   InvalidScopeError,
+  NestedScopeError,
+  ScopeClosedError,
   SYSTEM,
+  SystemTx,
+  TenantTx,
   tenantScope,
   txInternals,
   withSystem,
@@ -207,5 +214,149 @@ describe('row level security through the app role', () => {
     expect(
       await visibleWorkspaces(dbInternals(single).drizzle.execute(sql`select id from workspaces`)),
     ).toEqual([]);
+  });
+});
+
+describe('closed scopes', () => {
+  // A repo-style query: every repository call goes through txInternals at query time.
+  const listWorkspaceIds = async (t: TenantTx | SystemTx) =>
+    (await txInternals(t).tx.select({ id: workspaces.id }).from(workspaces)).map((r) => r.id);
+
+  it('a TenantTx leaked from withTenant(A) cannot run inside withTenant(B)', async () => {
+    let leaked: TenantTx | undefined;
+    await withTenant(single, tenantScope(seededA.workspaceId), async (t) => {
+      leaked = t;
+      expect(await listWorkspaceIds(t)).toEqual([seededA.workspaceId]);
+    });
+    if (!leaked) throw new Error('not captured');
+    const stale = leaked;
+    const own = await withTenant(single, tenantScope(seededB.workspaceId), async (t) => {
+      await expect(listWorkspaceIds(stale)).rejects.toBeInstanceOf(ScopeClosedError);
+      // The current transaction is untouched by the rejected call.
+      return listWorkspaceIds(t);
+    });
+    expect(own).toEqual([seededB.workspaceId]);
+    expect(() => txInternals(stale)).toThrow(ScopeClosedError);
+  });
+
+  it('a SystemTx leaked from withSystem cannot run inside withTenant(B)', async () => {
+    let leaked: SystemTx | undefined;
+    await withSystem(single, SYSTEM, async (s) => {
+      leaked = s;
+    });
+    if (!leaked) throw new Error('not captured');
+    const stale = leaked;
+    await withTenant(single, tenantScope(seededB.workspaceId), async () => {
+      await expect(listWorkspaceIds(stale)).rejects.toBeInstanceOf(ScopeClosedError);
+    });
+  });
+
+  it('the Tx is closed after a rollback too', async () => {
+    let leaked: TenantTx | undefined;
+    await expect(
+      withTenant(single, tenantScope(WS_A), async (t) => {
+        leaked = t;
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+    if (!leaked) throw new Error('not captured');
+    expect(() => txInternals(leaked as TenantTx)).toThrow(ScopeClosedError);
+  });
+
+  it('TenantTx and SystemTx cannot be constructed outside the scope functions', () => {
+    const forge = Symbol('owlwire.scoped-tx');
+    const T = TenantTx as unknown as new (...args: unknown[]) => TenantTx;
+    const S = SystemTx as unknown as new (...args: unknown[]) => SystemTx;
+    expect(() => new T(forge, WS_A, {})).toThrow(TypeError);
+    expect(() => new S(forge, {})).toThrow(TypeError);
+    expect(() => txInternals({ workspaceId: WS_A } as unknown as TenantTx)).toThrow(TypeError);
+  });
+});
+
+describe('nested scopes', () => {
+  const NO_HANG_MS = 3_000; // below the 5 s pool connection timeout
+
+  it.each([
+    ['withTenant', 'withTenant'],
+    ['withTenant', 'withSystem'],
+    ['withSystem', 'withTenant'],
+    ['withSystem', 'withSystem'],
+  ] as const)(
+    '%s inside %s throws NestedScopeError on a one connection pool',
+    async (inner, outer) => {
+      const run = <T>(kind: 'withTenant' | 'withSystem', fn: () => Promise<T>): Promise<T> =>
+        kind === 'withTenant'
+          ? withTenant(single, tenantScope(WS_A), fn)
+          : withSystem(single, SYSTEM, fn);
+      const result = await run(outer, async () => {
+        const err = await run(inner, async () => 'inner ran').catch((e: unknown) => e);
+        return { err, after: 'outer continues' };
+      });
+      expect(result.err).toBeInstanceOf(NestedScopeError);
+      expect(result.after).toBe('outer continues');
+    },
+    NO_HANG_MS,
+  );
+
+  it('a scope started from work that outlives its callback is not treated as nested', async () => {
+    let later: Promise<string> | undefined;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    await withTenant(single, tenantScope(WS_A), async () => {
+      later = gate.then(() => withTenant(single, tenantScope(WS_B), async (t) => t.workspaceId));
+    });
+    release();
+    expect(await later).toBe(WS_B);
+  });
+});
+
+describe('errors from a real database', () => {
+  it('safeErrorMessage names a DrizzleQueryError and drops its params; 42501 maps to not found', async () => {
+    const secret = `secret-slug-${randomUUID()}`;
+    const id = randomUUID();
+    const err = await withTenant(single, tenantScope(seededA.workspaceId), (t) =>
+      txInternals(t)
+        .tx.insert(workspaces)
+        .values({ id, name: 'x', slug: secret, kind: 'community' }),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain(secret); // the raw message does carry params
+    const safe = safeErrorMessage(err);
+    expect(safe.startsWith('DrizzleQueryError: Failed query: insert into "workspaces"')).toBe(true);
+    expect(safe).not.toContain('params:');
+    expect(safe).not.toContain(secret);
+    expect(pgErrorOf(err)?.code).toBe('42501');
+    await expect(mapPgErrors('workspace', id, () => Promise.reject(err))).rejects.toBeInstanceOf(
+      RepoNotFoundError,
+    );
+  });
+});
+
+describe('pool errors', () => {
+  it('an idle client killed by the server reaches onPoolError exactly once', async () => {
+    const seen: Error[] = [];
+    const db = openDatabase({
+      url: tdb.appUrl,
+      keyring: createKeyring(generateKek(1)),
+      clock: new FakeClock(new Date(0)),
+      maxConnections: 1,
+      onPoolError: (err) => seen.push(err),
+    });
+    try {
+      const res = await dbInternals(db).drizzle.execute(sql`select pg_backend_pid() as pid`);
+      const pid = (res.rows[0] as { pid: number }).pid;
+      await owner.query('select pg_terminate_backend($1)', [pid]);
+      for (let i = 0; i < 100 && seen.length === 0; i++)
+        await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 200));
+      expect(seen).toHaveLength(1);
+      // The pool replaces the dead client.
+      const again = await dbInternals(db).drizzle.execute(sql`select 1 as one`);
+      expect(again.rows[0]).toEqual({ one: 1 });
+    } finally {
+      await db.close();
+    }
   });
 });
