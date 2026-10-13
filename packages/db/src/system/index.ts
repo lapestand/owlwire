@@ -1,6 +1,11 @@
 export { listSystemAuditLog } from '../repos/audit.js';
 export { SYSTEM, type SystemScope, SystemTx, withSystem } from '../scope.js';
 export {
+  type LegacyDecrypt,
+  type LegacyUpgradeResult,
+  upgradeLegacyConnectionSecrets,
+} from './legacy-secrets.js';
+export {
   findInstallationByTokenHash,
   type InstallationAuthRecord,
   listWorkspaces,
