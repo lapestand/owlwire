@@ -105,13 +105,10 @@ describe('mapPgErrors details', () => {
     expect(nf).toMatchObject({ entity: 'destination', id: 'id2', constraint: 'x_fk' });
   });
 
-  it('maps an RLS WITH CHECK violation (42501) to RepoNotFoundError', async () => {
+  it('rethrows privilege and RLS WITH CHECK violations (42501) unchanged', async () => {
     const original = pgErr('42501');
-    const err = await mapPgErrors('audience', 'id3', () => Promise.reject(original)).catch(
-      (e: unknown) => e,
+    await expect(mapPgErrors('audience', 'id3', () => Promise.reject(original))).rejects.toBe(
+      original,
     );
-    expect(err).toBeInstanceOf(RepoNotFoundError);
-    expect(err).toMatchObject({ entity: 'audience', id: 'id3' });
-    expect((err as Error).cause).toBe(original);
   });
 });

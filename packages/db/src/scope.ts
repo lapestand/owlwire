@@ -144,18 +144,23 @@ async function runScoped<X extends TenantTx | SystemTx, T>(
   if (activeScope.getStore()?.open) throw new NestedScopeError();
   const internals = dbInternals(db);
   const marker = { open: true };
-  return activeScope.run(marker, () =>
-    internals.drizzle.transaction(async (tx) => {
-      await tx.execute(gucs);
-      const x = build({ tx, db: internals });
-      try {
-        return await fn(x);
-      } finally {
-        close(x);
-        marker.open = false;
-      }
-    }),
-  );
+  try {
+    return await activeScope.run(marker, () =>
+      internals.drizzle.transaction(async (tx) => {
+        await tx.execute(gucs);
+        const x = build({ tx, db: internals });
+        try {
+          return await fn(x);
+        } finally {
+          close(x);
+          marker.open = false;
+        }
+      }),
+    );
+  } finally {
+    // Also covers failures before fn runs (connect, BEGIN, GUC step) and COMMIT failures.
+    marker.open = false;
+  }
 }
 
 /** İç içe çağrılamaz (`NestedScopeError`); açık `TenantTx`'i iletin. */

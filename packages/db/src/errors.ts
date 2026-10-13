@@ -95,7 +95,8 @@ export function safeErrorMessage(err: unknown): string {
  * Not: PostgreSQL hata veren bir ifadeden sonra transaction'ı iptal eder; eşlenen hata da withTenant'ı geri alır.
  * Eşlenen hata özgün hatayı `cause` olarak taşır; özgün DrizzleQueryError mesajı sorgu parametrelerini içerir,
  * bu yüzden loglarken `safeErrorMessage` / log redaksiyonu (Görev 16A) kullanılır.
- * 42501 (RLS WITH CHECK ihlali) kiracı açısından "hedef görünmüyor" demektir ve RepoNotFoundError'a eşlenir.
+ * 42501 (RLS WITH CHECK / yetki ihlali) eşlenmez, olduğu gibi fırlatılır: repository workspace_id'yi TenantTx'ten
+ * aldığı için bu bir hatadır ve sıradan bir "bulunamadı" gibi görünmemelidir.
  */
 export async function mapPgErrors<T>(
   entity: string,
@@ -114,7 +115,6 @@ export async function mapPgErrors<T>(
       }
       throw new RepoNotFoundError(entity, id, pg.constraint, { cause: err });
     }
-    if (pg?.code === '42501') throw new RepoNotFoundError(entity, id, undefined, { cause: err });
     throw err;
   }
 }

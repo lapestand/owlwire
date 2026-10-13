@@ -6,7 +6,7 @@ import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type RawTenant, seedRawTenant } from './__test__/raw-seed.js';
-import { mapPgErrors, pgErrorOf, RepoNotFoundError, safeErrorMessage } from './errors.js';
+import { mapPgErrors, pgErrorOf, safeErrorMessage } from './errors.js';
 import { dbInternals, type OwlwireDb, openDatabase } from './handle.js';
 import { migrateAll } from './migrate-all.js';
 import { workspaces } from './schema/index.js';
@@ -312,8 +312,45 @@ describe('nested scopes', () => {
   });
 });
 
+describe('scope marker on failures before the callback', () => {
+  it('a continuation left by a scope whose BEGIN failed is not treated as nested', async () => {
+    const broken = openDatabase({
+      url: tdb.appUrl,
+      keyring: createKeyring(generateKek(1)),
+      clock: new FakeClock(new Date(0)),
+      maxConnections: 1,
+    });
+    const { pool } = dbInternals(broken);
+    let continuation: Promise<unknown> | undefined;
+    let acquired: pg.PoolClient | undefined;
+    // 'acquire' fires inside the scope's async context, so the timer inherits the scope marker.
+    pool.once('acquire', (client: pg.PoolClient) => {
+      acquired = client;
+      continuation = new Promise((resolve) => setTimeout(resolve, 50)).then(() =>
+        withTenant(single, tenantScope(WS_B), async (t) => t.workspaceId).catch((e: unknown) => e),
+      );
+      // Queued ahead of drizzle's BEGIN: leaves the connection in an aborted transaction, so the
+      // scope's BEGIN fails (25P02) before fn can run.
+      client.query('begin').catch(() => undefined);
+      client.query('select 1/0').catch(() => undefined);
+    });
+    try {
+      const failed = await withTenant(broken, tenantScope(WS_A), async () => 'never').catch(
+        (e: unknown) => e,
+      );
+      expect(pgErrorOf(failed)?.code).toBe('25P02');
+      expect(await continuation).toBe(WS_B);
+    } finally {
+      // drizzle-orm 0.45 runs BEGIN outside its try/finally, so a failed BEGIN never releases the
+      // client; release it here so the pool can end.
+      acquired?.release(true);
+      await broken.close();
+    }
+  });
+});
+
 describe('errors from a real database', () => {
-  it('safeErrorMessage names a DrizzleQueryError and drops its params; 42501 maps to not found', async () => {
+  it('safeErrorMessage names a DrizzleQueryError and drops its params; 42501 is rethrown unchanged', async () => {
     const secret = `secret-slug-${randomUUID()}`;
     const id = randomUUID();
     const err = await withTenant(single, tenantScope(seededA.workspaceId), (t) =>
@@ -328,9 +365,7 @@ describe('errors from a real database', () => {
     expect(safe).not.toContain('params:');
     expect(safe).not.toContain(secret);
     expect(pgErrorOf(err)?.code).toBe('42501');
-    await expect(mapPgErrors('workspace', id, () => Promise.reject(err))).rejects.toBeInstanceOf(
-      RepoNotFoundError,
-    );
+    await expect(mapPgErrors('workspace', id, () => Promise.reject(err))).rejects.toBe(err);
   });
 });
 
