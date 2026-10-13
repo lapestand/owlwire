@@ -107,4 +107,18 @@ describe('checkRlsEnforcement (startup, same check as ensureAppRole)', () => {
       await env.owner.query(`drop table public.${table}`);
     }
   });
+
+  it.each(['workspaces', 'apps', 'instance_settings'])(
+    'refuses when RLS is disabled on the policy bearing table %s',
+    async (table) => {
+      await env.owner.query(`alter table public.${table} disable row level security`);
+      try {
+        const result = await checkRlsEnforcement(SYSTEM, env.db);
+        expect(result.enforced).toBe(false);
+        expect(result.reasons).toEqual([`RLS is not enabled on ${table}`]);
+      } finally {
+        await env.owner.query(`alter table public.${table} enable row level security`);
+      }
+    },
+  );
 });

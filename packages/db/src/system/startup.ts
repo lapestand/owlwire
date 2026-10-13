@@ -43,8 +43,8 @@ export class KeyringCoverageError extends Error {
 /**
  * Bağlantının rolü RLS'e gerçekten tabi mi: `ensureAppRole` ile aynı salt okunur denetim (`rlsSubjectQuery`) kendi
  * `current_user`'ı için çalışır — süper kullanıcı, BYPASSRLS, SUPERUSER/BYPASSRLS bir rolün üyeliği, uygulama
- * şemalarında herhangi bir ilişkinin ya da şemanın (doğrudan ya da üyelikle) sahipliği. Ayrıca `workspace_id`
- * kolonlu her `public` tablosunda RLS açık olmalıdır.
+ * şemalarında herhangi bir ilişkinin ya da şemanın (doğrudan ya da üyelikle) sahipliği. Ayrıca politikası olan
+ * (`pg_policies`) ya da `workspace_id` kolonlu her `public` tablosunda (birleşim) RLS açık olmalıdır.
  */
 export async function checkRlsEnforcement(
   scope: SystemScope,
@@ -60,8 +60,14 @@ export async function checkRlsEnforcement(
       select c.relname as "table"
       from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
-      join pg_attribute a on a.attrelid = c.oid and a.attname = 'workspace_id' and not a.attisdropped
       where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity
+        and (
+          exists (select 1 from pg_policies p where p.schemaname = n.nspname and p.tablename = c.relname)
+          or exists (
+            select 1 from pg_attribute a
+            where a.attrelid = c.oid and a.attname = 'workspace_id' and not a.attisdropped
+          )
+        )
       order by c.relname`);
     return {
       flags: subject.rows[0] as RlsSubjectFlags | undefined,
