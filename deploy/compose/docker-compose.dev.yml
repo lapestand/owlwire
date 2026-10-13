@@ -1,0 +1,48 @@
+name: owlwire-dev
+
+# Gelistirme ortami (Sozlesme R127). Dogrudan degil, kokteki ./dev ile calistirilir:
+#   ./dev pnpm test   ./dev pnpm test:int   ./dev (bash)
+# Imaj Dockerfile degisince: docker compose -f deploy/compose/docker-compose.dev.yml build dev
+services:
+  dev:
+    image: owlwire-dev:local
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM node:26-trixie-slim
+        RUN apt-get update \
+          && apt-get install -y --no-install-recommends ca-certificates curl git openssl \
+          && rm -rf /var/lib/apt/lists/*
+        RUN npm install -g corepack@latest && corepack enable
+        RUN mkdir -p /workspace/node_modules /pnpm/store /home/dev \
+          && chmod 1777 /workspace/node_modules /pnpm/store /home/dev
+    user: "${DEV_UID:-1000}:${DEV_GID:-1000}"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    init: true
+    working_dir: /workspace
+    environment:
+      HOME: /home/dev
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      COREPACK_ENABLE_AUTO_PIN: "0"
+      pnpm_config_store_dir: /pnpm/store
+      npm_config_store_dir: /pnpm/store
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+      TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: ${OWLWIRE_DEV_DOCKER_SOCK:-/var/run/docker.sock}
+      TESTCONTAINERS_RYUK_DISABLED: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../..:/workspace
+      - node_modules:/workspace/node_modules
+      - pnpm-store:/pnpm/store
+      - dev-home:/home/dev
+      - ${OWLWIRE_DEV_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    ports:
+      - "8080:8080"
+      - "5173:5173"
+
+volumes:
+  node_modules:
+  pnpm-store:
+  dev-home:

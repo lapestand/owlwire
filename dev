@@ -1,0 +1,46 @@
+#!/bin/sh
+# Owlwire gelistirme ortami (Sozlesme R127): komutu dev konteynerinde calistirir.
+#   ./dev pnpm test        ./dev pnpm test:int        ./dev   (bash)
+#   OWLWIRE_DEV_PORTS=1 ./dev ...      8080 ve 5173 portlarini host'a yayinlar
+#   OWLWIRE_DEV_DOCKER_SOCK=/yol ./dev ...   Docker socket yolu
+set -eu
+
+root=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+here=$(pwd -P)
+case "$here" in
+  "$root"/*) workdir="/workspace/${here#"$root"/}" ;;
+  *) workdir=/workspace ;;
+esac
+
+sock=${OWLWIRE_DEV_DOCKER_SOCK:-}
+if [ -z "$sock" ]; then
+  case "${DOCKER_HOST:-}" in
+    unix://*) sock=${DOCKER_HOST#unix://} ;;
+    *) sock=/var/run/docker.sock ;;
+  esac
+fi
+if [ ! -S "$sock" ]; then
+  echo "dev: Docker socket bulunamadi: $sock (OWLWIRE_DEV_DOCKER_SOCK ile ver)" >&2
+  exit 1
+fi
+
+DEV_UID=$(id -u)
+DEV_GID=$(id -g)
+DOCKER_GID=$(stat -c %g "$sock" 2>/dev/null || stat -f %g "$sock")
+OWLWIRE_DEV_DOCKER_SOCK=$sock
+export DEV_UID DEV_GID DOCKER_GID OWLWIRE_DEV_DOCKER_SOCK
+
+if [ "$#" -eq 0 ]; then
+  set -- bash
+fi
+
+flags=--rm
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  flags="$flags -T"
+fi
+if [ "${OWLWIRE_DEV_PORTS:-0}" = 1 ]; then
+  flags="$flags --service-ports"
+fi
+
+# shellcheck disable=SC2086
+exec docker compose -f "$root/deploy/compose/docker-compose.dev.yml" run $flags -w "$workdir" dev "$@"

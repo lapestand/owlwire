@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.turbo/
+coverage/
+*.tsbuildinfo
+apps/server/drizzle/
+apps/server/public/
+deploy/compose/.env
