@@ -1,3 +1,4 @@
+export { type AppRow, type CreateAppInput, createApp, getApp, listOwnApps } from './apps.js';
 export {
   type AudienceRow,
   createAudience,
@@ -46,6 +47,15 @@ export {
   listDestinations,
   updateDestinationStatus,
 } from './destinations.js';
+export {
+  type CreateInstallationInput,
+  createInstallation,
+  getInstallation,
+  type InstallationRevokeReason,
+  type InstallationRow,
+  listInstallations,
+  revokeInstallation,
+} from './installations.js';
 export {
   type CreateWorkspaceInput,
   createWorkspace,
