@@ -104,11 +104,16 @@ describe('routeEvent', () => {
     const a = await seedAndIngest(h);
     const b = await seedAndIngest(h);
     await h.deps.db.delete(ruleTargets).where(eq(ruleTargets.ruleId, a.seed.ruleId));
-    await h.deps.db.insert(ruleTargets).values({
-      id: newId(),
-      workspaceId: a.seed.workspaceId,
-      ruleId: a.seed.ruleId,
-      destinationId: b.seed.destinationId,
+    // P1a: rule_targets_destination_ws_fk bileşik FK'si kiracılar arası hedefi şema düzeyinde reddeder.
+    await expect(
+      h.deps.db.insert(ruleTargets).values({
+        id: newId(),
+        workspaceId: a.seed.workspaceId,
+        ruleId: a.seed.ruleId,
+        destinationId: b.seed.destinationId,
+      }),
+    ).rejects.toMatchObject({
+      cause: { code: '23503', constraint: 'rule_targets_destination_ws_fk' },
     });
     expect((await routeEvent(h.deps, { eventId: a.eventId })).deliveryIds).toEqual([]);
   });

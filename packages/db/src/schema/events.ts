@@ -1,5 +1,5 @@
 import type { Message } from '@owlwire/core/message';
-import { jsonb, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
+import { foreignKey, jsonb, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
 import { installations } from './installations.js';
 import { tstz } from './types.js';
 import { workspaces } from './workspaces.js';
@@ -21,5 +21,13 @@ export const events = pgTable(
     receivedAt: tstz('received_at').notNull().defaultNow(),
     routedAt: tstz('routed_at'),
   },
-  (t) => [unique('events_installation_idempotency_uq').on(t.installationId, t.idempotencyKey)],
+  (t) => [
+    unique('events_installation_idempotency_uq').on(t.installationId, t.idempotencyKey),
+    unique('events_id_workspace_uq').on(t.id, t.workspaceId),
+    foreignKey({
+      name: 'events_installation_ws_fk',
+      columns: [t.installationId, t.workspaceId],
+      foreignColumns: [installations.id, installations.workspaceId],
+    }),
+  ],
 );

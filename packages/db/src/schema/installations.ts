@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { check, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
 import { apps } from './apps.js';
 import { tstz } from './types.js';
 import { workspaces } from './workspaces.js';
@@ -23,5 +23,8 @@ export const installations = pgTable(
     createdAt: tstz('created_at').notNull().defaultNow(),
     revokedAt: tstz('revoked_at'),
   },
-  (t) => [check('installations_status_check', sql`${t.status} in ('active', 'revoked')`)],
+  (t) => [
+    check('installations_status_check', sql`${t.status} in ('active', 'revoked')`),
+    unique('installations_id_workspace_uq').on(t.id, t.workspaceId),
+  ],
 );

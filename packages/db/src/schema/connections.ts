@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { check, jsonb, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
 import { bytea, tstz } from './types.js';
 import { workspaces } from './workspaces.js';
 
@@ -20,6 +20,10 @@ export const connections = pgTable(
     createdAt: tstz('created_at').notNull().defaultNow(),
     updatedAt: tstz('updated_at').notNull().defaultNow(),
     lastHealthAt: tstz('last_health_at'),
+    configEncScheme: text('config_enc_scheme', { enum: ['kek_v0', 'dek_v1'] })
+      .notNull()
+      .default('kek_v0'),
+    deletedAt: tstz('deleted_at'),
   },
   (t) => [
     check(
@@ -34,5 +38,7 @@ export const connections = pgTable(
       'connections_status_check',
       sql`${t.status} in ('pending', 'active', 'degraded', 'broken', 'paused')`,
     ),
+    unique('connections_id_workspace_uq').on(t.id, t.workspaceId),
+    check('connections_config_enc_scheme_check', sql`${t.configEncScheme} in ('kek_v0','dek_v1')`),
   ],
 );

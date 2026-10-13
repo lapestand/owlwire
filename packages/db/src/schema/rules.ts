@@ -1,5 +1,15 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  foreignKey,
+  index,
+  jsonb,
+  pgTable,
+  text,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { installations } from './installations.js';
 import { tstz } from './types.js';
 import { workspaces } from './workspaces.js';
@@ -28,5 +38,11 @@ export const rules = pgTable(
       sql`${t.minSeverity} in ('info', 'low', 'medium', 'high', 'critical')`,
     ),
     index('rules_installation_idx').on(t.installationId),
+    unique('rules_id_workspace_uq').on(t.id, t.workspaceId),
+    foreignKey({
+      name: 'rules_installation_ws_fk',
+      columns: [t.installationId, t.workspaceId],
+      foreignColumns: [installations.id, installations.workspaceId],
+    }),
   ],
 );

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { check, foreignKey, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { connections } from './connections.js';
 import { tstz } from './types.js';
 import { workspaces } from './workspaces.js';
@@ -23,6 +23,7 @@ export const destinations = pgTable(
     status: text('status').notNull().default('active'),
     statusReason: text('status_reason'),
     createdAt: tstz('created_at').notNull().defaultNow(),
+    deletedAt: tstz('deleted_at'),
   },
   (t) => [
     check(
@@ -39,5 +40,11 @@ export const destinations = pgTable(
       t.externalId,
       sql`coalesce(${t.externalSubId}, '')`,
     ),
+    unique('destinations_id_workspace_uq').on(t.id, t.workspaceId),
+    foreignKey({
+      name: 'destinations_connection_ws_fk',
+      columns: [t.connectionId, t.workspaceId],
+      foreignColumns: [connections.id, connections.workspaceId],
+    }),
   ],
 );

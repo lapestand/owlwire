@@ -1,7 +1,17 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  pgTable,
+  text,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { connections } from './connections.js';
 import { destinations } from './destinations.js';
+import { digests } from './digests.js';
 import { events } from './events.js';
 import { tstz } from './types.js';
 import { workspaces } from './workspaces.js';
@@ -39,5 +49,25 @@ export const deliveries = pgTable(
     ),
     unique('deliveries_event_destination_uq').on(t.eventId, t.destinationId),
     index('deliveries_created_at_idx').on(t.createdAt),
+    foreignKey({
+      name: 'deliveries_event_ws_fk',
+      columns: [t.eventId, t.workspaceId],
+      foreignColumns: [events.id, events.workspaceId],
+    }),
+    foreignKey({
+      name: 'deliveries_destination_ws_fk',
+      columns: [t.destinationId, t.workspaceId],
+      foreignColumns: [destinations.id, destinations.workspaceId],
+    }),
+    foreignKey({
+      name: 'deliveries_connection_ws_fk',
+      columns: [t.connectionId, t.workspaceId],
+      foreignColumns: [connections.id, connections.workspaceId],
+    }),
+    foreignKey({
+      name: 'deliveries_digest_ws_fk',
+      columns: [t.digestId, t.workspaceId],
+      foreignColumns: [digests.id, digests.workspaceId],
+    }),
   ],
 );

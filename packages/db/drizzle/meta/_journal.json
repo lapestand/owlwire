@@ -8,6 +8,13 @@
       "when": 1791896114246,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791904524034,
+      "tag": "0001_p1a_tables",
+      "breakpoints": true
     }
   ]
 }
