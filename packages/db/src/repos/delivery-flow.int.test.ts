@@ -806,6 +806,34 @@ describe('job outbox', () => {
     ).rejects.toMatchObject({ name: 'RepoInputError', entity: 'job' });
   });
 
+  it('canonicalises the payload before the _ws check, so toJSON cannot smuggle a foreign _ws', async () => {
+    const forged = { connectionId: randomUUID(), toJSON: () => ({ connectionId: 'x', _ws: b.ws }) };
+    await expect(
+      inWs(a.ws, (t) => enqueueJob(t, 'health_check_connection', forged)),
+    ).rejects.toMatchObject({ name: 'RepoInputError', entity: 'job' });
+    expect(
+      (await listQueuedJobs(env.owner)).filter(
+        (j) => j.payload._ws === b.ws && j.payload.connectionId === 'x',
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects payloads that do not serialise to a JSON object and stores the canonical form', async () => {
+    const asArray = { toJSON: () => [1, 2] } as unknown as Record<string, unknown>;
+    await expect(
+      withSystem(env.db, SYSTEM, (s) => enqueueJob(s, 'health_check_all', asArray)),
+    ).rejects.toMatchObject({ name: 'RepoInputError', entity: 'job' });
+    await expect(
+      inWs(a.ws, (t) => enqueueJob(t, 'health_check_all', { n: 1n } as Record<string, unknown>)),
+    ).rejects.toMatchObject({ name: 'RepoInputError', entity: 'job' });
+    const marker = randomUUID();
+    await withSystem(env.db, SYSTEM, (s) =>
+      enqueueJob(s, 'health_check_all', { toJSON: () => ({ marker }) }),
+    );
+    const job = (await listQueuedJobs(env.owner)).find((j) => j.payload.marker === marker);
+    expect(job?.payload).toEqual({ marker });
+  });
+
   it('cannot replace or join another workspace job through a forged key or queue', async () => {
     const ev = await newEvent(b);
     const [d] = await inWs(b.ws, (t) =>

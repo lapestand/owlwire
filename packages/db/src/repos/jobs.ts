@@ -58,6 +58,21 @@ export interface EnqueueOptions {
  * `_ws: t.workspaceId` eklenir (payload'da `_ws` varsa RepoInputError). Worker'lar `_ws`'yi işin kimliklerinden
  * çözülen workspace ile karşılaştırmalıdır. SystemTx ile adlar olduğu gibi kalır (yalnız instance düzeyi işler).
  */
+/** JSON gidiş-dönüşü; sonuç düz bir nesne değilse (dizi, null, ilkel, serileştirilemez) RepoInputError. */
+function canonicalPayload(payload: unknown): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    const text = JSON.stringify(payload);
+    parsed = text === undefined ? undefined : JSON.parse(text);
+  } catch {
+    throw new RepoInputError('job', 'payload is not JSON serializable');
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new RepoInputError('job', 'payload must serialize to a JSON object');
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export async function enqueueJob(
   t: TenantTx | SystemTx,
   name: JobName,
@@ -66,14 +81,16 @@ export async function enqueueJob(
 ): Promise<void> {
   let queueName = opts.queueName ?? null;
   let jobKey = opts.jobKey ?? null;
-  let body = payload;
+  // Önce kanonik JSON: `toJSON` ya da benzeri bir dönüşüm `_ws` denetiminden sonra alan ekleyemez; saklanan
+  // payload tam olarak denetlenen nesnedir.
+  const body = canonicalPayload(payload);
   if (t instanceof TenantTx) {
-    if (Object.hasOwn(payload, TENANT_JOB_PAYLOAD_KEY)) {
+    if (Object.hasOwn(body, TENANT_JOB_PAYLOAD_KEY)) {
       throw new RepoInputError('job', `payload must not contain ${TENANT_JOB_PAYLOAD_KEY}`);
     }
     if (queueName !== null) queueName = tenantJobName(t.workspaceId, queueName);
     if (jobKey !== null) jobKey = tenantJobName(t.workspaceId, jobKey);
-    body = { ...payload, [TENANT_JOB_PAYLOAD_KEY]: t.workspaceId };
+    body[TENANT_JOB_PAYLOAD_KEY] = t.workspaceId;
   }
   await q(t).execute(sql`select graphile_worker.add_job(
     ${name}::text,
