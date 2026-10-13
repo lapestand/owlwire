@@ -5,7 +5,8 @@ import { authenticateInstallationToken } from '../../system/installation-auth.js
 import { ProblemError } from '../problem.js';
 import type { AppEnv } from '../types.js';
 
-const CHALLENGE = { 'www-authenticate': 'Bearer' };
+/** RFC 6750 challenge sent with every installation-token 401 (middleware and ingest). */
+export const CHALLENGE = { 'www-authenticate': 'Bearer' };
 
 export function extractToken(
   authorization: string | undefined,

@@ -59,20 +59,36 @@ describe('startup checks', () => {
     expect((err as RlsNotEnforcedError).reasons.join(' ')).toMatch(/SUPERUSER|owns the tables/);
   });
 
-  it('refuse in production and only warn in development when RLS is not enforced', async () => {
+  it('start with one warning per reason only with OWLWIRE_ALLOW_INSECURE_DB_ROLE outside production', async () => {
     const ownerDb = open(tdb.ownerUrl);
-    await expect(
-      runStartupChecks(ownerDb, { nodeEnv: 'production', logger: silent }),
-    ).rejects.toBeInstanceOf(RlsNotEnforcedError);
-    const warnings: Array<{ reasons: string[] }> = [];
+    // Without the opt-in: refused in every environment, development included.
+    for (const nodeEnv of ['development', 'test', undefined]) {
+      await expect(runStartupChecks(ownerDb, { nodeEnv, logger: silent })).rejects.toBeInstanceOf(
+        RlsNotEnforcedError,
+      );
+    }
+    // The opt-in is ignored in production.
     await expect(
       runStartupChecks(ownerDb, {
+        allowInsecureDbRole: true,
+        nodeEnv: 'production',
+        logger: silent,
+      }),
+    ).rejects.toBeInstanceOf(RlsNotEnforcedError);
+    const warnings: string[] = [];
+    await expect(
+      runStartupChecks(ownerDb, {
+        allowInsecureDbRole: true,
         nodeEnv: 'development',
-        logger: { warn: (obj: { reasons: string[] }) => warnings.push(obj) },
+        logger: { warn: (obj: { reason: string }) => void warnings.push(obj.reason) },
       }),
     ).resolves.toBeUndefined();
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]?.reasons.join(' ')).toMatch(/SUPERUSER|owns the tables/);
+    // The test owner is a superuser (with BYPASSRLS) that owns the tables: every reason, one warning each.
+    expect(warnings).toEqual([
+      'application role is SUPERUSER',
+      'application role has BYPASSRLS',
+      'application role owns the tables',
+    ]);
   });
 
   it('refuse to start when a stored KEK version is missing from the keyring', async () => {
@@ -80,6 +96,16 @@ describe('startup checks', () => {
     await expect(
       runStartupChecks(open(tdb.appUrl, createKeyring(generateKek(9)))),
     ).rejects.toBeInstanceOf(KeyringCoverageError);
+  });
+
+  it('refuse to start when a stored KEK version is configured with the wrong key material', async () => {
+    await seedDevWorkspace(db, { platform: 'telegram' });
+    const wrong = createKeyring(generateKek(1)); // same version 1, different key
+    const err = await runStartupChecks(open(tdb.appUrl, wrong)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(KeyringCoverageError);
+    expect((err as KeyringCoverageError).missingVersions).toEqual([]);
+    expect((err as KeyringCoverageError).mismatchedVersions).toEqual([1]);
+    expect((err as Error).message).not.toMatch(/[A-Za-z0-9+/]{40,}={0,2}/);
   });
 });
 

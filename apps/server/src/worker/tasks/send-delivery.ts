@@ -7,9 +7,11 @@ import type {
   SendOutcome,
 } from '@owlwire/adapter-sdk';
 import { type Clock, computeBackoffMs, DEFAULT_MAX_ATTEMPTS, type Message } from '@owlwire/core';
+import { DecryptError, UnknownKekVersionError } from '@owlwire/crypto';
 import {
   type DeliveryContext,
   getDelivery,
+  LegacySecretError,
   loadDeliveryContext,
   type OwlwireDb,
   safeErrorMessage,
@@ -17,6 +19,7 @@ import {
   updateConnectionStatus,
   updateDelivery,
   updateDestinationStatus,
+  WorkspaceKeyMissingError,
   withTenant,
 } from '@owlwire/db';
 import type { Logger } from 'pino';
@@ -53,6 +56,23 @@ interface DeliveryCtx {
 const FINAL_STATUSES = new Set(['delivered', 'failed', 'suppressed', 'digested']);
 /** status_reason values are machine keys (contract §10.7, R81); raw errors stay in last_error. */
 const STATUS_KEY = /^[a-z]+\.status\.[A-Za-z]+$/;
+
+/**
+ * Deterministic config/key failures that a retry cannot fix; null for everything else. The returned text never carries
+ * plaintext or query parameters: JSON.parse's SyntaxError echoes the decrypted text, so it gets a fixed message.
+ */
+function permanentConfigError(err: unknown): string | null {
+  if (err instanceof SyntaxError) return 'SyntaxError: decrypted config is not valid JSON';
+  if (
+    err instanceof DecryptError ||
+    err instanceof UnknownKekVersionError ||
+    err instanceof WorkspaceKeyMissingError ||
+    err instanceof LegacySecretError
+  ) {
+    return safeErrorMessage(err);
+  }
+  return null;
+}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -182,11 +202,14 @@ export async function sendDelivery(
   try {
     loaded = await withTenant(deps.db, scope, (t) => loadDeliveryContext(t, delivery.id));
   } catch (err) {
-    // safeErrorMessage: no query parameters (wrapped keys, ciphertext) in last_error or logs.
+    const reason = permanentConfigError(err);
+    // Anything else (lock or statement timeout, connection reset, serialization failure) is transient: rethrow so
+    // Graphile retries the job. The row stays non-final ('sending'), so the retry processes it again.
+    if (reason === null) throw err;
     return fail(
       deps,
       { ...base, platform: 'unknown' },
-      `connection config could not be decrypted: ${safeErrorMessage(err)}`,
+      `connection config could not be decrypted: ${reason}`,
     );
   }
   if (!loaded) return fail(deps, { ...base, platform: 'unknown' }, 'delivery context not found');

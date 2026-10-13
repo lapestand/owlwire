@@ -7,9 +7,11 @@ import {
   withTenant,
 } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ingestEvent } from '../../../events/ingest.js';
 import { type SeedResult, seedDevWorkspace } from '../../../system/dev-seed.js';
 import { createHarness, type Harness } from '../../../test/harness.js';
 import { listJobs } from '../../../test/jobs.js';
+import { ProblemError } from '../../problem.js';
 
 let h: Harness;
 let seed: SeedResult;
@@ -280,5 +282,35 @@ describe('POST /v1/hooks', () => {
     expect(res.status).toBe(401);
     expect(res.headers.get('www-authenticate')).toBe('Bearer');
     expect(((await res.json()) as { code: string }).code).toBe('installation_revoked');
+  });
+});
+
+describe('ingestEvent', () => {
+  it('answers 401 installation_revoked when the installation is revoked after authentication', async () => {
+    const other = await seedDevWorkspace(h.deps.db, { platform: 'webhook', chatId: 'race' });
+    // The middleware has already accepted the token; the revoke lands before the insert.
+    await withTenant(h.deps.db, tenantScope(other.workspaceId), (t) =>
+      revokeInstallation(t, other.installationId, SYSTEM_ACTOR),
+    );
+    const err = await ingestEvent(h.deps.db, {
+      installation: {
+        id: other.installationId,
+        appId: other.appId,
+        workspaceId: other.workspaceId,
+        grantedTypes: null,
+      },
+      input: { type: 'a', body: 'x' },
+      headerIdempotencyKey: undefined,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProblemError);
+    expect(err).toMatchObject({
+      status: 401,
+      code: 'installation_revoked',
+      headers: { 'www-authenticate': 'Bearer' },
+    });
+    const { rows } = await h.ownerPool.query('select 1 from events where installation_id = $1', [
+      other.installationId,
+    ]);
+    expect(rows).toHaveLength(0);
   });
 });

@@ -5,6 +5,9 @@ import { resolveWorkspaceOf, SYSTEM, type TenantEntityKind, withSystem } from '@
  * Worker işlerinin payload kimliğinden workspace'i sistem kapsamında bulur (Görev 12: payload'daki kimliğe kapsam
  * için güvenilmez). Sistem transaction'ı dönmeden kiracı kapsamı açılmaz.
  */
+/** Re-exported so callers outside system/** need not import @owlwire/db/system (R91 boundary). */
+export type { TenantEntityKind };
+
 export async function resolveTenant(
   db: OwlwireDb,
   kind: TenantEntityKind,

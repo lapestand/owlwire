@@ -1,7 +1,6 @@
 import { type OwlwireDb, TENANT_JOB_PAYLOAD_KEY, type TenantScope } from '@owlwire/db';
-import type { TenantEntityKind } from '@owlwire/db/system';
 import type { Logger } from 'pino';
-import { resolveTenant } from '../system/tenant-resolver.js';
+import { resolveTenant, type TenantEntityKind } from '../system/tenant-resolver.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

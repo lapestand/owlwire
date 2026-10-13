@@ -135,4 +135,17 @@ describe('loadConfig', () => {
       loadConfig({ ...base, OWLWIRE_MIGRATION_DATABASE_URL: 'mysql://x' }, noFile),
     ).toThrow(ConfigError);
   });
+
+  it('reads the insecure database role opt-in (default off, only "true" or "false")', () => {
+    expect(loadConfig(base, noFile).allowInsecureDbRole).toBe(false);
+    expect(
+      loadConfig({ ...base, OWLWIRE_ALLOW_INSECURE_DB_ROLE: 'true' }, noFile).allowInsecureDbRole,
+    ).toBe(true);
+    expect(
+      loadConfig({ ...base, OWLWIRE_ALLOW_INSECURE_DB_ROLE: 'false' }, noFile).allowInsecureDbRole,
+    ).toBe(false);
+    expect(() => loadConfig({ ...base, OWLWIRE_ALLOW_INSECURE_DB_ROLE: 'yes' }, noFile)).toThrow(
+      ConfigError,
+    );
+  });
 });

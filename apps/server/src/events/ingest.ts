@@ -1,6 +1,14 @@
 import type { EventInput } from '@owlwire/contracts';
 import { type Message, newId } from '@owlwire/core';
-import { insertEvent, type OwlwireDb, tenantScope, withTenant } from '@owlwire/db';
+import {
+  insertEvent,
+  type OwlwireDb,
+  RepoNotFoundError,
+  tenantScope,
+  withTenant,
+} from '@owlwire/db';
+import { CHALLENGE } from '../http/middleware/installation-auth.js';
+import { ProblemError } from '../http/problem.js';
 import type { InstallationContext } from '../http/types.js';
 
 export interface IngestResult {
@@ -39,11 +47,12 @@ export async function ingestEvent(
     args.headerIdempotencyKey,
   );
   const message = toMessage(args.input);
-  // insertEvent enqueues route_event in the same transaction (outbox) on the installation's route queue.
-  const { eventId, duplicate } = await withTenant(
-    db,
-    tenantScope(args.installation.workspaceId),
-    (t) =>
+  // insertEvent enqueues route_event in the same transaction (outbox) on the installation's route queue. It re-checks
+  // `status = 'active'` inside the tenant transaction: an installation revoked after the auth middleware ran is
+  // refused there (RepoNotFoundError('installation')) and answered like the middleware would.
+  let result: IngestResult;
+  try {
+    result = await withTenant(db, tenantScope(args.installation.workspaceId), (t) =>
       insertEvent(t, {
         installationId: args.installation.id,
         idempotencyKey,
@@ -51,6 +60,18 @@ export async function ingestEvent(
         severity: message.severity,
         message,
       }),
-  );
+    );
+  } catch (err) {
+    if (err instanceof RepoNotFoundError && err.entity === 'installation') {
+      throw new ProblemError(
+        401,
+        'installation_revoked',
+        'installation has been revoked',
+        CHALLENGE,
+      );
+    }
+    throw err;
+  }
+  const { eventId, duplicate } = result;
   return { eventId, duplicate };
 }

@@ -14,6 +14,7 @@ import { seedDevWorkspace } from '../../system/dev-seed.js';
 import { ingestFor, seedAndIngest } from '../../test/fixtures.js';
 import { createHarness, type Harness } from '../../test/harness.js';
 import { listJobs } from '../../test/jobs.js';
+import { createTaskList } from '../runner.js';
 import { routeEvent } from './route-event.js';
 import { sendDelivery } from './send-delivery.js';
 
@@ -249,6 +250,33 @@ describe('sendDelivery', () => {
     expect(await send(deliveryId)).toBe('failed');
     expect((await row(deliveryId)).lastError).toMatch(/could not be decrypted/);
     expect(telegram.sent.length).toBe(before);
+  });
+
+  it('keeps the delivery retryable when loading its context fails for a non-crypto reason', async () => {
+    const { deliveryId } = await routed('transient load');
+    const payload = await jobPayload('send_delivery', 'deliveryId', deliveryId);
+    const task = createTaskList(h.deps).send_delivery;
+    const helpers = { job: { id: '1' } } as Parameters<NonNullable<typeof task>>[1];
+    const before = webhook.sent.length;
+    // A database error while loading the context (here: permission denied on destinations) is not a key problem.
+    await h.ownerPool.query('revoke select on destinations from owlwire_app');
+    try {
+      await expect(sendDelivery(h.deps, payload as { deliveryId: string })).rejects.toThrow();
+      // Through the task list the error reaches Graphile, which retries the job; the message is sanitised.
+      const err = await Promise.resolve(task?.(payload, helpers)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/Failed query/);
+      expect((err as Error).message).not.toMatch(/params:/);
+    } finally {
+      await h.ownerPool.query('grant select on destinations to owlwire_app');
+    }
+    const r = await row(deliveryId);
+    expect(r.status).not.toBe('failed');
+    expect(r).toMatchObject({ status: 'sending', attempts: 2, lastError: null });
+    expect(webhook.sent.length).toBe(before);
+    // The retry delivers.
+    expect(await send(deliveryId)).toBe('delivered');
+    expect(await row(deliveryId)).toMatchObject({ status: 'delivered', attempts: 3 });
   });
 
   it('drops a forged job: another workspace enqueued this delivery id in its own namespace', async () => {

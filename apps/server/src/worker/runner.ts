@@ -1,5 +1,11 @@
 import { safeErrorMessage } from '@owlwire/db';
-import { Logger as GraphileLogger, type Runner, run, type TaskList } from 'graphile-worker';
+import {
+  Logger as GraphileLogger,
+  type JobHelpers,
+  type Runner,
+  run,
+  type TaskList,
+} from 'graphile-worker';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { Deps } from '../deps.js';
@@ -27,12 +33,44 @@ async function sanitized(fn: () => Promise<unknown>): Promise<void> {
   }
 }
 
+/**
+ * A payload that does not parse cannot succeed on retry: like a `_ws` mismatch it is logged with the job id only (the
+ * payload itself is not logged) and dropped without throwing, so Graphile does not retry it.
+ */
+function parsePayload<T>(
+  deps: Pick<Deps, 'logger'>,
+  task: string,
+  schema: z.ZodType<T>,
+  payload: unknown,
+  helpers: JobHelpers,
+): T | null {
+  const parsed = schema.safeParse(payload);
+  if (parsed.success) return parsed.data;
+  deps.logger.warn(
+    { task, jobId: helpers.job.id },
+    `${task}: malformed job payload; dropping the job`,
+  );
+  return null;
+}
+
 export function createTaskList(deps: Deps): TaskList {
   return {
-    [ROUTE_EVENT_TASK]: (payload) =>
-      sanitized(() => routeEvent(deps, RouteEventPayload.parse(payload))),
-    [SEND_DELIVERY_TASK]: (payload) =>
-      sanitized(() => sendDelivery(deps, SendDeliveryPayload.parse(payload))),
+    [ROUTE_EVENT_TASK]: (payload, helpers) =>
+      sanitized(async () => {
+        const parsed = parsePayload(deps, ROUTE_EVENT_TASK, RouteEventPayload, payload, helpers);
+        if (parsed) await routeEvent(deps, parsed);
+      }),
+    [SEND_DELIVERY_TASK]: (payload, helpers) =>
+      sanitized(async () => {
+        const parsed = parsePayload(
+          deps,
+          SEND_DELIVERY_TASK,
+          SendDeliveryPayload,
+          payload,
+          helpers,
+        );
+        if (parsed) await sendDelivery(deps, parsed);
+      }),
   };
 }
 

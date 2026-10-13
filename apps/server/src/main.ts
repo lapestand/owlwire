@@ -87,6 +87,12 @@ program
     }) => {
       const config = readConfig();
       const logger = createLogger(config.logLevel);
+      if (opts.platform === 'telegram' && opts.chatId && !opts.botToken) {
+        logger.warn(
+          'dev:seed: --chat-id without --bot-token creates a shared_bot connection; shared Telegram bot delivery ' +
+            'is not available before P1e, so deliveries to this destination will fail. Pass --bot-token to use your own bot.',
+        );
+      }
       await migrateDatabase(config, logger);
       const deps = createDeps(config, { logger });
       try {

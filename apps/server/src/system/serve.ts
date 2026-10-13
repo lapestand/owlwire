@@ -75,17 +75,24 @@ export async function startServer(
 export interface ServeCommandHooks {
   onSignal(signal: 'SIGINT' | 'SIGTERM', handler: () => void): void;
   exit(code: number): void;
-  /** Test seam; defaults to migrateDatabase. */
+  /** Test seams; default to the real steps. */
   migrate?: typeof migrateDatabase;
-  /** Defaults to process.env.NODE_ENV; only 'development' lets serve start without enforced RLS (with a warning). */
+  startupChecks?: typeof runStartupChecks;
+  upgrade?: typeof upgradeLegacySecrets;
+  start?: typeof startServer;
+  /** Defaults to process.env.NODE_ENV; OWLWIRE_ALLOW_INSECURE_DB_ROLE is ignored when it is 'production'. */
   nodeEnv?: string | undefined;
 }
 
 /**
- * `owlwire serve` (contract §11.2, R97): signal handlers are registered BEFORE migrating; a SIGTERM during the
- * migration closes whatever is open so far and exits (the migration transaction rolls back with its connection).
- * Order: migrateDatabase -> createDeps -> runStartupChecks -> upgradeLegacySecrets -> startServer. Shutdown is P0's
- * createShutdown (25 s limit, exit 1 when the worker crashes).
+ * `owlwire serve` (contract §11.2, R97): signal handlers are registered BEFORE migrating. Order: migrateDatabase ->
+ * createDeps -> runStartupChecks -> upgradeLegacySecrets -> startServer. Shutdown is P0's createShutdown (25 s limit,
+ * exit 1 when the worker crashes) and calls `exit` exactly once.
+ *
+ * A signal during the migration shuts down at once (nothing is open yet; the migration transaction rolls back with
+ * its connection when the process exits). A signal during a later step waits for that step to settle, then stops any
+ * server it started and closes deps; an error the step raises after the signal (e.g. "pool ended") is ignored and no
+ * further step runs.
  */
 export async function runServeCommand(
   config: ServerConfig,
@@ -96,15 +103,21 @@ export async function runServeCommand(
   let deps: Deps | null = null;
   let running: RunningServer | null = null;
   let stopping = false;
-  const closeDeps = async (d: Deps) => {
-    await d.db.close();
-    await d.pool.end();
+  /** The in-flight step after createDeps; stop() waits for it before closing what it uses. */
+  let inflight: Promise<unknown> = Promise.resolve();
+  const step = <T>(p: Promise<T>): Promise<T> => {
+    inflight = p.catch(() => undefined);
+    return p;
   };
   const { shutdown, workerCrashed } = createShutdown({
     stop: async () => {
       stopping = true;
+      await inflight;
       await running?.stop();
-      if (deps) await closeDeps(deps);
+      if (deps) {
+        await deps.db.close();
+        await deps.pool.end();
+      }
     },
     logger,
     exit: hooks.exit,
@@ -112,22 +125,36 @@ export async function runServeCommand(
   hooks.onSignal('SIGINT', () => void shutdown('SIGINT'));
   hooks.onSignal('SIGTERM', () => void shutdown('SIGTERM'));
 
-  await (hooks.migrate ?? migrateDatabase)(config, logger);
-  if (stopping) return;
-  const created = createDeps(config, { logger });
-  deps = created;
-  await runStartupChecks(created.db, {
-    nodeEnv: 'nodeEnv' in hooks ? hooks.nodeEnv : process.env.NODE_ENV,
-    logger,
-  });
-  await upgradeLegacySecrets(created.db, created.keyring, created.logger);
-  if (stopping) return;
-  const started = await startServer(created, config.role, { port: config.port, webDir });
-  if (stopping) {
-    // A signal arrived while the server was starting; the shutdown above did not see it.
-    await started.stop();
-    return;
+  try {
+    await (hooks.migrate ?? migrateDatabase)(config, logger);
+    if (stopping) return;
+    const created = createDeps(config, { logger });
+    deps = created;
+    await step(
+      (hooks.startupChecks ?? runStartupChecks)(created.db, {
+        allowInsecureDbRole: config.allowInsecureDbRole,
+        nodeEnv: 'nodeEnv' in hooks ? hooks.nodeEnv : process.env.NODE_ENV,
+        logger,
+      }),
+    );
+    if (stopping) return;
+    await step(
+      (hooks.upgrade ?? upgradeLegacySecrets)(created.db, created.keyring, created.logger),
+    );
+    if (stopping) return;
+    await step(
+      (hooks.start ?? startServer)(created, config.role, { port: config.port, webDir }).then(
+        (r) => {
+          // Set inside the step so a stop() waiting on it sees the server and stops it.
+          running = r;
+        },
+      ),
+    );
+  } catch (err) {
+    // After a signal, failures of the interrupted step are expected; shutdown owns the exit code.
+    if (stopping) return;
+    throw err;
   }
-  running = started;
-  running.worker?.catch(workerCrashed);
+  if (stopping) return;
+  (running as RunningServer | null)?.worker?.catch(workerCrashed);
 }

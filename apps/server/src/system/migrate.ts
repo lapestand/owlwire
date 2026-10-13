@@ -15,7 +15,8 @@ export async function migrateDatabase(
   if (appRole === 'same') {
     logger.warn(
       'OWLWIRE_MIGRATION_DATABASE_URL is not set or uses the same role as OWLWIRE_DATABASE_URL; ' +
-        'row level security cannot be enforced and `serve` will refuse to start (NODE_ENV=development only warns)',
+        'row level security cannot be enforced and `serve` will refuse to start ' +
+        '(local development only: OWLWIRE_ALLOW_INSECURE_DB_ROLE=true outside NODE_ENV=production)',
     );
   } else {
     logger.info('database migrated; application role provisioned');

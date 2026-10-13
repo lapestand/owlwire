@@ -15,6 +15,7 @@ export function testConfig(
 ): ServerConfig {
   return {
     databaseUrl,
+    allowInsecureDbRole: false,
     kek: { current: parseKek(randomBytes(32).toString('base64'), 1), previous: null },
     role: 'all',
     port: 0,
