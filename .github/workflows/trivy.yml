@@ -1,27 +1,9 @@
 name: Trivy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - docker/**
-      - apps/**
-      - packages/**
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .dockerignore
-      - .github/workflows/trivy.yml
-  pull_request:
-    paths:
-      - docker/**
-      - apps/**
-      - packages/**
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .dockerignore
-      - .github/workflows/trivy.yml
+  # Pull requests and pushes to main run this through ci.yml, which decides from the changed paths whether
+  # it is needed; the gate job there (CI passed) is the required check.
+  workflow_call:
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:

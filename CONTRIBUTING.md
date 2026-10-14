@@ -60,7 +60,10 @@ exclusion. Do not loosen these tests to make a change pass.
 ## Branches and pull requests
 
 `main` is protected. Every change goes through a pull request from a branch, and it can be merged only when the
-required checks pass. Keep pull requests focused on one change, and rebase on `main` rather than merging `main` into
+`CI passed` check passes. That check is the last job of `.github/workflows/ci.yml`, which runs every pull request
+check (the other workflows are called from it); it fails if any job failed or was cancelled, and treats jobs
+skipped by their path filter as passing. A new pull request job belongs in `ci.yml` and in the `needs` of
+`CI passed` (`scripts/ci-gate.test.ts` checks this). Keep pull requests focused on one change, and rebase on `main` rather than merging `main` into
 your branch.
 
 The pull request description must link the issue it works on: `Fixes #123` (or `Closes` / `Resolves`) closes it on

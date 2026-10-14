@@ -1,9 +1,9 @@
 name: Workflows
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Pull requests and pushes to main run this through ci.yml; the gate job there (CI passed) is the required
+  # check.
+  workflow_call:
 
 permissions:
   contents: read

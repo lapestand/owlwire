@@ -1,11 +1,9 @@
 name: Links
 
 on:
-  pull_request:
-    paths:
-      - '**/*.md'
-      - lychee.toml
-      - .github/workflows/links.yml
+  # Pull requests and pushes to main run this through ci.yml, which decides from the changed paths whether
+  # it is needed; the gate job there (CI passed) is the required check.
+  workflow_call:
   schedule:
     - cron: '53 4 * * 1'
   workflow_dispatch:
