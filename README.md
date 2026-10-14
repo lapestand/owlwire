@@ -1,5 +1,7 @@
 # Owlwire
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/lapestand/owlwire/badge)](https://scorecard.dev/viewer/?uri=github.com/lapestand/owlwire)
+
 Owlwire is a source-available, self-hostable notification router. Your application sends one event over HTTP; Owlwire
 routes it to the chats that subscribed to it on **WhatsApp**, **Telegram** and **Discord**.
 

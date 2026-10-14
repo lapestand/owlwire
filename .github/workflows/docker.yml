@@ -1,0 +1,81 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: Docker image smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: deploy/compose
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate a throwaway .env
+        run: |
+          owner_password=$(openssl rand -hex 16)
+          app_password=$(openssl rand -hex 24)
+          kek=$(openssl rand -base64 32)
+          for secret in "$owner_password" "$app_password" "$kek"; do
+            echo "::add-mask::$secret"
+          done
+          umask 077
+          sed \
+            -e "s|^OWLWIRE_DB_OWNER_PASSWORD=.*|OWLWIRE_DB_OWNER_PASSWORD=$owner_password|" \
+            -e "s|^OWLWIRE_DB_APP_PASSWORD=.*|OWLWIRE_DB_APP_PASSWORD=$app_password|" \
+            -e "s|^OWLWIRE_KEK=.*|OWLWIRE_KEK=$kek|" \
+            .env.example > .env
+      # The compose file both names the image and builds it from docker/Dockerfile.
+      - name: Build image
+        run: docker compose build owlwire
+      - name: Start the stack
+        run: docker compose up -d --no-build --wait --wait-timeout 180
+      - name: Check readiness
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/readyz; then
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::/readyz did not return success"
+          exit 1
+      # serve migrates on startup; running migrate again must be a no-op.
+      - name: Re-run migrations
+        run: docker compose exec -T owlwire owlwire migrate
+      - name: Print logs with secrets masked
+        if: failure()
+        run: |
+          docker compose ps -a
+          logs=$(docker compose logs --no-color --timestamps)
+          while IFS= read -r line; do
+            key=${line%%=*}
+            value=${line#*=}
+            case "$key" in
+              OWLWIRE_DB_OWNER_PASSWORD | OWLWIRE_DB_APP_PASSWORD | OWLWIRE_KEK | OWLWIRE_KEK_PREVIOUS | OWLWIRE_DEV_ADMIN_TOKEN | OWLWIRE_TELEGRAM_BOT_TOKEN)
+                if [ -n "$value" ]; then
+                  logs=${logs//"$value"/***}
+                fi
+                ;;
+            esac
+          done < .env
+          printf '%s\n' "$logs"
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose down -v --remove-orphans
+          rm -f .env

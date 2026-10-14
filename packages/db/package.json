@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/db",
-  "version": "0.35.27",
+  "version": "0.35.28",
   "private": true,
   "type": "module",
   "exports": {
@@ -29,6 +29,7 @@
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run --config ../../vitest.config.ts --project unit --passWithNoTests",
     "test:int": "vitest run --config ../../vitest.config.ts --project int --passWithNoTests",
+    "db:check": "drizzle-kit check",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
