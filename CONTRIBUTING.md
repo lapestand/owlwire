@@ -37,7 +37,9 @@ CI runs the same checks, plus the build, migration checks, the Docker image smok
 dependency review, actionlint, zizmor (workflow security) and typos (spelling, allowlist in `_typos.toml`).
 hadolint lints Dockerfiles when they change, and lychee checks Markdown links when Markdown changes and weekly. A
 Trivy scan of the Docker image runs on pull requests that touch the image inputs and weekly; it fails on high or
-critical findings that have a fix.
+critical findings that have a fix. squawk lints the migrations a pull request adds or changes in
+`packages/db/drizzle` for statements that lock or rewrite tables; rule choices and the `-- squawk-ignore <rule>`
+escape hatch are explained in `.squawk.toml`.
 
 ## Tests
 
