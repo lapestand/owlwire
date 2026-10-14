@@ -1,6 +1,6 @@
 import type { DevDeliveryList } from '@owlwire/contracts';
 import { FakeClock } from '@owlwire/core';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { TEST_DEV_ADMIN_TOKEN } from '../../test/config.js';
 import { ingestFor, seedAndIngest } from '../../test/fixtures.js';
 import { createHarness, type Harness } from '../../test/harness.js';
@@ -8,7 +8,8 @@ import { routeEvent } from '../../worker/tasks/route-event.js';
 import { sendDelivery } from '../../worker/tasks/send-delivery.js';
 import { createApp } from '../app.js';
 
-const clock = new FakeClock(new Date('2026-10-12T10:00:00.000Z'));
+const START = new Date('2026-10-12T10:00:00.000Z');
+const clock = new FakeClock(START);
 let h: Harness;
 
 beforeAll(async () => {
@@ -16,6 +17,13 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await h.close();
+});
+
+// The endpoint lists deliveries of every workspace, so each test starts from an empty database at the start
+// time and routes its own events; the tests then pass in any order.
+beforeEach(async () => {
+  await h.ownerPool.query('truncate workspaces, audit_log cascade');
+  clock.set(START);
 });
 
 function list(query = '', token = TEST_DEV_ADMIN_TOKEN) {
@@ -58,6 +66,12 @@ describe('GET /api/dev/deliveries', () => {
   });
 
   it('honours the limit parameter and ignores garbage', async () => {
+    const { seed, eventId: first } = await seedAndIngest(h, {}, { body: 'one' });
+    await routeEvent(h.deps, { eventId: first, _ws: seed.workspaceId });
+    clock.advance(60_000);
+    const second = await ingestFor(h, seed, { body: 'two' });
+    await routeEvent(h.deps, { eventId: second, _ws: seed.workspaceId });
+    expect(((await (await list()).json()) as DevDeliveryList).deliveries).toHaveLength(2);
     expect(((await (await list('?limit=1')).json()) as DevDeliveryList).deliveries).toHaveLength(1);
     expect((await list('?limit=abc')).status).toBe(200);
   });

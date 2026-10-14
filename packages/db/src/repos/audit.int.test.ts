@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { auditLog } from '../schema/index.js';
 import { SYSTEM, tenantScope, withSystem, withTenant } from '../scope.js';
@@ -14,18 +14,60 @@ import {
 import { q } from './context.js';
 
 let env: DbTestEnv;
-const WS_A = randomUUID();
-const WS_B = randomUUID();
+let WS_A: string;
+let WS_B: string;
+const START = new Date('2026-10-12T09:00:00Z');
+
+async function insertWorkspace(): Promise<string> {
+  const id = randomUUID();
+  await env.owner.query(
+    "insert into workspaces (id, name, slug, kind) values ($1, $2, $2, 'community')",
+    [id, `ws-${id}`],
+  );
+  return id;
+}
+
+/** A rule created then deleted in WS_A (one second apart), then a member added in WS_B. */
+async function seedBothTenants(): Promise<void> {
+  await withTenant(env.db, tenantScope(WS_A), (t) =>
+    writeAudit(t, {
+      action: 'rule.created',
+      actor: SYSTEM_ACTOR,
+      targetType: 'rule',
+      targetId: 'r1',
+    }),
+  );
+  env.clock.advance(1000);
+  await withTenant(env.db, tenantScope(WS_A), (t) =>
+    writeAudit(t, {
+      action: 'rule.deleted',
+      actor: SYSTEM_ACTOR,
+      targetType: 'rule',
+      targetId: 'r1',
+    }),
+  );
+  await withTenant(env.db, tenantScope(WS_B), (t) =>
+    writeAudit(t, {
+      action: 'member.added',
+      actor: SYSTEM_ACTOR,
+      targetType: 'member',
+      targetId: 'b-only',
+    }),
+  );
+}
 
 beforeAll(async () => {
   env = await setupDbTestEnv();
-  for (const id of [WS_A, WS_B]) {
-    await env.owner.query(
-      "insert into workspaces (id, name, slug, kind) values ($1, $2, $2, 'community')",
-      [id, `ws-${id}`],
-    );
-  }
 }, 120_000);
+
+// Every test starts from an empty audit log, two fresh workspaces and the start time, and writes the
+// entries it reads, so the tests pass in any order.
+beforeEach(async () => {
+  await env.owner.query('truncate workspaces, audit_log cascade');
+  env.clock.set(START);
+  WS_A = await insertWorkspace();
+  WS_B = await insertWorkspace();
+});
 
 afterAll(async () => {
   await env?.stop();
@@ -64,19 +106,20 @@ describe('writeAudit / listAuditLog', () => {
   });
 
   it('does not show entries of another workspace', async () => {
+    await withTenant(env.db, tenantScope(WS_A), (t) =>
+      writeAudit(t, {
+        action: 'rule.created',
+        actor: SYSTEM_ACTOR,
+        targetType: 'rule',
+        targetId: 'r1',
+      }),
+    );
     const rows = await withTenant(env.db, tenantScope(WS_B), (t) => listAuditLog(t));
     expect(rows).toEqual([]);
   });
 
   it('never returns the other tenant rows in either direction', async () => {
-    await withTenant(env.db, tenantScope(WS_B), (t) =>
-      writeAudit(t, {
-        action: 'member.added',
-        actor: SYSTEM_ACTOR,
-        targetType: 'member',
-        targetId: 'b-only',
-      }),
-    );
+    await seedBothTenants();
     const a = await withTenant(env.db, tenantScope(WS_A), (t) => listAuditLog(t, { limit: 200 }));
     const b = await withTenant(env.db, tenantScope(WS_B), (t) => listAuditLog(t, { limit: 200 }));
     expect(a.every((r) => r.workspaceId === WS_A)).toBe(true);
@@ -86,6 +129,7 @@ describe('writeAudit / listAuditLog', () => {
   });
 
   it('RLS alone confines an unfiltered select to the tenant rows', async () => {
+    await seedBothTenants();
     const seen = await withTenant(env.db, tenantScope(WS_A), (t) =>
       q(t).select({ workspaceId: auditLog.workspaceId }).from(auditLog),
     );
@@ -148,6 +192,7 @@ describe('writeAudit / listAuditLog', () => {
   });
 
   it('filters by action', async () => {
+    await seedBothTenants();
     const rows = await withTenant(env.db, tenantScope(WS_A), (t) =>
       listAuditLog(t, { action: 'rule.created' }),
     );
@@ -155,6 +200,7 @@ describe('writeAudit / listAuditLog', () => {
   });
 
   it('paginates with a keyset cursor', async () => {
+    await seedBothTenants();
     for (let i = 0; i < 3; i++) {
       env.clock.advance(1000);
       await withTenant(env.db, tenantScope(WS_B), (t) =>
