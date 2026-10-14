@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { newId } from '@owlwire/core';
 import type { Message } from '@owlwire/core/message';
 import { listQueuedJobs } from '@owlwire/testing';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { createTestWorkspace } from '../__test__/fixtures.js';
 import { RepoInputError, RepoNotFoundError } from '../errors.js';
@@ -127,9 +127,13 @@ const newEvent = (g: Graph) =>
 
 beforeAll(async () => {
   env = await setupDbTestEnv();
+}, 120_000);
+
+// Fresh graphs per test: rules, events and deliveries a test lists are only the ones it wrote.
+beforeEach(async () => {
   a = await buildGraph('alpha');
   b = await buildGraph('bravo');
-}, 120_000);
+});
 
 afterAll(async () => {
   await env?.stop();

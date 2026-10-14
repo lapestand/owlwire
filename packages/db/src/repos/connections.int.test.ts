@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DecryptError } from '@owlwire/crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { createTestWorkspace } from '../__test__/fixtures.js';
 import { LegacySecretError, RepoConflictError, RepoNotFoundError } from '../errors.js';
@@ -38,9 +38,13 @@ const newBot = (displayName: string, botToken: string) =>
 
 beforeAll(async () => {
   env = await setupDbTestEnv();
+}, 120_000);
+
+// Fresh workspaces per test: assertions on a workspace's connections and audit log see only this test's writes.
+beforeEach(async () => {
   A = await createTestWorkspace(env.db, 'alpha');
   B = await createTestWorkspace(env.db, 'bravo');
-}, 120_000);
+});
 
 afterAll(async () => {
   await env?.stop();

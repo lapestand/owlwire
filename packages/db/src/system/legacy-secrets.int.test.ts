@@ -39,6 +39,21 @@ afterAll(async () => {
   await env?.stop();
 });
 
+// upgradeLegacyConnectionSecrets works on every legacy row of the instance, so each test starts from an empty
+// database and inserts its own workspaces and rows; the tests then pass in any order.
+beforeEach(async () => {
+  await env.owner.query('truncate workspaces, audit_log cascade');
+});
+
+async function insertWorkspace(prefix: string): Promise<string> {
+  const ws = randomUUID();
+  await env.owner.query(
+    "insert into workspaces (id, name, slug, kind) values ($1, $2, $3, 'community')",
+    [ws, prefix, `${prefix}-${ws}`],
+  );
+  return ws;
+}
+
 describe('upgradeLegacyConnectionSecrets', () => {
   it('re-encrypts legacy rows with the workspace DEK, idempotently', async () => {
     const ws = randomUUID();
@@ -106,6 +121,27 @@ describe('upgradeLegacyConnectionSecrets', () => {
   });
 
   it('writes one instance-level audit entry per run that upgraded something', async () => {
+    const ws = await insertWorkspace('p0a');
+    await backfillWorkspaceKeys(SYSTEM, env.db);
+    await insertLegacyConnection(ws, { botToken: 'a1' });
+    await insertLegacyConnection(ws, { botToken: 'a2' });
+    expect(await upgradeLegacyConnectionSecrets(SYSTEM, env.db, decryptLegacy)).toEqual({
+      upgraded: 2,
+      failed: [],
+    });
+    env.clock.advance(1000);
+    await insertLegacyConnection(ws, { botToken: 'a3' });
+    await env.owner.query(
+      "insert into connections (id, workspace_id, platform, kind, display_name, config_enc, config_enc_scheme) values ($1, $2, 'telegram', 'own_bot', 'bad', '\\x01020304'::bytea, 'kek_v0')",
+      [randomUUID(), ws],
+    );
+    const second = await upgradeLegacyConnectionSecrets(SYSTEM, env.db, decryptLegacy);
+    expect(second.upgraded).toBe(1);
+    expect(second.failed).toHaveLength(1);
+    // Nothing left to upgrade but the bad row: a failure-only run adds no entry.
+    env.clock.advance(1000);
+    expect((await upgradeLegacyConnectionSecrets(SYSTEM, env.db, decryptLegacy)).upgraded).toBe(0);
+
     const { rows: entries } = await env.owner.query<{ data: { upgraded: number; failed: number } }>(
       "select data from audit_log where action = 'keys.legacy_secrets_upgraded' and workspace_id is null order by created_at, id",
     );
@@ -117,11 +153,6 @@ describe('upgradeLegacyConnectionSecrets', () => {
 });
 
 describe('upgradeLegacyConnectionSecrets (soft delete and concurrency)', () => {
-  beforeEach(async () => {
-    // Undecryptable rows stay kek_v0 and would be reported by every later run.
-    await env.owner.query("delete from connections where config_enc_scheme = 'kek_v0'");
-  });
-
   async function auditCount(): Promise<number> {
     const { rows } = await env.owner.query<{ n: string }>(
       "select count(*) as n from audit_log where action = 'keys.legacy_secrets_upgraded'",
@@ -130,11 +161,7 @@ describe('upgradeLegacyConnectionSecrets (soft delete and concurrency)', () => {
   }
 
   async function newWorkspace(prefix: string): Promise<string> {
-    const ws = randomUUID();
-    await env.owner.query(
-      "insert into workspaces (id, name, slug, kind) values ($1, $2, $3, 'community')",
-      [ws, prefix, `${prefix}-${ws}`],
-    );
+    const ws = await insertWorkspace(prefix);
     await backfillWorkspaceKeys(SYSTEM, env.db);
     return ws;
   }
