@@ -1,0 +1,37 @@
+name: Dockerfiles
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/Dockerfile'
+      - '**/*.Dockerfile'
+      - '**/Dockerfile.*'
+      - .github/workflows/hadolint.yml
+  pull_request:
+    paths:
+      - '**/Dockerfile'
+      - '**/*.Dockerfile'
+      - '**/Dockerfile.*'
+      - .github/workflows/hadolint.yml
+
+permissions:
+  contents: read
+
+jobs:
+  hadolint:
+    name: hadolint
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Any finding, info level included, fails the job; justified exceptions are `# hadolint ignore=` comments.
+      - name: Lint Dockerfiles
+        run: |
+          mapfile -t files < <(git ls-files '*Dockerfile' '*.Dockerfile' '*Dockerfile.*')
+          printf 'Linting %s\n' "${files[@]}"
+          docker run --rm -v "$PWD:/repo:ro" -w /repo \
+            hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d \
+            hadolint --no-color "${files[@]}"

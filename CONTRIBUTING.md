@@ -34,8 +34,9 @@ at `/var/run/docker.sock` or in `DOCKER_HOST`, set `OWLWIRE_DEV_DOCKER_SOCK` to 
 ```
 
 CI runs the same checks, plus the build, migration checks, the Docker image smoke test, CodeQL, Gitleaks,
-dependency review, actionlint and zizmor (workflow security). A Trivy scan of the Docker image runs on pull requests that touch the image inputs
-and weekly; it fails on high or critical findings that have a fix.
+dependency review, actionlint and zizmor (workflow security). hadolint lints Dockerfiles when they change. A Trivy
+scan of the Docker image runs on pull requests that touch the image inputs and weekly; it fails on high or critical
+findings that have a fix.
 
 ## Tests
 
