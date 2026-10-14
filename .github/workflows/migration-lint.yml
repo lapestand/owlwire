@@ -1,0 +1,54 @@
+name: Migration lint
+
+on:
+  pull_request:
+    paths:
+      - packages/db/drizzle/*.sql
+      - .squawk.toml
+      - .github/workflows/migration-lint.yml
+
+permissions:
+  contents: read
+
+jobs:
+  squawk:
+    name: squawk
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    env:
+      SQUAWK_VERSION: 2.69.0
+      SQUAWK_SHA256: 9af8b2b54135ab236389122bce6c9edc40a8db4347e77d19079f19dcceddc737
+    steps:
+      # Depth 2 brings in the merge commit's first parent, the tip of the base branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Install squawk
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/squawk" \
+            "https://github.com/sbdchd/squawk/releases/download/v${SQUAWK_VERSION}/squawk-linux-x64"
+          echo "${SQUAWK_SHA256}  $RUNNER_TEMP/squawk" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/squawk"
+          "$RUNNER_TEMP/squawk" --version
+      # Migrations already on the base branch are the baseline: only files this PR adds or changes are linted.
+      # Rule choices are explained in .squawk.toml.
+      - name: Lint added or changed migrations
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=AM HEAD^1 HEAD -- 'packages/db/drizzle/*.sql')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No migration added or changed."
+            exit 0
+          fi
+          printf 'Linting %s\n' "${files[@]}"
+          if "$RUNNER_TEMP/squawk" "${files[@]}"; then
+            exit 0
+          fi
+          # gcc output is 0-based; annotations are 1-based.
+          "$RUNNER_TEMP/squawk" --reporter gcc "${files[@]}" | while IFS= read -r line; do
+            if [[ $line =~ ^([^:]+):([0-9]+):([0-9]+):\ [a-z]+:\ ([a-z0-9-]+)\ (.*)$ ]]; then
+              echo "::error file=${BASH_REMATCH[1]},line=$((BASH_REMATCH[2] + 1)),col=$((BASH_REMATCH[3] + 1)),title=squawk ${BASH_REMATCH[4]}::${BASH_REMATCH[5]} See https://squawkhq.com/docs/${BASH_REMATCH[4]}"
+            fi
+          done
+          echo "::error::Unsafe migration. Rewrite the statement, or justify an exception with a '-- squawk-ignore <rule>' comment (see .squawk.toml)."
+          exit 1

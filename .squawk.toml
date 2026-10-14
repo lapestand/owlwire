@@ -1,0 +1,34 @@
+# squawk (Postgres migration linter) settings for packages/db/drizzle. The Migration lint workflow only lints
+# the migration files a pull request adds or changes; migrations already on main are the baseline and are not
+# re-linted. A justified exception goes in the migration itself, with the reason, right before the statement:
+#   -- Small table: a few rows per workspace, so the write lock lasts milliseconds.
+#   -- squawk-ignore require-concurrent-index-creation
+
+# The version deploy/compose and the test containers run.
+pg_version = "18"
+
+# drizzle-orm's migrator applies every pending file inside a single transaction, so squawk lints with that
+# assumption: a BEGIN or COMMIT inside a file is reported (transaction-nesting), and CREATE INDEX CONCURRENTLY is
+# not an option because it cannot run in a transaction. require-concurrent-index-creation still flags a plain
+# CREATE INDEX on an existing table on purpose: such an index blocks writes while it builds, so the author
+# either justifies it with squawk-ignore (small table) or ships the index outside the drizzle migration.
+assume_in_transaction = true
+
+excluded_rules = [
+  # Asks for IF NOT EXISTS so a half-applied file can be re-run. drizzle records applied files in its journal
+  # and the whole batch is one transaction, so a failed migration leaves nothing behind to skip over.
+  "prefer-robust-stmts",
+  # Ask every file to SET lock_timeout / statement_timeout. All pending files share one transaction, so a
+  # SET LOCAL in one file would silently apply to every later file too, and a statement timeout would also cut
+  # off legitimate backfills. Timeouts belong to the session that runs the migrations, not to each file.
+  "require-lock-timeout",
+  "require-statement-timeout",
+  # Integer columns in this schema are bounded counters (daily send counts, attempts); identifiers are uuid or
+  # text, so the int overflow this rule guards against does not apply.
+  "prefer-bigint-over-int",
+]
+
+# Not excluded on purpose: the RLS policy and trigger migrations (0002, 0004) raise no findings besides the
+# timeout rules above, so no rule is turned off for them. Rules for locks and rewrites stay on, including
+# adding-required-field, changing-column-type, constraint-missing-not-valid, adding-foreign-key-constraint,
+# disallowed-unique-constraint and require-concurrent-index-creation.
