@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/testing",
-  "version": "0.35.77",
+  "version": "0.35.78",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,6 +8,11 @@
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./fixtures": {
+      "source": "./src/fixtures/index.ts",
+      "types": "./dist/fixtures/index.d.ts",
+      "import": "./dist/fixtures/index.js"
     }
   },
   "files": [
@@ -20,10 +25,13 @@
     "test:int": "vitest run --config ../../vitest.config.ts --project int --passWithNoTests"
   },
   "dependencies": {
+    "@owlwire/core": "workspace:*",
+    "@owlwire/db": "workspace:*",
     "@testcontainers/postgresql": "^12.2.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {
+    "@owlwire/crypto": "workspace:*",
     "@types/pg": "^8.23.1"
   }
 }

@@ -388,6 +388,12 @@ importers:
 
   packages/testing:
     dependencies:
+      '@owlwire/core':
+        specifier: workspace:*
+        version: link:../core
+      '@owlwire/db':
+        specifier: workspace:*
+        version: link:../db
       '@testcontainers/postgresql':
         specifier: ^12.2.0
         version: 12.2.0(supports-color@7.2.0)
@@ -395,6 +401,9 @@ importers:
         specifier: ^8.23.1
         version: 8.23.1
     devDependencies:
+      '@owlwire/crypto':
+        specifier: workspace:*
+        version: link:../crypto
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1

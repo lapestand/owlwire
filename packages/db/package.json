@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/db",
-  "version": "0.35.77",
+  "version": "0.35.78",
   "private": true,
   "type": "module",
   "exports": {

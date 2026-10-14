@@ -1,6 +1,19 @@
 export { listSystemAuditLog } from '../repos/audit.js';
 export { SYSTEM, type SystemScope, SystemTx, withSystem } from '../scope.js';
+export {
+  type AuthUserRow,
+  countInstanceAdmins,
+  findAuthUserByEmail,
+  findAuthUserById,
+  grantInstanceAdmin,
+  markEmailVerified,
+} from './auth-users.js';
 export { type DevDeliveryRow, listDevDeliveries } from './dev-deliveries.js';
+export {
+  findInvitationByTokenHash,
+  hasPendingInvitationForEmail,
+  type InvitationLookupRow,
+} from './invitations.js';
 export {
   countLegacyConnectionSecrets,
   type LegacyDecrypt,
@@ -14,6 +27,7 @@ export {
   resolveWorkspaceOf,
   type TenantEntityKind,
 } from './lookups.js';
+export { findPersonalWorkspaceByOwner, listMembershipsForUser } from './memberships.js';
 export { getInstanceSetting, InvalidSettingValueError, setInstanceSetting } from './settings.js';
 export {
   assertKeyringCoversKeys,

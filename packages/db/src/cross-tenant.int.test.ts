@@ -17,6 +17,7 @@ type Case =
   | { kind: 'read'; run: Attack }
   | { kind: 'denied'; entity: string; id: (v: SeededTenant) => string; run: Attack }
   | { kind: 'contained'; run: Attack }
+  | { kind: 'refused'; run: Attack }
   | { kind: 'exempt'; reason: string };
 
 /**
@@ -36,6 +37,15 @@ const denied = (entity: string, id: (v: SeededTenant) => string, run: Attack): C
  * Positive control: the same call by a third tenant against its own ids does change that tenant's snapshot.
  */
 const contained = (run: Attack): Case => ({ kind: 'contained', run });
+/**
+ * For mutators that answer "nothing there" instead of throwing. Attacker scope, victim ids: the call answers false, 0
+ * or null and the victim snapshot does not change. Positive control: the same call in the victim's own scope, inside a
+ * rolled-back transaction, answers something else (so the case really points at victim rows) and leaves no trace, so
+ * the shared seed never changes whatever order the cases run in.
+ */
+const refused = (run: Attack): Case => ({ kind: 'refused', run });
+/** Values a refused call may answer. */
+const NOTHING: unknown[] = [false, 0, null];
 /** No cross-tenant attack is expressible; see EXEMPT_JUSTIFICATIONS for the accepted reasons. */
 const exempt = (reason: string): Case => ({ kind: 'exempt', reason });
 
@@ -154,6 +164,19 @@ const CASES: Record<string, Case> = {
     (v) => v.eventId,
     (t, v) => repos.markEventRouted(t, v.eventId),
   ),
+  // invitations
+  createInvitation: exempt(
+    'workspace_id is always t.workspaceId; invitedBy names an instance-level auth_user row, not a tenant row',
+  ),
+  deletePendingInvitationsForEmail: refused((t, v) =>
+    repos.deletePendingInvitationsForEmail(t, v.invitationEmail, SYSTEM_ACTOR),
+  ),
+  getInvitationForUpdate: read((t, v) => repos.getInvitationForUpdate(t, v.invitationId)),
+  listPendingInvitations: read((t) => repos.listPendingInvitations(t)),
+  markInvitationAccepted: refused((t, v) =>
+    repos.markInvitationAccepted(t, v.invitationId, SYSTEM_ACTOR),
+  ),
+  revokeInvitation: refused((t, v) => repos.revokeInvitation(t, v.invitationId, SYSTEM_ACTOR)),
   // installations
   createInstallation: denied(
     'app',
@@ -192,6 +215,22 @@ const CASES: Record<string, Case> = {
   routeQueue: exempt('pure string builder for a queue name; touches no table'),
   sendJobKey: exempt('pure string builder for a job key; touches no table'),
   tenantJobName: exempt('pure string builder for a namespaced job name; touches no table'),
+  // memberships
+  addMembership: exempt(
+    'workspace_id is always t.workspaceId; userId names an instance-level auth_user row, not a tenant row',
+  ),
+  countOwners: exempt('counts the memberships of t.workspaceId only; the call takes no id'),
+  getMembership: read((t, v) => repos.getMembership(t, v.userId)),
+  getMembershipContext: read((t, v) => repos.getMembershipContext(t, v.userId)),
+  listMembers: read((t) => repos.listMembers(t)),
+  // The member, not the owner: removing or demoting the only owner is refused in any scope.
+  removeMembership: refused((t, v) => repos.removeMembership(t, v.memberUserId, SYSTEM_ACTOR)),
+  transferWorkspaceOwnership: refused((t, v) =>
+    repos.transferWorkspaceOwnership(t, { from: v.userId, to: v.memberUserId }, SYSTEM_ACTOR),
+  ),
+  updateMemberRole: refused((t, v) =>
+    repos.updateMemberRole(t, v.memberUserId, 'admin', SYSTEM_ACTOR),
+  ),
   // rules
   createRule: denied(
     'destination',
@@ -225,6 +264,16 @@ const CASES: Record<string, Case> = {
     'the new row id is always t.workspaceId; another workspace cannot be named or overwritten',
   ),
   getWorkspace: read((t) => repos.getWorkspace(t)),
+  lockWorkspaceForUpdate: read((t) => repos.lockWorkspaceForUpdate(t)),
+  softDeleteWorkspace: exempt(
+    'marks only the row whose id is t.workspaceId; the call takes no workspace id (auth-workspace-repos.int.test.ts)',
+  ),
+  toWorkspaceSummary: exempt(
+    'pure row-to-summary mapping of an already read row; touches no table',
+  ),
+  updateWorkspace: exempt(
+    'updates only the row whose id is t.workspaceId; the patch carries no workspace id (auth-workspace-repos.int.test.ts)',
+  ),
 };
 
 /** An exemption must name one of these concrete mechanisms; vague words are rejected outright. */
@@ -306,6 +355,31 @@ const EXTRA_ATTACKS: Array<[string, Attack, (v: SeededTenant) => Expected]> = [
     (t, v) =>
       repos.enqueueJob(t, 'send_delivery', { deliveryId: v.deliveryId, _ws: v.workspaceId }),
     () => ({ name: 'RepoInputError' }),
+  ],
+];
+
+/**
+ * More victim-id positions of the refused mutators. Each must answer false, 0 or null and leave the victim unchanged;
+ * the final check that no victim id landed in an attacker row also covers their audit rows.
+ */
+const REFUSED_EXTRA: Array<[string, Attack]> = [
+  [
+    'transferWorkspaceOwnership: attacker owner to the victim user',
+    (t, v, a) =>
+      repos.transferWorkspaceOwnership(t, { from: a.userId, to: v.userId }, SYSTEM_ACTOR),
+  ],
+  [
+    'transferWorkspaceOwnership: victim owner to the attacker member',
+    (t, v, a) =>
+      repos.transferWorkspaceOwnership(t, { from: v.userId, to: a.memberUserId }, SYSTEM_ACTOR),
+  ],
+  [
+    'updateMemberRole: demote the victim owner',
+    (t, v) => repos.updateMemberRole(t, v.userId, 'member', SYSTEM_ACTOR),
+  ],
+  [
+    'removeMembership: remove the victim owner',
+    (t, v) => repos.removeMembership(t, v.userId, SYSTEM_ACTOR),
   ],
 ];
 
@@ -451,6 +525,7 @@ function markers(v: SeededTenant): string[] {
     v.deliveryId,
     v.digestId,
     v.userId,
+    v.memberUserId,
     v.invitationId,
     v.invitationEmail,
     v.secret,
@@ -567,6 +642,8 @@ describe.each(PASSES)('attacks as %s', (_pass, dbOf) => {
       } else if (c.kind === 'read') {
         const text = serialize(await attempt);
         for (const marker of markers(victim)) expect(text).not.toContain(marker);
+      } else if (c.kind === 'refused') {
+        expect(NOTHING).toContain(await attempt);
       } else {
         await attempt;
       }
@@ -579,6 +656,20 @@ describe.each(PASSES)('attacks as %s', (_pass, dbOf) => {
           await inScope(dbOf(), victim.workspaceId, (t) => c.run(t, victim, attacker)),
         );
         expect(markers(victim).some((marker) => text.includes(marker))).toBe(true);
+      });
+    }
+
+    if (c.kind === 'refused') {
+      it('positive control: answers differently in the victim scope (rolled back)', async () => {
+        let value: unknown = null;
+        await inScope(dbOf(), victim.workspaceId, async (t) => {
+          value = await c.run(t, victim, attacker);
+          throw new RollbackControl();
+        }).catch((err: unknown) => {
+          if (!(err instanceof RollbackControl)) throw err;
+        });
+        expect(NOTHING).not.toContain(value);
+        expect(await snapshot(victim)).toEqual(before);
       });
     }
 
@@ -604,6 +695,14 @@ describe.each(PASSES)('attacks as %s', (_pass, dbOf) => {
       expect(err).toMatchObject(
         want.name === 'RepoInputError' ? {} : { entity: want.entity, id: want.id },
       );
+      expect(await snapshot(victim)).toEqual(before);
+    });
+  });
+
+  describe.each(REFUSED_EXTRA)('%s', (_name, run) => {
+    it('answers nothing and leaves the victim unchanged', async () => {
+      const value = await inScope(dbOf(), attacker.workspaceId, (t) => run(t, victim, attacker));
+      expect(NOTHING).toContain(value);
       expect(await snapshot(victim)).toEqual(before);
     });
   });
@@ -899,6 +998,7 @@ const malformedVictim: SeededTenant = {
   deliveryId: MALFORMED,
   digestId: MALFORMED,
   userId: MALFORMED,
+  memberUserId: MALFORMED,
   invitationId: MALFORMED,
   invitationEmail: MALFORMED,
   secret: MALFORMED,
@@ -994,6 +1094,27 @@ const MALFORMED_EXTRA: Array<
       ),
     'RepoNotFoundError',
   ],
+  [
+    'addMembership userId',
+    (t) => repos.addMembership(t, { userId: MALFORMED, role: 'member' }, SYSTEM_ACTOR),
+    'RepoInputError',
+  ],
+  [
+    'createInvitation invitedBy',
+    (t) =>
+      repos.createInvitation(
+        t,
+        {
+          email: `malformed-${randomUUID()}@x.test`,
+          role: 'member',
+          tokenHash: `malformed-${randomUUID()}`,
+          invitedBy: MALFORMED,
+          expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+        },
+        SYSTEM_ACTOR,
+      ),
+    'RepoInputError',
+  ],
 ];
 
 describe('malformed ids never reach SQL (no pg 22P02)', () => {
@@ -1010,6 +1131,7 @@ describe('malformed ids never reach SQL (no pg 22P02)', () => {
       } else {
         expect(out.ok ? null : pgErrorOf(out.err)).toBeNull();
         expect(out.ok).toBe(true);
+        if (c.kind === 'refused') expect(NOTHING).toContain(out.ok ? out.value : undefined);
       }
     });
   });

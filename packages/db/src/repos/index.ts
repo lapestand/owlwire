@@ -76,6 +76,16 @@ export {
   revokeInstallation,
 } from './installations.js';
 export {
+  type CreateInvitationInput,
+  createInvitation,
+  deletePendingInvitationsForEmail,
+  getInvitationForUpdate,
+  type InvitationRow,
+  listPendingInvitations,
+  markInvitationAccepted,
+  revokeInvitation,
+} from './invitations.js';
+export {
   connectionQueue,
   digestJobKey,
   type EnqueueOptions,
@@ -88,6 +98,19 @@ export {
   TENANT_JOB_PAYLOAD_KEY,
   tenantJobName,
 } from './jobs.js';
+export {
+  addMembership,
+  countOwners,
+  getMembership,
+  getMembershipContext,
+  listMembers,
+  type MemberListItem,
+  type MembershipContext,
+  type MembershipRow,
+  removeMembership,
+  transferWorkspaceOwnership,
+  updateMemberRole,
+} from './memberships.js';
 export {
   type CreateRuleInput,
   createRule,
@@ -104,5 +127,10 @@ export {
   type CreateWorkspaceInput,
   createWorkspace,
   getWorkspace,
+  lockWorkspaceForUpdate,
+  softDeleteWorkspace,
+  toWorkspaceSummary,
+  updateWorkspace,
   type WorkspaceRow,
+  type WorkspaceSummary,
 } from './workspaces.js';
