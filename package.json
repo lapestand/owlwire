@@ -1,6 +1,6 @@
 {
   "name": "owlwire",
-  "version": "0.35.69",
+  "version": "0.35.70",
   "license": "BUSL-1.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
   "scripts": {
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "lint": "biome check . && node scripts/check-system-guc.mjs && node scripts/check-env.mjs && knip --no-progress",
+    "lint": "biome check . && node scripts/check-system-guc.mjs && node scripts/check-env.mjs && node scripts/check-i18n-parity.mjs && knip --no-progress",
     "format": "biome check --write .",
     "depcruise": "node scripts/depcruise.mjs",
     "test": "vitest run --project unit --passWithNoTests",
