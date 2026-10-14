@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/server",
-  "version": "0.35.68",
+  "version": "0.35.69",
   "private": true,
   "type": "module",
   "bin": {
