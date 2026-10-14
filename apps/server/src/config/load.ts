@@ -11,13 +11,12 @@ export interface ServerConfig {
   /** Uygulama rolü (owlwire_app, RLS'e tabi). */
   databaseUrl: string;
   /**
-   * Sahip/migration rolü (owlwire). Yoksa databaseUrl kullanılır; o rol RLS'i aşabiliyorsa serve açılmaz
-   * (Sözleşme §4).
+   * Sahip/migration rolü (owlwire). Yoksa databaseUrl kullanılır; o rol RLS'i aşabiliyorsa serve açılmaz.
    */
   migrationDatabaseUrl?: string;
   /**
    * OWLWIRE_ALLOW_INSECURE_DB_ROLE=true: yerel geliştirme için, RLS'e tabi olmayan uygulama bağlantısıyla (tek rol,
-   * süper kullanıcı) serve'ün uyarıyla açılmasına izin verir. NODE_ENV=production'da yok sayılır (Görev 14 kararı).
+   * süper kullanıcı) serve'ün uyarıyla açılmasına izin verir. NODE_ENV=production'da yok sayılır.
    */
   allowInsecureDbRole: boolean;
   kek: KekRing;

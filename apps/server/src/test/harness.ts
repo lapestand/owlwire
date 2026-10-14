@@ -15,13 +15,13 @@ export interface Harness {
   deps: Deps;
   app: Hono<AppEnv>;
   fake: FakeAdapter;
-  /** Owner role (owlwire) pool: raw SQL seeds and assertions outside RLS (R43). Production code never uses it. */
+  /** Owner role (owlwire) pool: raw SQL seeds and assertions outside RLS. Production code never uses it. */
   ownerPool: pg.Pool;
   close(): Promise<void>;
 }
 
 /**
- * Two-role test database (R36): migrated by the owner role in a fresh database of the global container (R51); the
+ * Two-role test database: migrated by the owner role in a fresh database of the global container; the
  * server connects as the application role (owlwire_app), so RLS applies exactly as in production.
  */
 export async function createHarness(

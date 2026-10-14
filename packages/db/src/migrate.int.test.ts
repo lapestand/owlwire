@@ -43,7 +43,7 @@ describe('runMigrations', () => {
     expect(rows[0]?.n).toBe(journal.entries.length);
   });
 
-  it('creates every P0 table', async () => {
+  it('creates every base table', async () => {
     const { rows } = await pool.query<{ table_name: string }>(
       "select table_name from information_schema.tables where table_schema = 'public'",
     );

@@ -5,8 +5,8 @@ import { auditLog } from '../schema/index.js';
 import { SystemTx, type TenantTx } from '../scope.js';
 import { now, q } from './context.js';
 
-// Sahip P1a; sonraki planlar Sözleşme §6.4'e göre bu diziyi genişletir
-// (aynı kalıp `<hedef>.<geçmiş zaman fiil>`, snake_case; migration gerekmez — R24, R41).
+// Yeni denetim eylemleri bu diziye eklenir
+// (aynı kalıp `<hedef>.<geçmiş zaman fiil>`, snake_case; eylem kolonu düz metin olduğundan migration gerekmez).
 export const AUDIT_ACTIONS = [
   'workspace.created',
   'workspace.ownership_transferred',
@@ -35,7 +35,7 @@ export const AUDIT_ACTIONS = [
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-// Sahip P1a; sonraki planlar Sözleşme §6.4'teki hedef tiplerini ekler (R41).
+// Yeni denetim hedef tipleri bu diziye eklenir.
 export const AUDIT_TARGET_TYPES = [
   'workspace',
   'keys',

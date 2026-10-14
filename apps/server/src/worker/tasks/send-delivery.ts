@@ -61,7 +61,7 @@ interface DeliveryCtx {
 }
 
 const FINAL_STATUSES = new Set(['delivered', 'failed', 'suppressed', 'digested']);
-/** status_reason values are machine keys (contract §10.7, R81); raw errors stay in last_error. */
+/** status_reason values are machine keys; raw errors stay in last_error. */
 const STATUS_KEY = /^[a-z]+\.status\.[A-Za-z]+$/;
 
 /**
@@ -81,7 +81,7 @@ function permanentConfigError(err: unknown): string | null {
   return null;
 }
 
-/** Written to deliveries.last_error and logged: without query parameters or echoed input (I-6). */
+/** Written to deliveries.last_error and logged: without query parameters or echoed input. */
 function errorMessage(err: unknown): string {
   return withholdEchoedInput(
     err,

@@ -17,7 +17,7 @@ const system = vi.hoisted(() => ({
 vi.mock('@owlwire/db/system', () => ({ SYSTEM: { system: true }, ...system }));
 
 describe('legacyDecryptor', () => {
-  it('decrypts a P0 SecretBox blob with the current KEK', () => {
+  it('decrypts a legacy SecretBox blob with the current KEK', () => {
     const ring = createKeyring(generateKek(1));
     const ct = createSecretBox(ring).seal({ botToken: 'x' });
     expect(legacyDecryptor(ring)(ct)).toEqual({ botToken: 'x' });

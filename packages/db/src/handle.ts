@@ -69,9 +69,9 @@ export function bindDrizzle(client: pg.PoolClient): Drizzle {
 }
 
 export function openDatabase(opts: OpenDatabaseOptions): OwlwireDb {
-  // P0 createPool: connectionTimeoutMillis 5_000 (Görev 0 V5).
+  // createPool: connectionTimeoutMillis 5_000.
   const pool = createPool(opts.url, opts.maxConnections ?? 10);
-  // pg-pool'da dinleyicisiz 'error' olayı süreci düşürür (P0 createDeps ile aynı koruma).
+  // pg-pool'da dinleyicisiz 'error' olayı süreci düşürür (createDeps ile aynı koruma).
   const onError = opts.onPoolError ?? (() => undefined);
   // Boştaki istemci hatasını pg-pool kendi idle dinleyicisiyle havuz 'error' olayına çevirir; kullanımdaki
   // istemcide o dinleyici sökülür, bu yüzden istemci dinleyicimiz yalnız ödünç alınmış istemciler için

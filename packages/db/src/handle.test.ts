@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { dbInternals, openDatabase } from './handle.js';
 
 describe('openDatabase', () => {
-  it('uses the P0 pool settings and routes pool errors to onPoolError instead of crashing', async () => {
+  it('uses the standard pool settings and routes pool errors to onPoolError instead of crashing', async () => {
     const seen: Error[] = [];
     const db = openDatabase({
       url: 'postgres://u:p@127.0.0.1:1/none',

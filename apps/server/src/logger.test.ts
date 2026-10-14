@@ -77,7 +77,7 @@ function queryError(params: unknown[], cause?: Error): Error {
 }
 
 describe('REDACT_PATHS', () => {
-  it('is exactly the P0 list (dropping an entry fails this test)', () => {
+  it('is exactly the expected list (dropping an entry fails this test)', () => {
     expect(REDACT_PATHS).toEqual([
       'token',
       'config',
@@ -97,7 +97,7 @@ describe('REDACT_PATHS', () => {
   });
 });
 
-describe('query parameter redaction (I-6)', () => {
+describe('query parameter redaction', () => {
   it('drops drizzle query params from err.message, err.stack and err.params, keeps the cause', () => {
     const { lines, stream } = capture();
     const pgErr = Object.assign(new Error('duplicate key value violates unique constraint "x"'), {
@@ -159,7 +159,7 @@ describe('query parameter redaction (I-6)', () => {
     expect(scrubQueryParams('no params here')).toBe('no params here');
   });
 
-  it('redacts multi-line params whose lines start with "at" and keeps the real stack frames (review I-1)', () => {
+  it('redacts multi-line params whose lines start with "at" and keeps the real stack frames', () => {
     const { lines, stream } = capture();
     const err = queryError([
       'Standup\nat 10:00, password is SECRET-STANDUP',

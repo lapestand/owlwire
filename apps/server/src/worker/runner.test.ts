@@ -32,7 +32,7 @@ describe('createTaskList', () => {
 });
 
 describe('graphileLogger', () => {
-  it('routes graphile errors through the err serializer and scrubs query params (I-6)', () => {
+  it('routes graphile errors through the err serializer and scrubs query params', () => {
     const lines: string[] = [];
     const log = graphileLogger(createLogger('debug', { write: (l: string) => void lines.push(l) }));
     const error = Object.assign(new Error('Failed query: select $1\nparams: SECRET-PARAM'), {

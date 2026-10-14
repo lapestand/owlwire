@@ -19,7 +19,7 @@ const flip = (buf: Buffer, i: number): Buffer => {
   return out;
 };
 
-describe('P0 envelope header tampering', () => {
+describe('legacy envelope header tampering', () => {
   it('rejects a wrapped DEK whose KEK version, IV or tag was changed', () => {
     const ring = { current: kek(2), previous: kek(1) };
     const wrapped = wrapDek(ring.current, generateDek()); // [0x01][u16 version][iv12][tag16][ct]
@@ -39,7 +39,7 @@ describe('P0 envelope header tampering', () => {
   });
 });
 
-describe('P0 SecretBox bounds', () => {
+describe('legacy SecretBox bounds', () => {
   const box = createSecretBox({ current: kek(1), previous: null });
 
   it('rejects truncated boxes and length fields that point past the end', () => {

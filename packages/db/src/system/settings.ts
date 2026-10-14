@@ -25,7 +25,7 @@ export async function getInstanceSetting(s: SystemTx, key: string): Promise<unkn
 }
 
 /**
- * Sözleşme §6.1 + R98: değişiklik ve instance düzeyi `settings.updated` denetimi aynı transaction'da.
+ * Değişiklik ve instance düzeyi `settings.updated` denetimi aynı transaction'da.
  * Denetime yalnız anahtar adı yazılır (`data: { keys: [key] }`), değer asla yazılmaz. Sır taşıyan değerler
  * buraya konmaz (instance_settings şifrelenmez). `undefined` değer `InvalidSettingValueError`; JSON null saklanabilir ama
  * `getInstanceSetting` onu eksik anahtardan ayırt edemez. `updated_by` aktörden türetilir: kullanıcıysa `userId`, değilse null.

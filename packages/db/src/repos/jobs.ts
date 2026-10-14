@@ -3,7 +3,7 @@ import { RepoInputError } from '../errors.js';
 import { type SystemTx, TenantTx } from '../scope.js';
 import { q } from './context.js';
 
-/** Sözleşme §9 görev adları (sahip P1a; sahip planlar burada tanımlı adı kullanır — R44). */
+/** Worker görev adları; her özellik burada tanımlı adı kullanır, adlar başka yerde yazılmaz. */
 export const JOB_NAMES = [
   'route_event',
   'send_delivery',
@@ -19,7 +19,7 @@ export const JOB_NAMES = [
 ] as const;
 export type JobName = (typeof JOB_NAMES)[number];
 
-/** Kuyruk adı ve iş anahtarı kalıpları tek yerde (Sözleşme §9, R45, R62). */
+/** Kuyruk adı ve iş anahtarı kalıpları tek yerde. */
 export const routeQueue = (installationId: string): string => `route:${installationId}`;
 export const connectionQueue = (connectionId: string): string => `conn:${connectionId}`;
 export const sendJobKey = (deliveryId: string): string => `send:${deliveryId}`;
@@ -64,8 +64,8 @@ function canonicalPayload(payload: unknown): Record<string, unknown> {
 /**
  * Çağıranın transaction'ında iş ekler (outbox): transaction geri alınırsa iş de eklenmez. Payload yalnız
  * kimlik taşımalıdır (sır, mesaj gövdesi ya da yapılandırma değil). `graphile_worker.add_job`'ın packages/db içindeki
- * tek çağrı yeridir (monorepo'da da tek: `apps/server/src/worker/jobs.ts` bunun üzerine ince sarmalayıcıdır, R45,
- * R62); tüm değerler parametre olarak bağlanır. Uygulama rolü Graphile tablolarına Görev 2'nin politikasıyla erişir.
+ * tek çağrı yeridir (monorepo'da da tek: `apps/server/src/worker/jobs.ts` bunun üzerine ince sarmalayıcıdır);
+ * tüm değerler parametre olarak bağlanır. Uygulama rolü Graphile tablolarına ensureAppRole'un verdiği yetkilerle erişir.
  *
  * TenantTx ile: verilen `queueName` ve `jobKey` `tenantJobName(t.workspaceId, …)` ad alanına alınır ve payload'a
  * `_ws: t.workspaceId` eklenir (payload'da `_ws` varsa RepoInputError). Worker'lar `_ws`'yi işin kimliklerinden

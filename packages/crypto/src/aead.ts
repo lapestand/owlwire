@@ -70,7 +70,7 @@ export function buildAad(...parts: string[]): string {
   return JSON.stringify(parts);
 }
 
-/** P1a biçimi: 0x01 | nonce(12) | ciphertext | tag(16); AAD satıra bağlı bağlam dizesidir. */
+/** Workspace DEK biçimi: 0x01 | nonce(12) | ciphertext | tag(16); AAD satıra bağlı bağlam dizesidir. */
 export function sealBytes(key: Uint8Array, plaintext: Uint8Array, aad: string): Buffer {
   assertKey(key);
   const nonce = randomBytes(NONCE_LEN);
@@ -99,7 +99,7 @@ export function openBytes(key: Uint8Array, sealed: Uint8Array, aad: string): Buf
   }
 }
 
-/** JSON.stringify undefined/fonksiyon/symbol için undefined döndürür; Buffer.from'un anlaşılmaz TypeError'ı yerine net hata (P0 devri). */
+/** JSON.stringify undefined/fonksiyon/symbol için undefined döndürür; Buffer.from'un anlaşılmaz TypeError'ı yerine net hata. */
 export function jsonBytes(value: unknown): Buffer {
   const text = JSON.stringify(value);
   if (text === undefined) {

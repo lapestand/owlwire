@@ -100,7 +100,9 @@ keys
 
 program
   .command('dev:seed')
-  .description('P0 only: create a workspace, app, installation, connection, destination and rule')
+  .description(
+    'Development only: create a workspace, app, installation, connection, destination and rule',
+  )
   .addOption(
     new Option('--platform <platform>', 'target platform')
       .choices(['telegram', 'webhook'])
@@ -123,7 +125,7 @@ program
       if (opts.platform === 'telegram' && opts.chatId && !opts.botToken) {
         logger.warn(
           'dev:seed: --chat-id without --bot-token creates a shared_bot connection; shared Telegram bot delivery ' +
-            'is not available before P1e, so deliveries to this destination will fail. Pass --bot-token to use your own bot.',
+            'is not available yet, so deliveries to this destination will fail. Pass --bot-token to use your own bot.',
         );
       }
       await migrateDatabase(config, logger);
@@ -151,7 +153,7 @@ program.parseAsync(process.argv).catch((err: unknown) => {
     process.exit(2);
   }
   // safeErrorText cuts DrizzleQueryError's "params:" (wrapped keys, ciphertext) and takes frames only from the
-  // stack below the message header, for the whole cause chain (I-6).
+  // stack below the message header, for the whole cause chain.
   process.stderr.write(`${safeErrorText(err)}\n`);
   process.exit(1);
 });

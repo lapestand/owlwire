@@ -41,10 +41,10 @@ function destinationKind(opts: SeedOptions, chatId: string): 'dm' | 'group' | 't
 }
 
 /**
- * P0/P1a dev helper: workspace (+ DEK) + private app + installation + connection (+ destination when a chat id is
+ * Development helper: workspace (+ DEK) + private app + installation + connection (+ destination when a chat id is
  * given) + rule ['*'], all through the tenant repositories in one transaction. Telegram with a bot token is own_bot
- * (config sealed with the workspace DEK, dek_v1); without one it is shared_bot (config null, R2). webhook is P0's
- * OWLWIRE_DEV_FAKE_ADAPTER fake adapter (R48).
+ * (config sealed with the workspace DEK, dek_v1); without one it is shared_bot (config null, the
+ * instance's shared bot is used). webhook is the OWLWIRE_DEV_FAKE_ADAPTER fake adapter.
  */
 export async function seedDevWorkspace(db: OwlwireDb, opts: SeedOptions): Promise<SeedResult> {
   const chatId = opts.chatId?.trim() ?? '';

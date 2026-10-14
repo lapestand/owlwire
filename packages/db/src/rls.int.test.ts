@@ -122,7 +122,7 @@ describe.each(TENANT_TABLES)('%s', (table) => {
       `delete from ${table} where workspace_id = $1`,
       [b.workspaceId],
     );
-    // Final review ruling: audit_log is append-only and workspace_keys rows are never deleted by the app role.
+    // audit_log is append-only and workspace_keys rows are never deleted by the app role.
     if (NO_UPDATE.has(table)) await expect(update).rejects.toMatchObject({ code: '42501' });
     else expect((await update).rowCount).toBe(0);
     if (NO_DELETE.has(table)) await expect(remove).rejects.toMatchObject({ code: '42501' });

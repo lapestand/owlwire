@@ -26,7 +26,7 @@ afterAll(async () => {
   await h.close();
 });
 
-/** R43: assertions through the owner pool (outside RLS). */
+/** Assertions through the owner pool (outside RLS). */
 async function deliveriesOf(eventId: string) {
   const { rows } = await h.ownerPool.query<{
     id: string;
@@ -152,7 +152,7 @@ describe('routeEvent', () => {
     const a = await seedAndIngest(h);
     const b = await seedAndIngest(h);
     await h.ownerPool.query('delete from rule_targets where rule_id = $1', [a.seed.ruleId]);
-    // P1a: the composite rule_targets_destination_ws_fk rejects a cross-tenant target at schema level.
+    // The composite rule_targets_destination_ws_fk rejects a cross-tenant target at schema level.
     await expect(
       h.ownerPool.query(
         'insert into rule_targets (id, workspace_id, rule_id, destination_id) values ($1, $2, $3, $4)',

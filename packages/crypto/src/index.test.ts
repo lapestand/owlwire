@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as crypto from './index.js';
 
 describe('@owlwire/crypto public exports', () => {
-  it('does not expose the P0 per-secret DEK wrap helpers (R90)', () => {
+  it('does not expose the legacy per-secret DEK wrap helpers', () => {
     expect(crypto).not.toHaveProperty('wrapDek');
     expect(crypto).not.toHaveProperty('unwrapDek');
   });

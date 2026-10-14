@@ -28,7 +28,7 @@ export interface AppDeps {
   checkReady?: () => Promise<boolean>;
 }
 
-/** Fixed detail of the 404 for repository not-found and invalid scope errors (final review ruling). */
+/** Fixed detail of the 404 for repository not-found and invalid scope errors (same text for both, so the response does not reveal which one happened). */
 export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
 
 /** Fixed detail of the 422 for audit guard rejections; the guard's own message may name input keys. */
@@ -45,7 +45,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (err instanceof HTTPException && err.status === 400) {
       return problem(c, new ProblemError(400, 'validation_failed', err.message || undefined));
     }
-    // Repository errors carry only entity/constraint/reason names, never values (P0 contract: 422 / 409).
+    // Repository errors carry only entity/constraint/reason names, never values (mapped to 422 / 409).
     if (err instanceof RepoInputError) {
       return problem(c, new ProblemError(422, 'validation_failed', err.message));
     }
@@ -60,7 +60,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (err instanceof RepoConflictError) {
       return problem(c, new ProblemError(409, 'conflict', err.message));
     }
-    // The logger's err serializer drops query params, pg row fields and echoed input but keeps code and constraint (I-6).
+    // The logger's err serializer drops query params, pg row fields and echoed input but keeps code and constraint.
     (c.get('log') ?? deps.logger).error({ err }, 'unhandled error');
     return problem(c, new ProblemError(500, 'internal'));
   });

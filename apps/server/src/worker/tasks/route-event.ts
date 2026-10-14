@@ -34,8 +34,8 @@ export function ruleMatches(
 }
 
 /**
- * P0 behaviour on the repositories: type + minimum severity, direct destination targets only, only active and
- * confirmed destinations. Audiences, consent and filters belong to the P1d router. Events of one installation run
+ * Current behaviour on the repositories: type + minimum severity, direct destination targets only, only active and
+ * confirmed destinations. Audiences, consent and filters belong to the full router (not implemented yet). Events of one installation run
  * in order on its route queue; UNIQUE(event_id, destination_id) prevents duplicate deliveries, and createDeliveries
  * enqueues send_delivery in the same transaction.
  */

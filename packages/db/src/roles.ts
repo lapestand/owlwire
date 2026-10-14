@@ -98,7 +98,7 @@ async function allowGraphileWorkerTables(client: pg.Client, appUser: string): Pr
 }
 
 /**
- * R89: rol varsa parolaya dokunmaz, yalnız rolsuper/rolbypassrls kontrolü ve GRANT yapar;
+ * Rol varsa parolaya dokunmaz, yalnız rolsuper/rolbypassrls kontrolü ve GRANT yapar;
  * yoksa ve sahipte CREATEROLE (ya da süper kullanıcı) varsa OWLWIRE_DATABASE_URL parolasıyla oluşturur;
  * ikisi de değilse AppRoleError. GRANT'ler her çağrıda idempotent uygulanır.
  */
@@ -187,7 +187,7 @@ async function grantAppAccess(client: pg.Client, appUser: string): Promise<void>
     await client.query(`grant usage, select on all sequences in schema ${schema} to ${role}`);
     await client.query(`grant execute on all functions in schema ${schema} to ${role}`);
   }
-  // Final review ruling: audit_log is append-only for the app role, and workspace keys are never deleted by it (a
+  // audit_log is append-only for the app role, and workspace keys are never deleted by it (a
   // deleted key loses every secret of the workspace; rotation only UPDATEs them). Re-applied on every run because the
   // blanket grant above restores them. Workspace deletion still cascades: FK actions run as the table owner.
   const restricted = await client.query<{ audit: boolean; keys: boolean }>(

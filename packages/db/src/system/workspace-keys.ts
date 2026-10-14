@@ -10,7 +10,7 @@ import { workspaceKeys, workspaces } from '../schema/index.js';
 import { type SystemScope, type TenantTx, tenantScope, withSystem, withTenant } from '../scope.js';
 
 /**
- * Anahtarı olmayan (P0'dan kalan) workspace'lere DEK üretir; oluşturulan sayıyı döndürür.
+ * Anahtarı olmayan (workspace DEK öncesinden kalan) workspace'lere DEK üretir; oluşturulan sayıyı döndürür.
  * Kapsamlar iç içe açılamaz (NestedScopeError), bu yüzden önce bir sistem transaction'ında eksikler
  * listelenir, sonra her workspace için ayrı bir kiracı transaction'ında anahtar ve `keys.dek_created`
  * denetim kaydı birlikte yazılır. İdempotent ve eşzamanlı çalıştırmaya dayanıklı: `ifMissing`

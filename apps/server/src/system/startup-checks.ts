@@ -16,10 +16,10 @@ export interface StartupCheckOptions {
 }
 
 /**
- * Called when serve starts (contract §4, §11.2). If the application connection can bypass RLS (superuser, BYPASSRLS,
+ * Called when serve starts. If the application connection can bypass RLS (superuser, BYPASSRLS,
  * table owner, e.g. the 'same' mode without OWLWIRE_MIGRATION_DATABASE_URL) the process does not start. The only
  * exception is the explicit local-development opt-in OWLWIRE_ALLOW_INSECURE_DB_ROLE=true outside
- * NODE_ENV=production; then every reason is logged as a warning (Task 14 ruling). A keyring that does not cover
+ * NODE_ENV=production; then every reason is logged as a warning. A keyring that does not cover
  * or does not open the stored workspace keys refuses in every environment.
  */
 export async function runStartupChecks(

@@ -1,4 +1,4 @@
--- Task 10 fix round 1 (review #1, #4). RLS lets an owning tenant write any column of its own app, so moderation
+-- RLS lets an owning tenant write any column of its own app, so moderation
 -- of public apps is also enforced here. Rules, unless system mode (owlwire.system = 'on') or RLS does not apply
 -- to the current role (table owner / migration role, which bypasses RLS anyway):
 --   * a tenant never writes an approval that moderation did not grant: an INSERT of a public app that starts

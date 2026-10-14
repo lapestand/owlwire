@@ -25,7 +25,7 @@ const SendDeliveryPayload = z.object({
 /**
  * Graphile logs a failed task's error and stores its message in `_private_jobs.last_error`; DrizzleQueryError messages
  * carry query parameters (and JSON SyntaxError / pg data exception messages echo input), so the error is replaced with
- * its safeErrorMessage, without a cause, before it leaves the task (I-6).
+ * its safeErrorMessage, without a cause, before it leaves the task.
  */
 async function sanitized(fn: () => Promise<unknown>): Promise<void> {
   try {
@@ -36,7 +36,7 @@ async function sanitized(fn: () => Promise<unknown>): Promise<void> {
 }
 
 /**
- * Wraps every task of a list in `sanitized`, so no task can reach Graphile with a raw error (I-6). createTaskList and
+ * Wraps every task of a list in `sanitized`, so no task can reach Graphile with a raw error. createTaskList and
  * startWorker (including its `extraTasks`) register tasks only through here; a task never wraps itself.
  */
 export function sanitizeTaskList(tasks: TaskList): TaskList {
@@ -101,7 +101,7 @@ function jobSummary(job: unknown): unknown {
 
 export function graphileLogger(logger: Logger): GraphileLogger {
   return new GraphileLogger((scope) => (level, message, meta) => {
-    // I-6: Graphile hatayı meta.error'da verir (pino serializer'ı yalnız `err`'e uygulanır) ve mesaja gömer.
+    // Log gizliliği: Graphile hatayı meta.error'da verir (pino serializer'ı yalnız `err`'e uygulanır) ve mesaja gömer.
     const { error, job, ...rest } = (meta ?? {}) as Record<string, unknown>;
     const ctx = {
       ...scope,
@@ -123,7 +123,7 @@ export async function startWorker(
   opts: {
     concurrency?: number;
     pollInterval?: number;
-    /** Further tasks (P1+ features, tests); wrapped with the built-in ones in sanitizeTaskList. */
+    /** Further tasks (later features, tests); wrapped with the built-in ones in sanitizeTaskList. */
     extraTasks?: TaskList;
   } = {},
 ): Promise<Runner> {

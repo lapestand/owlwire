@@ -42,8 +42,8 @@ function sanitizeOpenError(err: unknown): Error {
 }
 
 /**
- * P0 biçimi SecretBox'tır (0x02; V6, Sözleşme §6.2 kek_v0). SecretBox sarılı DEK başlığındaki sürüme göre
- * güncel ya da önceki KEK'i seçer (R90). Hata mesajı içerik taşımaz.
+ * Eski (workspace DEK öncesi) biçim SecretBox'tır (0x02, `kek_v0`). SecretBox sarılı DEK başlığındaki sürüme göre
+ * güncel ya da önceki KEK'i seçer. Hata mesajı içerik taşımaz.
  */
 export function legacyDecryptor(keyring: Keyring): LegacyDecrypt {
   const box = createSecretBox(keyring);

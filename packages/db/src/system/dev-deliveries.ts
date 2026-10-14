@@ -19,8 +19,8 @@ export interface DevDeliveryRow {
 }
 
 /**
- * P0/P1a dev paneli (instance düzeyi, R48): bütün workspace'lerin teslimatları, en yeni önce.
- * Yalnız apps/server/src/system/dev-panel.ts çağırır; P1b dev ucuyla birlikte kaldırılır.
+ * Geliştirme paneli (instance düzeyi): bütün workspace'lerin teslimatları, en yeni önce.
+ * Yalnız apps/server/src/system/dev-panel.ts çağırır; kullanıcı hesapları geldiğinde dev ucuyla birlikte kaldırılacak.
  * `limit` 1..500 aralığına sıkıştırılır.
  */
 export async function listDevDeliveries(

@@ -78,14 +78,15 @@ module.exports = {
     },
     {
       name: 'no-drizzle-outside-db-package',
-      comment: 'Raw Drizzle only inside packages/db/src (contract §2).',
+      comment: 'Raw Drizzle only inside packages/db/src.',
       severity: 'error',
       from: { path: '^(apps|packages)/', pathNot: ['^packages/db/src/'] },
       to: { path: '(^|/)node_modules/drizzle-orm/' },
     },
     {
       name: 'no-pg-value-import-outside-allowed',
-      comment: 'pg value imports only where R91 allows; import type is free everywhere.',
+      comment:
+        'pg value imports only in packages/db, packages/testing, the server dependency wiring (deps.ts), the worker runner, the planned leader election module, the server test harness and integration tests; import type is free everywhere.',
       severity: 'error',
       from: {
         path: '^(apps|packages)/',
@@ -103,15 +104,14 @@ module.exports = {
     },
     {
       name: 'system-scope-only-from-server-system',
-      comment:
-        'SystemScope/withSystem only from packages/db/src and apps/server/src/system (contract §2).',
+      comment: 'SystemScope/withSystem only from packages/db/src and apps/server/src/system.',
       severity: 'error',
       from: { pathNot: ['^apps/server/src/system/', '^packages/db/'] },
       to: { path: '^packages/db/(src|dist)/system/' },
     },
     {
       name: 'migrate-only-from-allowed',
-      comment: '@owlwire/db/migrate only from system, test harness and integration tests (R91).',
+      comment: '@owlwire/db/migrate only from system, test harness and integration tests.',
       severity: 'error',
       from: {
         pathNot: ['^apps/server/src/(system|test)/', '^packages/db/', '\\.int\\.test\\.ts$'],

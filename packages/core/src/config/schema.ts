@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const PROFILES = ['personal', 'community', 'open'] as const;
 export const REGISTRATION_MODES = ['closed', 'invite', 'open'] as const;
-// P1d: z.enum(PACING_PRESET_NAMES) ile değiştirilir (R40)
+// Hız ön ayarları tanımlandığında z.enum(PACING_PRESET_NAMES) ile değiştirilecek
 const pacingPreset = z.enum(['safe', 'normal', 'fast', 'off']);
 
 export const editionConfigSchema = z
@@ -34,7 +34,7 @@ export const editionConfigSchema = z
       contentDays: z.number().int().positive(),
       metadataDays: z.number().int().positive(),
     }),
-    // <= 0 limiti kapatır (Sözleşme §5; P1c uygular)
+    // <= 0 limiti kapatır (limit henüz uygulanmıyor)
     ingest: z.object({ ratePerMinutePerToken: z.number().int() }),
   })
   .strict();

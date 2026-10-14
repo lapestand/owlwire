@@ -24,8 +24,8 @@ afterAll(async () => {
 
 const FK_VIOLATION = { code: '23503' };
 
-describe('p1a tables', () => {
-  it('creates all p1a tables', async () => {
+describe('multi-tenant tables', () => {
+  it('creates all multi-tenant tables', async () => {
     const { rows } = await owner.query<{ tablename: string }>(
       "select tablename from pg_tables where schemaname = 'public' and tablename = any($1::text[]) order by 1",
       [

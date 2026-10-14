@@ -1,5 +1,5 @@
 #!/bin/sh
-# Owlwire gelistirme ortami (Sozlesme R127): komutu dev konteynerinde calistirir.
+# Owlwire gelistirme ortami: komutu dev konteynerinde calistirir.
 #   ./dev pnpm test        ./dev pnpm test:int        ./dev   (bash)
 #   OWLWIRE_DEV_PORTS=1 ./dev ...      8080 ve 5173 portlarini host'a yayinlar
 #   OWLWIRE_DEV_DOCKER_SOCK=/yol ./dev ...   Docker socket yolu

@@ -38,7 +38,7 @@ const contained = (run: Attack): Case => ({ kind: 'contained', run });
 /** No cross-tenant attack is expressible; see EXEMPT_JUSTIFICATIONS for the accepted reasons. */
 const exempt = (reason: string): Case => ({ kind: 'exempt', reason });
 
-// R121: repos/index.ts'e fonksiyon ekleyen her görev, AYNI görevde buraya gerçek bir read()/denied()/contained()
+// repos/index.ts'e fonksiyon ekleyen her değişiklik, AYNI değişiklikte buraya gerçek bir read()/denied()/contained()
 // vakası (ya da somut gerekçeli exempt()) ekler. Eksik/fazla girdi 'registry' testini kırar; testi gevşetmek yasaktır.
 const CASES: Record<string, Case> = {
   // apps

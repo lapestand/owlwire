@@ -13,7 +13,7 @@ import { createLogger, toAdapterLogger } from './logger.js';
 
 export interface Deps {
   config: ServerConfig;
-  /** Application role pool for Graphile Worker (and P1e leader election). Data access goes through deps.db. */
+  /** Application role pool for Graphile Worker (and, later, leader election). Data access goes through deps.db. */
   pool: pg.Pool;
   db: OwlwireDb;
   keyring: Keyring;
@@ -23,19 +23,19 @@ export interface Deps {
   rand: () => number;
 }
 
-/** Close with `await deps.db.close(); await deps.pool.end();` (R68). */
+/** Close with `await deps.db.close(); await deps.pool.end();`. */
 export function createDeps(
   config: ServerConfig,
   overrides: Partial<Omit<Deps, 'config'>> = {},
 ): Deps {
   if (overrides.db && !overrides.pool) {
-    // P0 carry-over: a db override without a pool override used to open an unrelated, unused pool.
+    // A db override without a pool override must not open an unrelated, unused pool.
     throw new TypeError('createDeps: overriding db requires overriding pool as well');
   }
   const logger = overrides.logger ?? createLogger(config.logLevel);
   let pool = overrides.pool;
   if (!pool) {
-    // Same limits as the @owlwire/db handle's pool: a bounded size and a 5 s connect timeout (P0 Task 0 V5).
+    // Same limits as the @owlwire/db handle's pool: a bounded size and a 5 s connect timeout.
     pool = new pg.Pool({
       connectionString: config.databaseUrl,
       max: 10,

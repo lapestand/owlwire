@@ -2,13 +2,13 @@ language js
 
 or {
   `sql.raw($args)` as $call where {
-    register_diagnostic(span=$call, message="sql.raw is forbidden outside packages/db/src (R123); use the parameterised sql template.", severity="error")
+    register_diagnostic(span=$call, message="sql.raw is forbidden outside packages/db/src; use the parameterised sql template.", severity="error")
   },
   `$client.query($text, $...)` where {
     $text <: or {
       JsTemplateExpression() as $tpl where { $tpl <: contains JsTemplateElement() },
       JsBinaryExpression()
     },
-    register_diagnostic(span=$text, message="Build SQL with parameters ($1, $2 ...), not string interpolation or concatenation (R123).", severity="error")
+    register_diagnostic(span=$text, message="Build SQL with parameters ($1, $2 ...), not string interpolation or concatenation.", severity="error")
   }
 }

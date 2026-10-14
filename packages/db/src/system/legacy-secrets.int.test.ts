@@ -15,7 +15,7 @@ import { backfillWorkspaceKeys } from './workspace-keys.js';
 let env: DbTestEnv;
 let decryptLegacy: LegacyDecrypt;
 
-/** P0 biçimi: SecretBox (0x02) — V6, Sözleşme §6.2 kek_v0. */
+/** Eski biçim: SecretBox (0x02), kek_v0. */
 async function insertLegacyConnection(
   workspaceId: string,
   config: Record<string, unknown> | null,
@@ -40,7 +40,7 @@ afterAll(async () => {
 });
 
 describe('upgradeLegacyConnectionSecrets', () => {
-  it('re-encrypts P0 rows with the workspace DEK, idempotently', async () => {
+  it('re-encrypts legacy rows with the workspace DEK, idempotently', async () => {
     const ws = randomUUID();
     await env.owner.query(
       "insert into workspaces (id, name, slug, kind) values ($1, 'p0', $2, 'community')",

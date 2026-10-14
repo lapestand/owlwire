@@ -25,7 +25,7 @@ function echoesInput(err: unknown): boolean {
 }
 
 /**
- * I-6: when `err` (or any error in its `cause` chain) echoes input, `text` is cut at its first quote (`"` or `'`)
+ * Log privacy: when `err` (or any error in its `cause` chain) echoes input, `text` is cut at its first quote (`"` or `'`)
  * and `[redacted]` is appended; values are echoed in quotes, so only the fixed reason remains. Otherwise `text` is
  * returned unchanged. Fails safe: it may over-redact, never under-redact quoted values.
  */
@@ -39,7 +39,7 @@ export function withholdEchoedInput(err: unknown, text: string): string {
 const QUERY_PARAMS_MARKER = /\n[ \t]*params:/;
 
 /**
- * I-6: the text before the first `params:` line. Everything from the marker to the end is dropped: parameter values
+ * Log privacy: the text before the first `params:` line. Everything from the marker to the end is dropped: parameter values
  * can span lines and those lines can start with `at `, so the cut never looks for stack frames.
  */
 export function cutQueryParams(text: string): string {

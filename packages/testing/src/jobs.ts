@@ -11,7 +11,7 @@ export interface QueuedJob {
 /**
  * Kuyruktaki Graphile Worker işleri (yalnız testler). Genel `graphile_worker.jobs` görünümü payload vermez
  * (Graphile Worker 0.18); payload için `_private_jobs`'a tek erişim burasıdır — Graphile şeması değişirse
- * yalnız bu sorgu güncellenir. Kuyruk ve anahtar değerleri @owlwire/db R62 yardımcılarıyla karşılaştırılır.
+ * yalnız bu sorgu güncellenir. Kuyruk ve anahtar değerleri @owlwire/db kuyruk/anahtar yardımcılarıyla karşılaştırılır.
  */
 export async function listQueuedJobs(pool: pg.Pool): Promise<QueuedJob[]> {
   const { rows } = await pool.query<QueuedJob>(`

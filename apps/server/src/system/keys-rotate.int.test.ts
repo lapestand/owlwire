@@ -113,7 +113,7 @@ describe('owlwire keys rotate', () => {
     expect(await versions()).toEqual({ 1: 1 });
   });
 
-  it('upgrades P0 SecretBox secrets sealed with the old KEK, rotates, and says PREVIOUS can be removed', async () => {
+  it('upgrades legacy SecretBox secrets sealed with the old KEK, rotates, and says PREVIOUS can be removed', async () => {
     const workspaceId = await seedWorkspace(v1);
     const legacyConnectionId = await insertLegacySecret(workspaceId, v1, {
       botToken: 'legacy-token',
@@ -162,9 +162,9 @@ describe('owlwire keys rotate', () => {
     expect(r.out).not.toContain('can be removed');
   });
 
-  it('exits with 1 when a P0 secret appears during the run', async () => {
+  it('exits with 1 when a legacy secret appears during the run', async () => {
     await seedWorkspace(v2);
-    // Simulates a still-running P0 process sealing a secret with the KEK while the rotation runs.
+    // Simulates a still-running older process sealing a secret with the KEK while the rotation runs.
     await owner.query(`
       create function test_late_legacy() returns trigger language plpgsql as $$
       begin

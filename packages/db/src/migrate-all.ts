@@ -10,8 +10,8 @@ export interface MigrateAllOptions {
 
 /**
  * Bütün şema değişikliklerini sahip rolüyle uygular, ardından uygulama rolünü oluşturur ve yetkilerini verir.
- * P0 runMigrations MIGRATION_LOCK_KEY advisory lock'unu alır; afterMigrate aynı kilit altında çalıştığı için
- * Drizzle, Graphile Worker şeması ve ensureAppRole tek kilit altında sıralanır (R89).
+ * runMigrations MIGRATION_LOCK_KEY advisory lock'unu alır; afterMigrate aynı kilit altında çalıştığı için
+ * Drizzle, Graphile Worker şeması ve ensureAppRole tek kilit altında sıralanır.
  */
 export async function migrateAll(opts: MigrateAllOptions): Promise<{ appRole: AppRoleMode }> {
   const ownerPool = new pg.Pool({ connectionString: opts.ownerUrl, max: 3 });

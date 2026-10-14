@@ -24,7 +24,7 @@ describe('@owlwire/db root export', () => {
     expect(Object.keys(root)).not.toContain('createDb');
   });
 
-  it('exports the scope lifecycle errors (R130)', () => {
+  it('exports the scope lifecycle errors', () => {
     expect(root.NestedScopeError.prototype).toBeInstanceOf(Error);
     expect(root.ScopeClosedError.prototype).toBeInstanceOf(Error);
   });

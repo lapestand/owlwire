@@ -45,8 +45,8 @@ async function migrateOrCleanup(
 }
 
 /**
- * İki rollü test veritabanı. `int` projesinde global konteynerde yeni bir veritabanı açar (R51);
- * global-setup yoksa kendi konteynerini başlatır. İmaj: OWLWIRE_TEST_PG_IMAGE ?? POSTGRES_IMAGE (R52).
+ * İki rollü test veritabanı. `int` projesinde global konteynerde yeni bir veritabanı açar;
+ * global-setup yoksa kendi konteynerini başlatır. İmaj: OWLWIRE_TEST_PG_IMAGE ?? POSTGRES_IMAGE.
  */
 export async function startTestDatabase(opts: StartTestDatabaseOptions): Promise<TestDatabase> {
   const adminUrl = injectedAdminUrl();

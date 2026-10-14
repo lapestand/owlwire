@@ -21,7 +21,7 @@ export const REDACT_PATHS = [
 
 /** Bound for the structural walk over log objects, error fields and `cause` chains. */
 const MAX_DEPTH = 8;
-/** DrizzleQueryError `params` and pg error fields that can carry row values, hints or SQL with literals (I-6). */
+/** DrizzleQueryError `params` and pg error fields that can carry row values, hints or SQL with literals. */
 const DROPPED_ERROR_FIELDS = new Set(['params', 'detail', 'hint', 'where', 'internalQuery']);
 /** Keys whose values are treated as errors: their plain-object values lose DROPPED_ERROR_FIELDS too. */
 const ERROR_KEYS = new Set(['err', 'error', 'cause']);
@@ -125,7 +125,7 @@ function sanitize(
 
 /**
  * pino `err`/`error` serializer'ı: `type`, `message`, `stack` (temizlenmiş başlık + özgün çerçeveler), kendi alanları
- * (DROPPED_ERROR_FIELDS hariç) ve `cause` zinciri; Error olmayan değerler de hata bağlamında temizlenir (I-6).
+ * (DROPPED_ERROR_FIELDS hariç) ve `cause` zinciri; Error olmayan değerler de hata bağlamında temizlenir.
  */
 export function serializeErr(err: unknown): unknown {
   return sanitize(err, 0, new Set(), true);
@@ -138,7 +138,7 @@ function interpolationArg(arg: unknown): unknown {
 }
 
 /**
- * pino logMethod kancası (I-6): ilk argüman nesneyse yapısal olarak temizlenir (her anahtardaki Error ve string);
+ * pino logMethod kancası: ilk argüman nesneyse yapısal olarak temizlenir (her anahtardaki Error ve string);
  * mesaj verilmezse pino `msg`'yi ham err.message'tan türeteceği için (pino 10 lib/proto.js) temizlenmiş mesaj verilir;
  * biçim argümanları (`%s`) da temizlenir.
  */

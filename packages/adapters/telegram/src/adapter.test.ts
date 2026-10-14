@@ -120,7 +120,7 @@ describe('telegram adapter send', () => {
     ).toBe('transient');
   });
 
-  it('refuses connections without a bot token and shared bots in P0', async () => {
+  it('refuses connections without a bot token and shared bots', async () => {
     const f = fakeFetch(() => ({ status: 200, json: { ok: true, result: { message_id: 1 } } }));
     const adapter = createTelegramAdapter(deps(f.fn), { botToken: 'shared' });
     expect(await adapter.send({ ...conn, config: {} }, group, rendered, {})).toMatchObject({

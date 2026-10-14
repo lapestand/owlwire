@@ -68,7 +68,7 @@ describe('writeAudit / listAuditLog', () => {
     expect(rows).toEqual([]);
   });
 
-  it('never returns the other tenant rows in either direction (R121)', async () => {
+  it('never returns the other tenant rows in either direction', async () => {
     await withTenant(env.db, tenantScope(WS_B), (t) =>
       writeAudit(t, {
         action: 'member.added',

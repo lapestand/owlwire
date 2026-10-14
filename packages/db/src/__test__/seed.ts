@@ -79,7 +79,7 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       { destinationId: dest.id, connectionId: conn.id },
     ]);
     if (!delivery) throw new Error('seed delivery missing');
-    // No P1a repository writes digests, connection counters or catalog types; raw rows (app role, own scope)
+    // No repository writes digests yet, connection counters or catalog types; raw rows (app role, own scope)
     // give the snapshot and the composite FK tests a real row in every workspace-owned table.
     const digestId = newId();
     await q(

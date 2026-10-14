@@ -6,7 +6,7 @@ import { migrateAll } from './migrate-all.js';
 let tdb: TestDatabase;
 let owner: pg.Pool;
 
-/** RLS'siz ama workspace_id kolonlu instance tabloları (R37). P2.3 workspace_suspensions ve abuse_reports ekler. */
+/** RLS'siz ama workspace_id kolonlu instance tabloları. Moderasyon tabloları (workspace_suspensions, abuse_reports) eklendiğinde buraya girer. */
 const RLS_EXEMPT_TABLES: readonly string[] = [];
 
 interface Queryable {
@@ -67,7 +67,7 @@ const norm = (sql: string | null): string | null =>
   sql === null ? null : sql.replace(/\s+/g, ' ').trim();
 
 /**
- * R37 denetimi: public şemasındaki her workspace_id kolonlu tablo (relkind 'r' ve 'p'; bölümler dahil) RLS'li
+ * RLS kapsam denetimi: public şemasındaki her workspace_id kolonlu tablo (relkind 'r' ve 'p'; bölümler dahil) RLS'li
  * olmalı ve politika kümesi tam olarak {<tablo>_tenant_isolation} olmalı; özel tablolar SPECIAL_TABLES'a
  * birebir uymalı. Fazladan bir politika, kısıtlayıcı (RESTRICTIVE) ya da role özel politika, değişmiş bir
  * qual/with_check hata sayılır. Bulunan sorunları döndürür (boş dizi = temiz).

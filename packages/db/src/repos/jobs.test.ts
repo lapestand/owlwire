@@ -10,8 +10,8 @@ import {
   tenantJobName,
 } from './jobs.js';
 
-describe('job names and keys (contract §9)', () => {
-  it('lists every job of the contract table', () => {
+describe('job names and keys', () => {
+  it('lists every known job', () => {
     expect([...JOB_NAMES].sort()).toEqual(
       [
         'route_event',

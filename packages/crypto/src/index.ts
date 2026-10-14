@@ -12,7 +12,7 @@ export {
   unwrapWorkspaceDek,
   wrapWorkspaceDek,
 } from './dek.js';
-// R90: wrapDek/unwrapDek P0 envelope internals; not part of the public API.
+// wrapDek/unwrapDek are legacy envelope internals; not part of the public API.
 export {
   createSecretBox,
   decryptJson,

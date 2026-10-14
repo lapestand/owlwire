@@ -24,7 +24,7 @@ function closeServer(server: ServerType): Promise<void> {
 
 /**
  * Starts HTTP and/or the worker; it does not migrate. The caller (`runServeCommand`) runs migrateDatabase ->
- * createDeps -> runStartupChecks -> upgradeLegacySecrets first (contract §11.2, R97). A bind error (EADDRINUSE)
+ * createDeps -> runStartupChecks -> upgradeLegacySecrets first. A bind error (EADDRINUSE)
  * rejects the returned promise.
  */
 export async function startServer(
@@ -49,7 +49,7 @@ export async function startServer(
         server.off('error', reject);
         resolve({ server, port: info.port });
       });
-      // P0 carry-over: a bind error (EADDRINUSE etc.) rejects; an unlistened 'error' would crash the process.
+      // A bind error (EADDRINUSE etc.) rejects; an unlistened 'error' would crash the process.
       server.once('error', reject);
     });
     port = started.port;
@@ -85,9 +85,9 @@ export interface ServeCommandHooks {
 }
 
 /**
- * `owlwire serve` (contract §11.2, R97): signal handlers are registered BEFORE migrating. Order: migrateDatabase ->
+ * `owlwire serve`: signal handlers are registered BEFORE migrating. Order: migrateDatabase ->
  * createDeps -> runStartupChecks -> upgradeLegacySecrets (refuses to start when a legacy secret's KEK version is not
- * configured) -> startServer. Shutdown is P0's createShutdown (25 s limit,
+ * configured) -> startServer. Shutdown is createShutdown (25 s limit,
  * exit 1 when the worker crashes) and calls `exit` exactly once.
  *
  * A signal during the migration shuts down at once (nothing is open yet; the migration transaction rolls back with

@@ -25,7 +25,7 @@ const liveConnectionIds = (t: TenantTx) =>
     .where(and(eq(connections.workspaceId, t.workspaceId), isNull(connections.deletedAt)));
 
 /**
- * R101: yumuşak silinmiş hedefler ve bağlantısı silinmiş hedefler tenant fonksiyonlarında yoktur. Bağlantı koşulu,
+ * Yumuşak silinmiş hedefler ve bağlantısı silinmiş hedefler tenant fonksiyonlarında yoktur. Bağlantı koşulu,
  * `deleted_at`'i ayrı tutulan iki kolonun (connections, destinations) ayrışabileceği durumları da kapatır.
  */
 export const visible = (t: TenantTx, ...extra: SQL[]) =>

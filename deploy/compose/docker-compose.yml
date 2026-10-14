@@ -27,7 +27,7 @@ services:
     stop_grace_period: 40s
     env_file: .env
     environment:
-      # Two roles (R12): migrations run as the owner, the server connects as owlwire_app (subject to RLS).
+      # Two roles: migrations run as the owner, the server connects as owlwire_app (subject to RLS).
       OWLWIRE_MIGRATION_DATABASE_URL: postgres://owlwire:${OWLWIRE_DB_OWNER_PASSWORD:?set OWLWIRE_DB_OWNER_PASSWORD in .env}@postgres:5432/owlwire
       OWLWIRE_DATABASE_URL: postgres://owlwire_app:${OWLWIRE_DB_APP_PASSWORD:?set OWLWIRE_DB_APP_PASSWORD in .env}@postgres:5432/owlwire
     ports:

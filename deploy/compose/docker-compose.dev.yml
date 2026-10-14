@@ -1,6 +1,6 @@
 name: owlwire-dev
 
-# Gelistirme ortami (Sozlesme R127). Dogrudan degil, kokteki ./dev ile calistirilir:
+# Gelistirme ortami. Dogrudan degil, kokteki ./dev ile calistirilir:
 #   ./dev pnpm test   ./dev pnpm test:int   ./dev (bash)
 # Imaj Dockerfile degisince: docker compose -f deploy/compose/docker-compose.dev.yml build dev
 services:
@@ -31,7 +31,7 @@ services:
       TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: ${OWLWIRE_DEV_DOCKER_SOCK:-/var/run/docker.sock}
       TESTCONTAINERS_RYUK_DISABLED: "false"
       # Local development only: lets `pnpm dev` serve against a single-role database (owner/superuser) with
-      # warnings instead of refusing to start; ignored when NODE_ENV=production (Task 14 ruling).
+      # warnings instead of refusing to start; ignored when NODE_ENV=production.
       OWLWIRE_ALLOW_INSECURE_DB_ROLE: "true"
     extra_hosts:
       - "host.docker.internal:host-gateway"

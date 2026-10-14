@@ -11,7 +11,7 @@ type InstallationSelect = typeof installations.$inferSelect;
 /** Token hash'i satır tipinde yoktur; token ile kimlik doğrulama yalnız `@owlwire/db/system` üzerindendir. */
 export type InstallationRow = Omit<InstallationSelect, 'tokenHash'>;
 
-/** Sözleşme §6.4 `installation.revoked` `data.reason` değerleri (P1x link akışı son üçünü kullanır). */
+/** `installation.revoked` denetim kaydının `data.reason` değerleri (son üçünü bağlantı akışı kullanacak). */
 export type InstallationRevokeReason =
   | 'workspace'
   | 'app'

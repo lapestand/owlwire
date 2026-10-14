@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// R123: the owlwire.system GUC is turned on only by withSystem (packages/db/src/scope.ts).
+// The owlwire.system GUC is turned on only by withSystem (packages/db/src/scope.ts).
 // Reads (current_setting) and the clearing form (set_config('owlwire.system', '', ...)) are allowed
 // everywhere; any other write is an offence outside scope.ts and packages/db integration tests.
 import { readdirSync, readFileSync } from 'node:fs';
@@ -66,7 +66,7 @@ if (import.meta.url === invokedPath) {
   const offenders = findSystemGucWrites(fileURLToPath(new URL('..', import.meta.url)));
   if (offenders.length > 0) {
     console.error(
-      'owlwire.system may only be turned on inside withSystem (packages/db/src/scope.ts), R123:',
+      'owlwire.system may only be turned on inside withSystem (packages/db/src/scope.ts):',
     );
     for (const o of offenders) console.error(`  ${o.file}:${o.line}`);
     process.exit(1);

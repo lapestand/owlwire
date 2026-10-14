@@ -9,7 +9,7 @@ export interface JobRow {
   key: string | null;
 }
 
-/** P0 adı; Graphile'ın özel tablolarına erişim @owlwire/testing listQueuedJobs'tadır. */
+/** Geriye dönük uyumlu ad; Graphile'ın özel tablolarına erişim @owlwire/testing listQueuedJobs'tadır. */
 export async function listJobs(pool: pg.Pool): Promise<JobRow[]> {
   return (await listQueuedJobs(pool)).map((j) => ({
     task: j.task,

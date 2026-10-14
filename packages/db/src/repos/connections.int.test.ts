@@ -118,7 +118,7 @@ describe('connection config encryption', () => {
     expect(await inA((t) => readConnectionConfig(t, conn.id, { purpose: 'send' }))).toBeNull();
   });
 
-  it('raises LegacySecretError for rows still on the P0 scheme', async () => {
+  it('raises LegacySecretError for rows still on the legacy scheme', async () => {
     const conn = await inA((t) => createConnection(t, newBot('legacy', SECRET), SYSTEM_ACTOR));
     await env.owner.query("update connections set config_enc_scheme = 'kek_v0' where id = $1", [
       conn.id,
@@ -152,7 +152,7 @@ describe('connection isolation', () => {
     expect((await inA((t) => getConnection(t, conn.id)))?.status).toBe('pending');
   });
 
-  it('soft-deletes an own connection with its destinations and audits it (R101)', async () => {
+  it('soft-deletes an own connection with its destinations and audits it', async () => {
     const conn = await inA((t) => createConnection(t, newBot('del', SECRET), SYSTEM_ACTOR));
     const dest = await inA((t) =>
       createDestination(t, {
@@ -181,7 +181,7 @@ describe('connection isolation', () => {
     expect(audit[0]).toMatchObject({ action: 'connection.deleted', targetId: conn.id });
   });
 
-  it('fails parked pending/scheduled deliveries of the connection on delete, keeps delivered ones (R125)', async () => {
+  it('fails parked pending/scheduled deliveries of the connection on delete, keeps delivered ones', async () => {
     const conn = await inA((t) => createConnection(t, newBot('park', SECRET), SYSTEM_ACTOR));
     const mkDest = (ext: string) =>
       inA((t) =>
@@ -401,7 +401,7 @@ describe('connection rows', () => {
   });
 });
 
-describe('soft-deleted connections and destinations stay hidden (R101)', () => {
+describe('soft-deleted connections and destinations stay hidden', () => {
   it('rejects every read and change of a deleted connection', async () => {
     const conn = await inA((t) => createConnection(t, newBot('gone', SECRET), SYSTEM_ACTOR));
     const dest = await inA((t) =>
@@ -587,7 +587,7 @@ describe('destination edge cases', () => {
   });
 });
 
-describe('destination isolation (R121)', () => {
+describe('destination isolation', () => {
   it('another workspace cannot read, list or change the destination', async () => {
     const conn = await inA((t) => createConnection(t, newBot('diso', SECRET), SYSTEM_ACTOR));
     const dest = await inA((t) =>
@@ -639,7 +639,7 @@ describe('destination isolation (R121)', () => {
   });
 });
 
-describe('fix round 1', () => {
+describe('cross-tenant key and graph checks', () => {
   it('refuses a ciphertext sealed with another workspace key even when the AAD matches', async () => {
     const cb = await inB((t) =>
       createConnection(t, newBot('aad-match', 'bravo-secret'), SYSTEM_ACTOR),

@@ -148,7 +148,7 @@ describe('createWorkspace', () => {
   });
 });
 
-describe('cross-tenant isolation (R121)', () => {
+describe('cross-tenant isolation', () => {
   it('tenant A cannot read workspace B or its key, and B cannot be read from A', async () => {
     const a = await createTestWorkspace(env.db, 'xa');
     const b = await createTestWorkspace(env.db, 'xb');

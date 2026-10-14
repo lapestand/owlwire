@@ -98,7 +98,7 @@ export type InboundEvent =
   | { type: 'connection_state'; connectionId: string; health: Health }
   | { type: 'ban_signal'; connectionId: string; error: string };
 
-/** P0 subset of contract §8; P1d widens the result to Promise<InboundResult | void> (R3). */
+/** Minimal sink; a later release widens the result to Promise<InboundResult | void>. */
 export interface InboundSink {
   emit(ev: InboundEvent): Promise<void>;
 }
@@ -128,7 +128,7 @@ export interface ChannelAdapter {
   /** Long-running listeners (TG polling, DC gateway). Only called in the worker role. */
   start?(sink: InboundSink, conns: () => Promise<ConnectionRef[]>): Promise<void>;
   stop?(): Promise<void>;
-  /** Platform events received over HTTP (TG webhook mode, Evolution webhook). P1e also allows a Promise. */
+  /** Platform events received over HTTP (TG webhook mode, Evolution webhook). A later release also allows a Promise. */
   parseWebhook?(
     conn: ConnectionRef,
     headers: Record<string, string>,

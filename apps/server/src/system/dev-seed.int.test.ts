@@ -19,7 +19,7 @@ describe('seedDevWorkspace', () => {
       botToken: '123:ABC',
       chatId: '-1001234',
     });
-    // R43: assertions through the owner pool (outside RLS).
+    // Assertions through the owner pool (outside RLS).
     const inst = (
       await h.ownerPool.query<{ token_hash: string; token_prefix: string }>(
         'select token_hash, token_prefix from installations where id = $1',

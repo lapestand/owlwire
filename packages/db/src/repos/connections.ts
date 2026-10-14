@@ -34,7 +34,7 @@ export interface CreateConnectionInput {
 
 export type ReadConfigOptions = { purpose: 'send' } | { purpose: 'reveal'; actor: AuditActor };
 
-/** R101: yumuşak silinmiş bağlantılar tenant fonksiyonlarında yoktur. */
+/** Yumuşak silinmiş bağlantılar tenant fonksiyonlarında yoktur. */
 const byId = (t: TenantTx, id: string) =>
   and(
     eq(connections.workspaceId, t.workspaceId),
@@ -95,7 +95,7 @@ export async function listConnections(t: TenantTx): Promise<ConnectionRow[]> {
 
 /**
  * `send`: gönderim yolu, denetim yazılmaz. `reveal`: yapılandırma bir kişiye gösterilir, `connection.secret_viewed`
- * denetimi aynı transaction'da yazılır. Yapılandırması olmayan bağlantı null; P0 şeması (`kek_v0`) LegacySecretError.
+ * denetimi aynı transaction'da yazılır. Yapılandırması olmayan bağlantı null; eski şema (`kek_v0`) LegacySecretError.
  */
 export async function readConnectionConfig(
   t: TenantTx,
@@ -168,9 +168,9 @@ export async function updateConnectionStatus(
 }
 
 /**
- * Sözleşme v2.1 R101 — yumuşak silme: bağlantı ve hedefleri `deleted_at` alır, o hedeflere ait kural hedefleri ve
+ * Yumuşak silme: bağlantı ve hedefleri `deleted_at` alır, o hedeflere ait kural hedefleri ve
  * alıcı listesi üyelikleri silinir; teslimat geçmişi (deliveries, delivery_attempts) korunur. Hedefi olan bağlantı
- * da silinir. v2.2 R125: bağlantının `pending|scheduled` teslimatları aynı transaction'da başarısız işaretlenir.
+ * da silinir. Bağlantının `pending|scheduled` teslimatları aynı transaction'da başarısız işaretlenir.
  */
 export async function deleteConnection(t: TenantTx, id: string, actor: AuditActor): Promise<void> {
   assertIdShape('connection', id);
@@ -212,7 +212,7 @@ export async function deleteConnection(t: TenantTx, id: string, actor: AuditActo
         isNull(destinations.deletedAt),
       ),
     );
-  // v2.2 R125: kuyruğu olmayan (park edilmiş) teslimatlar asılı kalmasın — silme anında başarısız işaretlenir.
+  // Kuyruğu olmayan (park edilmiş) teslimatlar asılı kalmasın — silme anında başarısız işaretlenir.
   await q(t)
     .update(deliveries)
     .set({ status: 'failed', lastError: 'connection_deleted', nextAttemptAt: null, updatedAt: ts })

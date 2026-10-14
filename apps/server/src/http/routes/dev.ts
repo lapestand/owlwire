@@ -7,7 +7,7 @@ import { extractToken } from '../middleware/installation-auth.js';
 import { ProblemError } from '../problem.js';
 import type { AppEnv } from '../types.js';
 
-/** P0 only: read-only delivery list for the dev panel, guarded by OWLWIRE_DEV_ADMIN_TOKEN. */
+/** Development only: read-only delivery list for the dev panel, guarded by OWLWIRE_DEV_ADMIN_TOKEN. */
 export function devRoutes(deps: {
   db: OwlwireDb;
   config: Pick<ServerConfig, 'devAdminToken'>;

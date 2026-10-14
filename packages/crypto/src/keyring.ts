@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { KEY_BYTES, type Kek, type KekRing } from './keys.js';
 
-/** P0 KekRing'in sürümle arama eklenmiş hâli (R90). Deps.keyring tipi. */
+/** KekRing'in sürümle arama eklenmiş hâli. Deps.keyring tipi. */
 export interface Keyring extends KekRing {
   byVersion(version: number): Kek | undefined;
 }
@@ -13,7 +13,7 @@ export class KeyringConfigError extends Error {
   }
 }
 
-/** KEK versions fit the u16 header used by the P0 legacy format. */
+/** KEK versions fit the u16 header used by the legacy format. */
 const MAX_KEK_VERSION = 0xffff;
 
 function isValidKekVersion(version: number): boolean {

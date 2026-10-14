@@ -16,11 +16,11 @@
           "level": "error",
           "options": {
             "paths": {
-              "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db repository functions (contract §2, §6.1).",
-              "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db repository functions (contract §2, §6.1).",
-              "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db repository functions (contract §2, §6.1).",
-              "@owlwire/db/system": "SystemScope is only allowed in apps/server/src/system/** (contract §2).",
-              "@owlwire/db/migrate": "Migrations run only from apps/server/src/system/**, apps/server/src/test/** and integration tests (R91)."
+              "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db repository functions.",
+              "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db repository functions.",
+              "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db repository functions.",
+              "@owlwire/db/system": "SystemScope is only allowed in apps/server/src/system/**.",
+              "@owlwire/db/migrate": "Migrations run only from apps/server/src/system/**, apps/server/src/test/** and integration tests."
             }
           }
         }
@@ -38,10 +38,10 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "drizzle-orm": "Tests seed with repository functions or raw SQL on the owner pool (R43).",
-                  "drizzle-orm/pg-core": "Tests seed with repository functions or raw SQL on the owner pool (R43).",
-                  "drizzle-orm/node-postgres": "Tests seed with repository functions or raw SQL on the owner pool (R43).",
-                  "@owlwire/db/system": "Verify cross-tenant state with raw SQL on the owner pool (R43)."
+                  "drizzle-orm": "Tests seed with repository functions or raw SQL on the owner pool (outside RLS).",
+                  "drizzle-orm/pg-core": "Tests seed with repository functions or raw SQL on the owner pool (outside RLS).",
+                  "drizzle-orm/node-postgres": "Tests seed with repository functions or raw SQL on the owner pool (outside RLS).",
+                  "@owlwire/db/system": "Verify cross-tenant state with raw SQL on the owner pool (outside RLS)."
                 }
               }
             }
@@ -58,9 +58,9 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db/system functions (contract §2).",
-                  "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db/system functions (contract §2).",
-                  "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db/system functions (contract §2)."
+                  "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db/system functions.",
+                  "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db/system functions.",
+                  "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db/system functions."
                 }
               }
             }

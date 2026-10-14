@@ -679,7 +679,7 @@ describe('deliveries', () => {
     for (let i = 0; i < 4; i++) evIds.push((await newEvent(c)).eventId);
     const ids = evIds.map(() => newId());
     // Owner role, one statement (one now()): four sub-millisecond timestamps inside the same millisecond,
-    // as a raw writer or the P0 column default would store them.
+    // as a raw writer or the original column default would store them.
     await env.owner.query(
       `insert into deliveries (id, workspace_id, event_id, destination_id, connection_id, created_at, updated_at)
        select x.id, $1, x.event_id, $2, $3, date_trunc('milliseconds', now()) + x.n * interval '100 microseconds', now()

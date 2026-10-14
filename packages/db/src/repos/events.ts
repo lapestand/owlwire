@@ -23,7 +23,7 @@ export interface InsertEventInput {
  * bekler; ilki commit ederse `do nothing` olur ve sonraki SELECT (READ COMMITTED, yeni anlık görüntü) o satırı
  * görür, geri alırsa ikinci ekleme kazanır. `route_event` işi aynı transaction'da, kurulumun kuyruğunda eklenir.
  * Kurulum bu workspace'te görünür ve `active` olmalıdır (aksi RepoNotFoundError('installation')); boş anahtar
- * RepoInputError (P0 kuralı: boş anahtar API'de "yok" sayılır, bu katmana anahtar zorunlu ulaşır).
+ * RepoInputError (boş anahtar API'de "yok" sayılır, bu katmana anahtar zorunlu ulaşır).
  */
 export async function insertEvent(
   t: TenantTx,

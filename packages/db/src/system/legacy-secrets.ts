@@ -9,7 +9,7 @@ import { now, q } from '../repos/context.js';
 import { connections } from '../schema/index.js';
 import { type SystemScope, type TenantTx, tenantScope, withSystem, withTenant } from '../scope.js';
 
-/** P0 `config_enc` (kek_v0) çözücüsü; P0 şifreleme biçimi `@owlwire/db`'ye sızmasın diye dışarıdan verilir. */
+/** Eski `config_enc` (kek_v0) çözücüsü; eski şifreleme biçimi `@owlwire/db`'ye sızmasın diye dışarıdan verilir. */
 export type LegacyDecrypt = (ciphertext: Uint8Array) => Record<string, unknown>;
 
 export interface LegacyUpgradeResult {
@@ -142,7 +142,7 @@ export async function upgradeLegacyConnectionSecrets(
   return result;
 }
 
-/** Hâlâ P0 biçiminde (`kek_v0`, KEK ile doğrudan mühürlü) duran bağlantı sırrı sayısı; soft-delete edilmişler dahil. */
+/** Hâlâ eski biçimde (`kek_v0`, KEK ile doğrudan mühürlü) duran bağlantı sırrı sayısı; soft-delete edilmişler dahil. */
 export async function countLegacyConnectionSecrets(
   scope: SystemScope,
   db: OwlwireDb,

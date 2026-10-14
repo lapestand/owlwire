@@ -14,7 +14,7 @@ export const SEND_DELIVERY_TASK: JobName = 'send_delivery';
 export { connectionQueue, routeQueue, sendJobKey, TENANT_JOB_PAYLOAD_KEY, tenantJobName };
 
 /**
- * Thin wrappers over `@owlwire/db` enqueueJob (R45, R62): the only `graphile_worker.add_job` call lives there.
+ * Thin wrappers over `@owlwire/db` enqueueJob: the only `graphile_worker.add_job` call lives there.
  * With a TenantTx the queue name and job key are namespaced `w:<workspaceId>:` and the payload gets `_ws`.
  * insertEvent and createDeliveries already enqueue their jobs; these serve re-scheduling and later callers.
  */

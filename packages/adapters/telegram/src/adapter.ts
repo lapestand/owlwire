@@ -43,7 +43,7 @@ export const createTelegramAdapter: AdapterFactory = (deps, instanceConfig) => {
 
   async function check(conn: ConnectionRef): Promise<Health> {
     const token = ownBotToken(conn);
-    // Health.reason is a machine key (contract §10.7); raw errors go to the log only.
+    // Health.reason is a machine key; raw errors go to the log only.
     if (!token) return { status: 'broken', reason: 'telegram.status.missingBotToken' };
     try {
       await apiFor(token).getMe();
@@ -71,7 +71,7 @@ export const createTelegramAdapter: AdapterFactory = (deps, instanceConfig) => {
       if (conn.kind === 'shared_bot') {
         return {
           status: 'permanent',
-          error: 'shared telegram bot is not supported before P1e',
+          error: 'shared telegram bot is not supported yet',
           destinationBroken: false,
         };
       }

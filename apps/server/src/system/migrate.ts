@@ -3,7 +3,7 @@ import type { Logger } from 'pino';
 import type { ServerConfig } from '../config/load.js';
 
 /**
- * Drizzle + Graphile Worker migration'ları ve uygulama rolü; hepsi sahip rolüyle ve advisory lock altında (R89).
+ * Drizzle + Graphile Worker migration'ları ve uygulama rolü; hepsi sahip rolüyle ve advisory lock altında.
  * Sahip rolü OWLWIRE_MIGRATION_DATABASE_URL'dir; yoksa OWLWIRE_DATABASE_URL kullanılır ('same' modu).
  */
 export async function migrateDatabase(

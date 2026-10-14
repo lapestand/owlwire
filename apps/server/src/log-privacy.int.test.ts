@@ -10,7 +10,7 @@ import { waitFor } from './test/wait.js';
 import { startWorker } from './worker/runner.js';
 
 /**
- * I-6 against real failing queries: values that reach Postgres as query parameters (and come back in DrizzleQueryError
+ * Log privacy against real failing queries: values that reach Postgres as query parameters (and come back in DrizzleQueryError
  * messages, pg `detail` rows and data-exception messages) never appear in pino output, problem+json bodies or
  * Graphile's `last_error`.
  */
@@ -81,7 +81,7 @@ async function withSecretCheck(table: keyof typeof SECRET_CHECKS, fn: () => Prom
   }
 }
 
-describe('log privacy with real failing queries (I-6)', () => {
+describe('log privacy with real failing queries', () => {
   it('keeps query params, pg detail and echoed values out of pino output', async () => {
     const s = await seed();
     const { lines, logger } = capture();

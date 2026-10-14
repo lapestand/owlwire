@@ -55,7 +55,7 @@ const app = (name: string, visibility: 'private' | 'public'): CreateAppInput => 
   slug: `${name}-${randomUUID()}`,
   visibility,
 });
-/** Owner role: moderation is not a tenant operation (P1c/P1x own the approval flow). */
+/** Owner role: moderation is not a tenant operation (the approval flow is an instance admin operation). */
 const setApproval = (appId: string, status: 'approved' | 'pending' | 'rejected') =>
   env.owner.query('update apps set approval_status = $2 where id = $1', [appId, status]);
 

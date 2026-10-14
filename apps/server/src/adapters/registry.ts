@@ -22,9 +22,9 @@ export function createAdapterRegistry(adapters: ChannelAdapter[]): AdapterRegist
 }
 
 /**
- * P0 only: fake adapter for platform "webhook" that logs every message it "sends".
- * Removed in P1b together with OWLWIRE_DEV_FAKE_ADAPTER; P1j registers the real webhook-out
- * adapter under platform = 'webhook' (R48).
+ * Development only: fake adapter for platform "webhook" that logs every message it "sends".
+ * Will be removed together with OWLWIRE_DEV_FAKE_ADAPTER once user accounts land; the real outgoing webhook
+ * adapter will then be registered under platform = 'webhook'.
  */
 function createLoggingFakeAdapter(deps: AdapterDeps): ChannelAdapter {
   const fake = createFakeAdapter('webhook');

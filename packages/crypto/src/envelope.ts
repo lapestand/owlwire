@@ -51,15 +51,15 @@ export function decryptJson<T>(dek: Buffer, blob: Buffer): T {
   }
 }
 
-/** @deprecated P1a: yalnız P0 legacy `config_enc` (kek_v0, 0x02) okuması için (Görev 13); yeni sırlar sealJson + workspace DEK ile yazılır. */
+/** @deprecated Yalnız eski `config_enc` (kek_v0, 0x02) okuması için; yeni sırlar sealJson + workspace DEK ile yazılır. */
 export interface SecretBox {
   seal(value: unknown): Buffer;
   open<T>(blob: Buffer): T;
 }
 
 /**
- * Self-contained envelope (one DEK per secret); used for connections.config_enc in P0.
- * @deprecated P1a: yalnız P0 legacy `config_enc` (kek_v0, 0x02) okuması için (Görev 13); yeni sırlar sealJson + workspace DEK ile yazılır.
+ * Self-contained envelope (one DEK per secret); used for connections.config_enc before workspace DEKs.
+ * @deprecated Yalnız eski `config_enc` (kek_v0, 0x02) okuması için; yeni sırlar sealJson + workspace DEK ile yazılır.
  */
 export function createSecretBox(ring: KekRing): SecretBox {
   return {

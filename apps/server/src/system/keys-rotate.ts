@@ -30,7 +30,7 @@ const describeCounts = (counts: Map<number, number>): string =>
 const REMOVABLE =
   'All workspace keys use the current KEK. OWLWIRE_KEK_PREVIOUS can be removed after a restart.';
 
-/** Keys on other versions and P0 secrets still sealed directly with a KEK; both need OWLWIRE_KEK_PREVIOUS. */
+/** Keys on other versions and legacy secrets still sealed directly with a KEK; both need OWLWIRE_KEK_PREVIOUS. */
 async function staleState(
   db: OwlwireDb,
   current: number,
@@ -41,12 +41,12 @@ async function staleState(
 }
 
 /**
- * `owlwire keys rotate` (contract §11.2): exit 0 done, 1 failures or stale data remain, 2 missing or wrong
+ * `owlwire keys rotate`: exit 0 done, 1 failures or stale data remain, 2 missing or wrong
  * configuration. Order:
  * 1. keyring coverage check (every stored KEK version configured and opening its keys) -> 2;
  * 2. downgrade guard: a stored key or OWLWIRE_KEK_PREVIOUS newer than OWLWIRE_KEK_VERSION means the two keys look
  *    swapped -> 2, before anything is written;
- * 3. upgradeLegacySecrets (P0 secrets sealed with the old KEK move to workspace DEKs before PREVIOUS goes away);
+ * 3. upgradeLegacySecrets (legacy secrets sealed with the old KEK move to workspace DEKs before PREVIOUS goes away);
  *    a secret sealed with an unconfigured KEK version -> 2, any other failure -> 1;
  * 4. rotateWorkspaceKeys;
  * 5. final recount of key versions and `kek_v0` secrets: "OWLWIRE_KEK_PREVIOUS can be removed" is printed only
@@ -122,7 +122,7 @@ export async function runKeysRotate(deps: KeysRotateDeps): Promise<number> {
     }
   }
 
-  // Final check: keys or P0 secrets written by another process during the run still need PREVIOUS.
+  // Final check: keys or legacy secrets written by another process during the run still need PREVIOUS.
   const left = await staleState(db, current);
   if ((rotated?.failed.length ?? 0) > 0 || left.keys.size > 0 || left.legacy > 0) {
     if (left.keys.size > 0 || rotated) {

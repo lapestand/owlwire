@@ -39,7 +39,7 @@ function postEvent(body: unknown, headers: Record<string, string> = {}) {
   });
 }
 
-/** R43: raw reads through the owner pool (outside RLS). */
+/** Raw reads through the owner pool (outside RLS). */
 async function eventRow(id: string) {
   const { rows } = await h.ownerPool.query<{
     type: string;
@@ -86,7 +86,7 @@ describe('POST /v1/events', () => {
     });
     const jobs = await routeJobsFor(body.eventId);
     expect(jobs).toHaveLength(1);
-    // Task 12: tenant jobs are namespaced and stamped with the workspace.
+    // Tenant jobs are namespaced and stamped with the workspace.
     expect(jobs[0]?.queue_name).toBe(
       tenantJobName(seed.workspaceId, routeQueue(seed.installationId)),
     );

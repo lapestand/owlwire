@@ -14,8 +14,8 @@ export type InstallationAuthResult =
 /**
  * Token → kurulum (kiracılar arası sistem okuması). Sistem kapsamı burada kapanır; çağıran kiracı kapsamını ancak
  * bundan sonra açar (kapsamlar iç içe açılamaz). Yalnız `status = 'active'` kurulum kabul edilir.
- * TODO(P1c): workspace soft-delete (`workspaces.deleted_at`) ve app onayı (`apps.approval_status`) token kullanımında
- * da denetlenmeli (Görev 10 ertelemesi).
+ * TODO: workspace soft-delete (`workspaces.deleted_at`) ve app onayı (`apps.approval_status`) token kullanımında
+ * da denetlenmeli; silinmiş bir workspace'in ya da onaylanmamış bir app'in token'ı şu an hâlâ kabul edilir.
  */
 export async function authenticateInstallationToken(
   db: OwlwireDb,

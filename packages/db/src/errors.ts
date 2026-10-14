@@ -59,14 +59,14 @@ export class WorkspaceKeyMissingError extends Error {
 export class LegacySecretError extends Error {
   constructor(readonly connectionId: string) {
     super(
-      `connection ${connectionId} still uses the P0 KEK-only encryption; run legacy secret upgrade`,
+      `connection ${connectionId} still uses the legacy KEK-only encryption; run legacy secret upgrade`,
     );
     this.name = 'LegacySecretError';
   }
 }
 
 /**
- * P0 legacy config çözülemedi. Mesaj yalnız sabit bir gerekçe taşır (izin listesi, `legacyDecryptFailureReason`);
+ * Eski (KEK ile doğrudan mühürlü) config çözülemedi. Mesaj yalnız sabit bir gerekçe taşır (izin listesi, `legacyDecryptFailureReason`);
  * enjekte edilen çözücünün hata metni (düz metin ya da şifreli metin yankılayabilir) ve `cause` taşınmaz.
  */
 export class LegacyDecryptFailedError extends Error {
@@ -104,7 +104,7 @@ export function pgErrorOf(err: unknown): { code: string; constraint?: string } |
 /**
  * Sistem işlemlerinin sonuç listelerine (`failed[].error`) yazılan güvenli hata metni. Drizzle `DrizzleQueryError`
  * mesajı `Failed query: <sql>\nparams: <değerler>` biçimindedir; değerler sarılı DEK, şifreli config vb. olabilir,
- * bu yüzden `\nparams:` ve sonrası atılır (P0 I-6). Girdi yankılayan mesajlar `withholdEchoedInput`'tan geçer.
+ * bu yüzden `\nparams:` ve sonrası atılır. Girdi yankılayan mesajlar `withholdEchoedInput`'tan geçer.
  */
 export function safeErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'unknown error';
@@ -114,7 +114,7 @@ export function safeErrorMessage(err: unknown): string {
 /**
  * Not: PostgreSQL hata veren bir ifadeden sonra transaction'ı iptal eder; eşlenen hata da withTenant'ı geri alır.
  * Eşlenen hata özgün hatayı `cause` olarak taşır; özgün DrizzleQueryError mesajı sorgu parametrelerini içerir,
- * bu yüzden loglarken `safeErrorMessage` / log redaksiyonu (Görev 16A) kullanılır.
+ * bu yüzden loglarken `safeErrorMessage` / log redaksiyonu kullanılır.
  * 42501 (RLS WITH CHECK / yetki ihlali) eşlenmez, olduğu gibi fırlatılır: repository workspace_id'yi TenantTx'ten
  * aldığı için bu bir hatadır ve sıradan bir "bulunamadı" gibi görünmemelidir.
  */

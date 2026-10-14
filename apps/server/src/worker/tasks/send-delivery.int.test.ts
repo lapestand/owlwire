@@ -65,7 +65,7 @@ async function routed(body = 'Gate opened') {
   return { seed, deliveryId: await firstDelivery(eventId) };
 }
 
-/** R43: assertions and raw fixtures through the owner pool (outside RLS). */
+/** Assertions and raw fixtures through the owner pool (outside RLS). */
 async function row(id: string) {
   const { rows } = await h.ownerPool.query<{
     status: string;
@@ -240,7 +240,7 @@ describe('sendDelivery', () => {
       botToken: '2:def',
       chatId: '-200',
     });
-    // R43: another workspace's ciphertext (other DEK, other AAD) is copied onto this connection.
+    // Through the owner pool: another workspace's ciphertext (other DEK, other AAD) is copied onto this connection.
     await h.ownerPool.query(
       'update connections set config_enc = (select config_enc from connections where id = $2) where id = $1',
       [seed.connectionId, other.connectionId],

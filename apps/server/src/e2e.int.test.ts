@@ -10,7 +10,7 @@ let h: Harness;
 let server: RunningServer;
 let base: string;
 
-/** R43: assertion through the owner pool (outside RLS). */
+/** Assertion through the owner pool (outside RLS). */
 async function deliveryOf(eventId: string) {
   const { rows } = await h.ownerPool.query<{ status: string; attempts: number }>(
     'select status, attempts from deliveries where event_id = $1',

@@ -42,7 +42,7 @@ export async function findInstallationByTokenHash(
 }
 
 /**
- * Worker işlerinin payload'ı yalnız kimlik taşır (Sözleşme §9); işlemeden önce workspace bulunur.
+ * Worker işlerinin payload'ı yalnız kimlik taşır; işlemeden önce workspace bulunur.
  * Geçersiz ya da bilinmeyen kimlik null döner (SQL'e gönderilmeden önce UUID biçimi denetlenir).
  */
 export async function resolveWorkspaceOf(

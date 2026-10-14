@@ -21,7 +21,7 @@ describe('createKeyring', () => {
     expect(k.byVersion(1)?.key.length).toBe(32);
   });
 
-  it('accepts KEKs parsed by the P0 config loader (KekRing fields)', () => {
+  it('accepts KEKs parsed by the config loader (KekRing fields)', () => {
     const current = parseKek(randomBytes(32).toString('base64'), 2);
     const previous = parsePreviousKek(`1:${randomBytes(32).toString('base64')}`);
     const k = createKeyring(current, previous);
