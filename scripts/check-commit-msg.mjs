@@ -37,7 +37,7 @@ const ATTRIBUTION = [
 // References to planning documents that are not part of this repository.
 const INTERNAL_REFS = [
   /\b(sözleşme|sozlesme|görev|gorev)\b/i,
-  /\bR\d{1,3}\b/,
+  /\bR\d+\b/,
   /\b[pP](0|1[a-z]?|2(\.\d+)?)\b/,
   /\btask \d+\b/i,
   /\b(fix|review) round \d+\b/i,

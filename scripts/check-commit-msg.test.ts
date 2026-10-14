@@ -41,6 +41,7 @@ describe('checkCommitMessage', () => {
     ['fix: handle errors \u{1F916}', 'attribution'],
     ['docs: add p1a names to contracts', 'internal plans'],
     ['fix(db): apply ruling R123', 'internal plans'],
+    ['fix(db): apply ruling R1234', 'internal plans'],
     ["Merge branch 'feature/x'\n\nCo-authored-by: Someone <s@example.org>", 'attribution'],
     ['Revert "feat: add x"\n\nThis reverts the R12 change.', 'internal plans'],
     ['fixup! fix: handle errors\n\nhataları düzelt', 'English'],
