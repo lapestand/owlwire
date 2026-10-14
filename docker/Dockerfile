@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build
+# The build stage runs on the build host's platform even for a multi-arch build: its output is plain JavaScript
+# (the server's production dependencies have no native code), so arm64 images do not compile under emulation.
+FROM --platform=$BUILDPLATFORM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build
 # Fail a RUN when any command in a pipe fails, not only the last one (the checksum check below pipes into sha512sum).
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV PNPM_HOME=/pnpm
