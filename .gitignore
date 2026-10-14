@@ -6,3 +6,5 @@ coverage/
 apps/server/drizzle/
 apps/server/public/
 deploy/compose/.env
+reports/
+.stryker-tmp/

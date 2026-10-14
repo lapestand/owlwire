@@ -6,6 +6,8 @@
   // drizzle-kit, biome). Test files are entries through the vitest plugin and the root vitest.config.ts projects.
   "workspaces": {
     ".": {
+      // stryker.config.mjs names it as the test config (vitest.configFile), which knip does not follow.
+      "entry": ["vitest.mutation.config.ts"],
       "ignoreDependencies": [
         // dependency-cruiser loads it as its parser (`parser: 'swc'` in .dependency-cruiser.cjs).
         "@swc/core"

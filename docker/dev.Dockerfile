@@ -5,9 +5,10 @@ FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d250
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Debian replaces package versions in place on security updates, so exact apt pins would break this build within
 # weeks. The base image is pinned by digest and Dependabot bumps it; apt installs the current Debian release of these.
+# procps provides `ps`, which Stryker (pnpm test:mutation) uses to stop its test runner processes.
 # hadolint ignore=DL3008
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git openssl \
+  && apt-get install -y --no-install-recommends ca-certificates curl git openssl procps \
   && rm -rf /var/lib/apt/lists/*
 # corepack is installed from the exact npm registry tarball, checked against pinned digests (BuildKit verifies the
 # sha256 on download, sha512sum the npm `dist.integrity`), instead of `npm install -g`, which cannot pin by hash.
