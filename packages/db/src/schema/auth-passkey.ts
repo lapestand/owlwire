@@ -11,7 +11,8 @@ export const authPasskey = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => authUser.id, { onDelete: 'cascade' }),
-    credentialID: text('credential_id').notNull(),
+    // A WebAuthn credential id may be registered once; sign-in looks the credential up by it.
+    credentialID: text('credential_id').notNull().unique(),
     counter: integer('counter').notNull(),
     deviceType: text('device_type').notNull(),
     backedUp: boolean('backed_up').notNull(),
@@ -19,9 +20,5 @@ export const authPasskey = pgTable(
     aaguid: text('aaguid'),
     createdAt: tstz('created_at'),
   },
-  // Passkey sign-in looks the credential up by its id.
-  (t) => [
-    index('auth_passkey_user_id_idx').on(t.userId),
-    index('auth_passkey_credential_id_idx').on(t.credentialID),
-  ],
+  (t) => [index('auth_passkey_user_id_idx').on(t.userId)],
 );

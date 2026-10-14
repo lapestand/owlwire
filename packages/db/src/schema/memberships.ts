@@ -2,10 +2,10 @@ import type { WorkspaceRole } from '@owlwire/core';
 import { sql } from 'drizzle-orm';
 import { check, index, pgTable, primaryKey, text, uuid } from 'drizzle-orm/pg-core';
 import { authUser } from './auth-user.js';
-import { literalsOf, tstz } from './types.js';
+import { literalsOf, sqlList, tstz } from './types.js';
 import { workspaces } from './workspaces.js';
 
-const ROLES = literalsOf<WorkspaceRole>()(['owner', 'admin', 'member']);
+const MEMBERSHIP_ROLES = literalsOf<WorkspaceRole>()(['owner', 'admin', 'member']);
 
 /**
  * A user's role in a workspace. Tenant table (RLS on workspace_id). The primary key (workspace_id, user_id)
@@ -21,12 +21,12 @@ export const memberships = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => authUser.id, { onDelete: 'cascade' }),
-    role: text('role', { enum: ROLES }).notNull(),
+    role: text('role', { enum: MEMBERSHIP_ROLES }).notNull(),
     createdAt: tstz('created_at').notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.workspaceId, t.userId] }),
-    check('memberships_role_check', sql`${t.role} in ('owner', 'admin', 'member')`),
+    check('memberships_role_check', sql`${t.role} in (${sqlList(MEMBERSHIP_ROLES)})`),
     index('memberships_user_id_idx').on(t.userId),
   ],
 );

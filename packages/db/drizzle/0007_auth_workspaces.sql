@@ -25,7 +25,8 @@ CREATE TABLE "auth_passkey" (
 	"backed_up" boolean NOT NULL,
 	"transports" text,
 	"aaguid" text,
-	"created_at" timestamp with time zone
+	"created_at" timestamp with time zone,
+	CONSTRAINT "auth_passkey_credential_id_unique" UNIQUE("credential_id")
 );
 --> statement-breakpoint
 CREATE TABLE "auth_rate_limit" (
@@ -55,7 +56,8 @@ CREATE TABLE "auth_two_factor" (
 	"user_id" uuid NOT NULL,
 	"verified" boolean DEFAULT true NOT NULL,
 	"failed_verification_count" integer DEFAULT 0 NOT NULL,
-	"locked_until" timestamp with time zone
+	"locked_until" timestamp with time zone,
+	CONSTRAINT "auth_two_factor_user_id_unique" UNIQUE("user_id")
 );
 --> statement-breakpoint
 CREATE TABLE "auth_user" (
@@ -68,7 +70,8 @@ CREATE TABLE "auth_user" (
 	"two_factor_enabled" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "auth_user_email_unique" UNIQUE("email")
+	CONSTRAINT "auth_user_email_unique" UNIQUE("email"),
+	CONSTRAINT "auth_user_email_lower_check" CHECK ("auth_user"."email" = lower("auth_user"."email"))
 );
 --> statement-breakpoint
 CREATE TABLE "auth_verification" (
@@ -116,22 +119,27 @@ ALTER TABLE "memberships" ADD CONSTRAINT "memberships_workspace_id_workspaces_id
 ALTER TABLE "memberships" ADD CONSTRAINT "memberships_user_id_auth_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."auth_user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "auth_account_user_id_idx" ON "auth_account" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "auth_passkey_user_id_idx" ON "auth_passkey" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "auth_passkey_credential_id_idx" ON "auth_passkey" USING btree ("credential_id");--> statement-breakpoint
 CREATE INDEX "auth_session_user_id_idx" ON "auth_session" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "auth_two_factor_user_id_idx" ON "auth_two_factor" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "auth_two_factor_secret_idx" ON "auth_two_factor" USING btree ("secret");--> statement-breakpoint
 CREATE INDEX "auth_verification_identifier_idx" ON "auth_verification" USING btree ("identifier");--> statement-breakpoint
+CREATE UNIQUE INDEX "invitations_pending_email_uidx" ON "invitations" USING btree ("workspace_id","email") WHERE "invitations"."accepted_at" is null;--> statement-breakpoint
 CREATE INDEX "invitations_workspace_id_idx" ON "invitations" USING btree ("workspace_id");--> statement-breakpoint
 CREATE INDEX "invitations_email_idx" ON "invitations" USING btree ("email");--> statement-breakpoint
 CREATE INDEX "memberships_user_id_idx" ON "memberships" USING btree ("user_id");--> statement-breakpoint
--- Small table (a few installations per workspace). No code writes created_by_user_id yet, so every value is
--- NULL and the check finds nothing to verify; auth_user is created empty in this migration.
+-- auth_user is created empty above, so any non-null created_by_user_id could only be a dangling id from a
+-- hand-edited row (no code path writes the column yet). Clear such values so the foreign key below cannot fail
+-- and roll back the whole migrate run; a dangling id carries no information.
+UPDATE "installations" SET "created_by_user_id" = NULL WHERE "created_by_user_id" IS NOT NULL;--> statement-breakpoint
+-- Small table (a few installations per workspace). After the update above every value is NULL, so the check
+-- finds nothing to verify.
 -- squawk-ignore constraint-missing-not-valid, adding-foreign-key-constraint
 ALTER TABLE "installations" ADD CONSTRAINT "installations_created_by_user_id_auth_user_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."auth_user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 -- Small table (one row per workspace). owner_user_id is added empty in this migration, so every value is NULL
 -- and the check finds nothing to verify; auth_user is created empty in this migration.
 -- squawk-ignore constraint-missing-not-valid, adding-foreign-key-constraint
-ALTER TABLE "workspaces" ADD CONSTRAINT "workspaces_owner_user_id_auth_user_id_fk" FOREIGN KEY ("owner_user_id") REFERENCES "public"."auth_user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workspaces" ADD CONSTRAINT "workspaces_owner_user_id_auth_user_id_fk" FOREIGN KEY ("owner_user_id") REFERENCES "public"."auth_user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 -- Small table (one row per workspace), so the write lock lasts milliseconds; the indexed column is still empty.
 -- squawk-ignore require-concurrent-index-creation
-CREATE UNIQUE INDEX "workspaces_personal_owner_uidx" ON "workspaces" USING btree ("owner_user_id") WHERE "workspaces"."kind" = 'personal';
+CREATE UNIQUE INDEX "workspaces_personal_owner_uidx" ON "workspaces" USING btree ("owner_user_id") WHERE "workspaces"."kind" = 'personal' and "workspaces"."deleted_at" is null;--> statement-breakpoint
+-- Small table (one row per workspace), and owner_user_id is NULL on every existing row, so every row passes.
+-- squawk-ignore constraint-missing-not-valid
+ALTER TABLE "workspaces" ADD CONSTRAINT "workspaces_owner_kind_check" CHECK ("workspaces"."kind" = 'personal' or "workspaces"."owner_user_id" is null);

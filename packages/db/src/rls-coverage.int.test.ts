@@ -1,6 +1,7 @@
 import { startTestDatabase, type TestDatabase } from '@owlwire/testing';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { authTableExemptions } from './__test__/auth-tables.js';
 import { migrateAll } from './migrate-all.js';
 
 let tdb: TestDatabase;
@@ -9,22 +10,13 @@ let owner: pg.Pool;
 /** RLS'siz ama workspace_id kolonlu instance tabloları. Moderasyon tabloları (workspace_suspensions, abuse_reports) eklendiğinde buraya girer. */
 const RLS_EXEMPT_TABLES: readonly string[] = [];
 
-const AUTH_TABLE_REASON =
-  'Better Auth table: instance-level (users, sessions, credentials have no workspace), and the auth adapter reads and writes it outside any tenant or system scope, so a system-only policy would break sign-up and sign-in';
-
 /**
  * Public tables with no RLS at all, each with the reason. They carry no workspace_id and no policy; any other table
  * without RLS is a finding. Keep this list deliberate: a new entry needs a reason that holds up in review.
  */
 const NO_RLS_TABLES: Readonly<Record<string, string>> = {
   rate_buckets: 'instance-level pacing state keyed by scope text; only system code touches it',
-  auth_user: AUTH_TABLE_REASON,
-  auth_session: AUTH_TABLE_REASON,
-  auth_account: AUTH_TABLE_REASON,
-  auth_verification: AUTH_TABLE_REASON,
-  auth_two_factor: AUTH_TABLE_REASON,
-  auth_passkey: AUTH_TABLE_REASON,
-  auth_rate_limit: AUTH_TABLE_REASON,
+  ...authTableExemptions(),
 };
 
 interface Queryable {
