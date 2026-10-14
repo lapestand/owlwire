@@ -24,6 +24,23 @@ const exclude = ['**/node_modules/**', '**/dist/**'];
 export default defineConfig({
   resolve: { alias },
   test: {
+    // Informational only (`pnpm test:coverage`): no thresholds. One run covers both projects, so unit and
+    // integration coverage are merged into a single report.
+    coverage: {
+      provider: 'v8',
+      include: ['{apps,packages}/**/src/**/*.{ts,tsx}', 'scripts/**/*.mjs'],
+      exclude: [
+        ...exclude,
+        '**/*.test.ts',
+        '**/__test__/**',
+        '**/test/**',
+        'packages/testing/**',
+        '**/drizzle/meta/**',
+        '**/*.d.ts',
+      ],
+      reporter: ['text-summary', 'json-summary', 'json'],
+      reportsDirectory: 'coverage',
+    },
     projects: [
       {
         extends: true,
