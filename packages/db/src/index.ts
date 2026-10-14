@@ -1,3 +1,4 @@
+export { authAdapter } from './auth-adapter.js';
 export {
   LegacyDecryptFailedError,
   LegacySecretError,

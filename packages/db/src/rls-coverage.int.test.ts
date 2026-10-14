@@ -9,6 +9,24 @@ let owner: pg.Pool;
 /** RLS'siz ama workspace_id kolonlu instance tabloları. Moderasyon tabloları (workspace_suspensions, abuse_reports) eklendiğinde buraya girer. */
 const RLS_EXEMPT_TABLES: readonly string[] = [];
 
+const AUTH_TABLE_REASON =
+  'Better Auth table: instance-level (users, sessions, credentials have no workspace), and the auth adapter reads and writes it outside any tenant or system scope, so a system-only policy would break sign-up and sign-in';
+
+/**
+ * Public tables with no RLS at all, each with the reason. They carry no workspace_id and no policy; any other table
+ * without RLS is a finding. Keep this list deliberate: a new entry needs a reason that holds up in review.
+ */
+const NO_RLS_TABLES: Readonly<Record<string, string>> = {
+  rate_buckets: 'instance-level pacing state keyed by scope text; only system code touches it',
+  auth_user: AUTH_TABLE_REASON,
+  auth_session: AUTH_TABLE_REASON,
+  auth_account: AUTH_TABLE_REASON,
+  auth_verification: AUTH_TABLE_REASON,
+  auth_two_factor: AUTH_TABLE_REASON,
+  auth_passkey: AUTH_TABLE_REASON,
+  auth_rate_limit: AUTH_TABLE_REASON,
+};
+
 interface Queryable {
   query<R extends pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<R>>;
 }
@@ -134,13 +152,43 @@ async function rlsCoverageProblems(db: Queryable): Promise<string[]> {
   return problems;
 }
 
+/**
+ * Tables without RLS: each must be listed in NO_RLS_TABLES, have no workspace_id column and no policy; every listed
+ * table must exist. Returns the problems found (empty = clean).
+ */
+async function noRlsTableProblems(db: Queryable): Promise<string[]> {
+  const { rows } = await db.query<{ relname: string; has_ws: boolean; policies: number }>(`
+    select c.relname,
+           exists (select 1 from pg_attribute a
+                   where a.attrelid = c.oid and a.attname = 'workspace_id' and not a.attisdropped) as has_ws,
+           (select count(*)::int from pg_policy p where p.polrelid = c.oid) as policies
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity
+    order by 1`);
+  const problems: string[] = [];
+  for (const t of rows) {
+    if (!(t.relname in NO_RLS_TABLES))
+      problems.push(`${t.relname}: no RLS and not a listed exception`);
+    if (t.has_ws) problems.push(`${t.relname}: has workspace_id but no RLS`);
+    if (t.policies > 0) problems.push(`${t.relname}: has policies but RLS is disabled`);
+  }
+  for (const name of Object.keys(NO_RLS_TABLES)) {
+    if (!rows.some((t) => t.relname === name))
+      problems.push(`${name}: listed exception is missing or has RLS enabled`);
+  }
+  return problems;
+}
+
 /** Değişikliği bir transaction'da yapar, denetimi aynı bağlantıda çalıştırır, sonra geri alır. */
-async function problemsAfter(change: string): Promise<string[]> {
+async function problemsAfter(
+  change: string,
+  check: (db: Queryable) => Promise<string[]> = rlsCoverageProblems,
+): Promise<string[]> {
   const client = await owner.connect();
   try {
     await client.query('begin');
     await client.query(change);
-    return await rlsCoverageProblems(client);
+    return await check(client);
   } finally {
     await client.query('rollback');
     client.release();
@@ -200,6 +248,20 @@ describe('rls coverage', () => {
       'rls_probe_parted: row level security is not enabled',
       'rls_probe_parted: missing policy rls_probe_parted_tenant_isolation',
     ]);
+  });
+
+  it('every table without RLS is a listed instance-level exception with no workspace_id and no policy', async () => {
+    expect(await noRlsTableProblems(owner)).toEqual([]);
+    for (const reason of Object.values(NO_RLS_TABLES)) expect(reason.length).toBeGreaterThan(30);
+  });
+
+  it('flags a new table without RLS, and RLS turned on for a listed exception', async () => {
+    expect(
+      await problemsAfter('create table rls_probe_plain (id uuid)', noRlsTableProblems),
+    ).toEqual(['rls_probe_plain: no RLS and not a listed exception']);
+    expect(
+      await problemsAfter('alter table auth_user enable row level security', noRlsTableProblems),
+    ).toEqual(['auth_user: listed exception is missing or has RLS enabled']);
   });
 
   it('workspaces, apps, catalog_types and instance_settings have RLS enabled', async () => {

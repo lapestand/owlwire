@@ -323,6 +323,8 @@ const VICTIM_TABLES = [
   'audiences',
   'audience_members',
   'audit_log',
+  'memberships',
+  'invitations',
 ] as const;
 
 /** Public tables without a workspace_id column, and how the snapshot covers them (or why it does not). */
@@ -332,6 +334,15 @@ const NON_WORKSPACE_TABLES: Record<string, string> = {
   catalog_types: 'snapshotted through apps.owner_workspace_id',
   instance_settings: 'instance-level, system-only RLS; no tenant owns a row',
   rate_buckets: 'instance-level pacing state keyed by scope text; no tenant repository writes it',
+  // Better Auth tables: instance-level, no workspace_id and no tenant RLS; the auth adapter writes them outside
+  // any scope. A user reaches a workspace only through memberships, which are snapshotted above.
+  auth_user: 'instance-level account; tied to workspaces only through snapshotted memberships',
+  auth_session: 'instance-level login session of a user; no workspace column',
+  auth_account: 'instance-level credential or social link of a user; no workspace column',
+  auth_verification: 'instance-level email verification and reset tokens; no workspace column',
+  auth_two_factor: 'instance-level TOTP secret of a user; no workspace column',
+  auth_passkey: 'instance-level WebAuthn credential of a user; no workspace column',
+  auth_rate_limit: 'instance-level sign-in rate limit buckets keyed by client address and path',
 };
 
 function registryDiff(
@@ -445,6 +456,9 @@ function markers(v: SeededTenant): string[] {
     v.eventId,
     v.deliveryId,
     v.digestId,
+    v.userId,
+    v.invitationId,
+    v.invitationEmail,
     v.secret,
   ];
 }
@@ -890,6 +904,9 @@ const malformedVictim: SeededTenant = {
   eventId: MALFORMED,
   deliveryId: MALFORMED,
   digestId: MALFORMED,
+  userId: MALFORMED,
+  invitationId: MALFORMED,
+  invitationEmail: MALFORMED,
   secret: MALFORMED,
 };
 

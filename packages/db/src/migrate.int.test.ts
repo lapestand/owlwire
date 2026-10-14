@@ -229,7 +229,13 @@ describe('constraints', () => {
     const { ws } = await workspaceWithConnection();
     const badKind = await db()
       .insert(workspaces)
-      .values({ id: newId(), name: 'X', slug: `x-${newId()}`, kind: 'hosted' })
+      // The column type only allows the known kinds; the cast gets past it so the database check is what rejects.
+      .values({
+        id: newId(),
+        name: 'X',
+        slug: `x-${newId()}`,
+        kind: 'hosted' as 'community' | 'personal',
+      })
       .catch((e: unknown) => e);
     expect(pgErrorCode(badKind)).toBe('23514');
 
