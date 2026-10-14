@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  // Entry points per workspace. On top of these, knip adds what it finds on its own: package.json `bin`,
+  // Entry points per workspace (gate test). On top of these, knip adds what it finds on its own: package.json `bin`,
   // `exports` (mapped from dist to src), the files that package.json scripts run, the files the GitHub workflows run
   // (for example scripts/check-commit-msg.mjs), and config files of the tools it knows (vitest, tsup, vite,
   // drizzle-kit, biome). Test files are entries through the vitest plugin and the root vitest.config.ts projects.
