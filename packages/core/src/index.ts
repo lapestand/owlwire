@@ -4,3 +4,6 @@ export * from './config/schema.js';
 export * from './ids.js';
 export * from './message.js';
 export * from './redaction.js';
+export * from './registration.js';
+export * from './roles.js';
+export * from './slug.js';
