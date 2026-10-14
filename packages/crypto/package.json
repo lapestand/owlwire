@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/crypto",
-  "version": "0.35.38",
+  "version": "0.35.39",
   "private": true,
   "type": "module",
   "exports": {
