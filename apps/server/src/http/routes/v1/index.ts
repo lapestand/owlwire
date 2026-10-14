@@ -6,7 +6,7 @@ import type { AppEnv } from '../../types.js';
 import { eventsRoutes } from './events.js';
 import { hooksRoutes } from './hooks.js';
 
-export const V1_BODY_LIMIT_BYTES = 64 * 1024;
+const V1_BODY_LIMIT_BYTES = 64 * 1024;
 
 export function v1Routes(deps: { db: OwlwireDb }): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
