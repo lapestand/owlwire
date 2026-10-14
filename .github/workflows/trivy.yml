@@ -1,0 +1,65 @@
+name: Trivy
+
+on:
+  push:
+    branches: [main]
+    paths: &image-paths
+      - docker/**
+      - apps/**
+      - packages/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .dockerignore
+      - .github/workflows/trivy.yml
+  pull_request:
+    paths: *image-paths
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trivy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TRIVY_IMAGE: aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+
+jobs:
+  image:
+    name: Trivy image scan
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # upload the results to code scanning
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: |
+          docker build -f docker/Dockerfile -t owlwire:scan .
+          docker save owlwire:scan -o "$RUNNER_TEMP/image.tar"
+      # Code scanning gets every severity, limited to findings that have a fix, so each alert is actionable.
+      - name: Scan image to SARIF
+        run: >-
+          docker run --rm -v "$RUNNER_TEMP:/work" -w /work "$TRIVY_IMAGE"
+          image --cache-dir /work/trivy-cache --input image.tar --ignore-unfixed
+          --format sarif --output trivy.sarif --quiet
+      # Fork pull requests get a read-only token, so they skip the upload and rely on the gate below.
+      - name: Upload results to code scanning
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          sarif_file: ${{ runner.temp }}/trivy.sarif
+          category: trivy-image
+      - name: Fail on fixable high or critical findings
+        run: >-
+          docker run --rm -v "$RUNNER_TEMP:/work" -w /work "$TRIVY_IMAGE"
+          image --cache-dir /work/trivy-cache --skip-db-update --input image.tar
+          --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --quiet
