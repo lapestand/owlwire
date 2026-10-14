@@ -75,6 +75,11 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 Stack: TypeScript, Node.js, Hono, Drizzle ORM, PostgreSQL, Graphile Worker, React + Vite, pnpm + Turborepo.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems
+privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 Owlwire is licensed under the [Business Source License 1.1](LICENSE).
