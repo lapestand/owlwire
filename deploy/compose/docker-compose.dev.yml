@@ -2,20 +2,13 @@ name: owlwire-dev
 
 # Gelistirme ortami. Dogrudan degil, kokteki ./dev ile calistirilir:
 #   ./dev pnpm test   ./dev pnpm test:int   ./dev (bash)
-# Imaj Dockerfile degisince: docker compose -f deploy/compose/docker-compose.dev.yml build dev
+# Imaj docker/dev.Dockerfile degisince: docker compose -f deploy/compose/docker-compose.dev.yml build dev
 services:
   dev:
     image: owlwire-dev:local
     build:
-      context: .
-      dockerfile_inline: |
-        FROM node:26-trixie-slim
-        RUN apt-get update \
-          && apt-get install -y --no-install-recommends ca-certificates curl git openssl \
-          && rm -rf /var/lib/apt/lists/*
-        RUN npm install -g corepack@latest && corepack enable
-        RUN mkdir -p /workspace/node_modules /pnpm/store /home/dev \
-          && chmod 1777 /workspace/node_modules /pnpm/store /home/dev
+      context: ../../docker
+      dockerfile: dev.Dockerfile
     user: "${DEV_UID:-1000}:${DEV_GID:-1000}"
     group_add:
       - "${DOCKER_GID:-0}"
