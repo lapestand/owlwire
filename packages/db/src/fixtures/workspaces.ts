@@ -1,14 +1,14 @@
+/**
+ * Shared test fixtures (`@owlwire/db/fixtures`): seed workspaces, memberships and invitations through the repository
+ * functions. Test code only; dependency-cruiser and Biome reject imports from application code.
+ */
 import { type InvitableRole, newId, type WorkspaceRole } from '@owlwire/core';
-import {
-  addMembership,
-  createInvitation,
-  createWorkspace,
-  listAuditLog,
-  type OwlwireDb,
-  SYSTEM_ACTOR,
-  tenantScope,
-  withTenant,
-} from '@owlwire/db';
+import type { OwlwireDb } from '../handle.js';
+import { listAuditLog, SYSTEM_ACTOR } from '../repos/audit.js';
+import { createInvitation } from '../repos/invitations.js';
+import { addMembership } from '../repos/memberships.js';
+import { createWorkspace } from '../repos/workspaces.js';
+import { tenantScope, withTenant } from '../scope.js';
 
 /** Community workspace (with its data key and workspace.created audit) owned by ownerUserId; answers its id. */
 export async function seedCommunityWorkspace(

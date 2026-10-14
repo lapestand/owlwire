@@ -6,16 +6,5 @@
     "composite": true,
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src"],
-  "references": [
-    {
-      "path": "../core"
-    },
-    {
-      "path": "../crypto"
-    },
-    {
-      "path": "../db"
-    }
-  ]
+  "include": ["src"]
 }

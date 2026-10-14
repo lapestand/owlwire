@@ -1,18 +1,10 @@
-import { FakeClock, newId } from '@owlwire/core';
-import { createKeyring, generateKek } from '@owlwire/crypto';
-import {
-  getWorkspace,
-  listMembers,
-  listPendingInvitations,
-  type OwlwireDb,
-  openDatabase,
-  tenantScope,
-  withTenant,
-} from '@owlwire/db';
-import { migrateAll } from '@owlwire/db/migrate';
-import pg from 'pg';
+import { newId } from '@owlwire/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { startTestDatabase, type TestDatabase } from '../tenant-database.js';
+import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
+import { listPendingInvitations } from '../repos/invitations.js';
+import { listMembers } from '../repos/memberships.js';
+import { getWorkspace } from '../repos/workspaces.js';
+import { tenantScope, withTenant } from '../scope.js';
 import {
   listAuditActions,
   seedCommunityWorkspace,
@@ -20,25 +12,18 @@ import {
   seedMembership,
 } from './index.js';
 
-let tdb: TestDatabase;
-let owner: pg.Pool;
-let db: OwlwireDb;
-const clock = new FakeClock(new Date('2026-10-12T09:00:00Z'));
+let env: DbTestEnv;
 
 beforeAll(async () => {
-  tdb = await startTestDatabase({ migrate: migrateAll });
-  owner = new pg.Pool({ connectionString: tdb.ownerUrl });
-  db = openDatabase({ url: tdb.appUrl, keyring: createKeyring(generateKek(1)), clock });
+  env = await setupDbTestEnv();
 }, 120_000);
 afterAll(async () => {
-  await db?.close();
-  await owner?.end();
-  await tdb?.stop();
+  await env?.stop();
 });
 
 async function user(): Promise<string> {
   const id = newId();
-  await owner.query('insert into auth_user (id, name, email) values ($1, $2, $3)', [
+  await env.owner.query('insert into auth_user (id, name, email) values ($1, $2, $3)', [
     id,
     'Fixture user',
     `${id}@fixture.test`,
@@ -46,20 +31,20 @@ async function user(): Promise<string> {
   return id;
 }
 
-describe('@owlwire/testing/fixtures', () => {
+describe('@owlwire/db/fixtures', () => {
   it('seeds a community workspace with its owner, members, an invitation and audit rows', async () => {
     const owner = await user();
     const member = await user();
-    const ws = await seedCommunityWorkspace(db, owner);
-    await seedMembership(db, ws, member, 'admin');
+    const ws = await seedCommunityWorkspace(env.db, owner);
+    await seedMembership(env.db, ws, member, 'admin');
     const email = `Fixture-${newId()}@X.test`;
-    const { id } = await seedInvitation(db, {
+    const { id } = await seedInvitation(env.db, {
       workspaceId: ws,
       email,
       tokenHash: `fixture-${newId()}`,
-      expiresAt: new Date(clock.now().getTime() + 60_000),
+      expiresAt: new Date(env.clock.now().getTime() + 60_000),
     });
-    await withTenant(db, tenantScope(ws), async (t) => {
+    await withTenant(env.db, tenantScope(ws), async (t) => {
       expect(await getWorkspace(t)).toMatchObject({
         id: ws,
         name: 'Test Alliance',
@@ -78,13 +63,13 @@ describe('@owlwire/testing/fixtures', () => {
         }),
       ]);
     });
-    expect((await listAuditActions(db, ws)).sort()).toEqual(
+    expect((await listAuditActions(env.db, ws)).sort()).toEqual(
       ['invitation.created', 'member.added', 'member.added', 'workspace.created'].sort(),
     );
   });
 
   it('names the workspace when asked', async () => {
-    const ws = await seedCommunityWorkspace(db, await user(), 'Named');
-    expect((await withTenant(db, tenantScope(ws), (t) => getWorkspace(t)))?.name).toBe('Named');
+    const ws = await seedCommunityWorkspace(env.db, await user(), 'Named');
+    expect((await withTenant(env.db, tenantScope(ws), (t) => getWorkspace(t)))?.name).toBe('Named');
   });
 });

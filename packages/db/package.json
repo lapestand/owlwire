@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/db",
-  "version": "0.35.79",
+  "version": "0.35.80",
   "private": true,
   "type": "module",
   "exports": {
@@ -18,6 +18,11 @@
       "source": "./src/system/index.ts",
       "types": "./dist/system/index.d.ts",
       "import": "./dist/system/index.js"
+    },
+    "./fixtures": {
+      "source": "./src/fixtures/index.ts",
+      "types": "./dist/fixtures/index.d.ts",
+      "import": "./dist/fixtures/index.js"
     }
   },
   "files": [

@@ -119,6 +119,16 @@ module.exports = {
       to: { path: '^packages/db/(src|dist)/migrate-all\\.' },
     },
     {
+      name: 'db-fixtures-only-from-tests',
+      comment:
+        '@owlwire/db/fixtures seeds test data; only test files and the server test harness may import it.',
+      severity: 'error',
+      from: {
+        pathNot: ['\\.test\\.ts$', '^apps/server/src/test/', '^packages/db/src/fixtures/'],
+      },
+      to: { path: '^packages/db/(src|dist)/fixtures/' },
+    },
+    {
       name: 'db-internals-private',
       comment:
         'Only the public entry points of @owlwire/db may be imported from outside the package.',
