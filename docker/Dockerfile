@@ -34,6 +34,7 @@ COPY --from=build /out /app
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
   && chmod +x /app/dist/main.js && ln -s /app/dist/main.js /usr/local/bin/owlwire
 # The node user of the base image, by number, so that runtimes that check runAsNonRoot can verify it.
+RUN cd /app && true
 USER 1000:1000
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
