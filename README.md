@@ -83,7 +83,12 @@ Everything runs inside a Docker toolbox container, so only Docker is needed on t
 ./dev pnpm test        # unit tests
 ./dev pnpm test:int    # integration tests (Testcontainers, needs the Docker socket)
 ./dev pnpm test:coverage  # unit + integration coverage (v8), report in coverage/
+./dev pnpm test:mutation  # Stryker mutation testing of the security-critical modules, report in reports/mutation/
 ```
+
+Mutation testing covers tenant scoping, the crypto AEAD/DEK/keyring code, the audit secret guard and log
+redaction (`stryker.config.mjs`). It takes the better part of an hour, so CI runs it weekly rather than on pull
+requests and writes the score and the surviving mutants to the job summary.
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) in English, for example
 `fix(db): close scoped transactions on rollback`. Enable the local check with

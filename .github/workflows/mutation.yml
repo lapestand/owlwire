@@ -1,0 +1,52 @@
+name: Mutation
+
+# Weekly mutation testing (Stryker) of the security-critical modules: tenant scoping, crypto (AEAD, DEK,
+# keyring), the audit secret guard and log redaction. Scope and settings are in stryker.config.mjs. Not a pull
+# request check: the score is informational and is written to the job summary.
+on:
+  schedule:
+    - cron: '41 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation
+  cancel-in-progress: false
+
+jobs:
+  stryker:
+    name: Stryker
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+      # Incremental mode: mutants whose code and covering tests did not change keep last week's result.
+      - name: Restore the previous run
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-${{ github.run_id }}
+          restore-keys: stryker-incremental-
+      - name: Mutation testing
+        run: pnpm test:mutation
+      - name: Write mutation summary
+        if: ${{ !cancelled() && hashFiles('reports/mutation/mutation.json') != '' }}
+        run: node scripts/mutation-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+      - name: Save this run for the next one
+        if: ${{ !cancelled() && hashFiles('reports/stryker-incremental.json') != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-${{ github.run_id }}
+      - name: Upload the HTML report
+        if: ${{ !cancelled() && hashFiles('reports/mutation/mutation.html') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-report
+          path: reports/mutation/mutation.html
+          retention-days: 30
