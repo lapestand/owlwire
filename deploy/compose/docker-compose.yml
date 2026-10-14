@@ -25,6 +25,12 @@ services:
     command: ["serve", "--role", "all"]
     # main.ts gives up on a graceful stop after 25 s; leave headroom before SIGKILL
     stop_grace_period: 40s
+    # Hardening: the image already runs as 1000:1000 (non-root). The server writes nothing to disk, so the root
+    # filesystem is read-only and needs no tmpfs; it needs no Linux capabilities and may not gain privileges.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     env_file: .env
     environment:
       # Two roles: migrations run as the owner, the server connects as owlwire_app (subject to RLS).

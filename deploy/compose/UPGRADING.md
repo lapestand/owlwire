@@ -25,3 +25,8 @@
    `OWLWIRE_DATABASE_URL` and `OWLWIRE_MIGRATION_DATABASE_URL` use the same role. For a single-role local database,
    `OWLWIRE_ALLOW_INSECURE_DB_ROLE=true` lets it start and logs each reason as a warning. It is ignored when
    `NODE_ENV=production`, which the Owlwire image sets. Keep it `false` in any real deployment.
+
+4. **The server container is hardened.** `docker-compose.yml` now runs `owlwire` with a read-only root filesystem,
+   all Linux capabilities dropped and `no-new-privileges`. The image already ran as the non-root user `1000:1000`.
+   The server writes nothing to disk, so no change is needed. If you added your own mounts or tooling that writes
+   inside the `owlwire` container, give it a dedicated volume or `tmpfs` path instead.
