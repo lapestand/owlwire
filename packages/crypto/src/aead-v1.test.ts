@@ -31,6 +31,18 @@ describe('aead v1 (sealBytes/openBytes)', () => {
     expect(() => openBytes(k, sealed, 'connection-b')).toThrow(DecryptError);
   });
 
+  it('does not let lone surrogates alias an aad (UTF-8 turns them all into U+FFFD)', () => {
+    const k = key();
+    const sealed = sealBytes(k, Buffer.from('secret'), 'ws-�');
+    expect(() => openBytes(k, sealed, 'ws-\uD800')).toThrow(DecryptError);
+    expect(() => openBytes(k, sealed, 'ws-\uDC00')).toThrow(DecryptError);
+    expect(() => sealBytes(k, Buffer.from('secret'), 'ws-\uD800')).toThrow(RangeError);
+    expect(() => sealJson(k, {}, '\uDFFF')).toThrow(RangeError);
+    // A well-formed astral character is one code point, not a lone surrogate.
+    const astral = sealBytes(k, Buffer.from('ok'), 'ws-\u{1F989}');
+    expect(openBytes(k, astral, 'ws-\u{1F989}').toString('utf8')).toBe('ok');
+  });
+
   it('rejects a different key', () => {
     const sealed = sealBytes(key(), Buffer.from('secret'), 'x');
     expect(() => openBytes(key(), sealed, 'x')).toThrow(DecryptError);
