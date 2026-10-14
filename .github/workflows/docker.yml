@@ -54,6 +54,39 @@ jobs:
           done
           echo "::error::/readyz did not return success"
           exit 1
+      # The compose file runs the server as non-root, with a read-only root filesystem, no Linux capabilities and
+      # no-new-privileges. Readiness above already proves the server works that way; this checks the settings
+      # took effect, both as Docker reports them and as the kernel sees the running process.
+      - name: Check container hardening
+        run: |
+          cid=$(docker compose ps -q owlwire)
+          failed=0
+          check() {
+            if [ "$2" = "$3" ]; then
+              echo "ok: $1 = $2"
+            else
+              echo "::error::$1 is '$2', expected '$3'"
+              failed=1
+            fi
+          }
+          check 'image user' "$(docker inspect -f '{{.Config.User}}' "$cid")" 1000:1000
+          check 'uid in the container' "$(docker compose exec -T owlwire id -u)" 1000
+          check 'read-only root filesystem' "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$cid")" true
+          check 'tmpfs mounts' "$(docker inspect -f '{{json .HostConfig.Tmpfs}}' "$cid")" null
+          check 'dropped capabilities' "$(docker inspect -f '{{json .HostConfig.CapDrop}}' "$cid")" '["ALL"]'
+          check 'added capabilities' "$(docker inspect -f '{{json .HostConfig.CapAdd}}' "$cid")" null
+          check 'privileged' "$(docker inspect -f '{{.HostConfig.Privileged}}' "$cid")" false
+          check 'security options' "$(docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$cid")" '["no-new-privileges:true"]'
+          status=$(docker compose exec -T owlwire cat /proc/1/status)
+          check 'effective capabilities of the server' "$(awk '/^CapEff:/ {print $2}' <<< "$status")" 0000000000000000
+          check 'no_new_privs of the server' "$(awk '/^NoNewPrivs:/ {print $2}' <<< "$status")" 1
+          if docker compose exec -T owlwire touch /app/probe 2>/dev/null; then
+            echo "::error::the root filesystem is writable"
+            failed=1
+          else
+            echo "ok: writing to /app fails"
+          fi
+          exit "$failed"
       # serve migrates on startup; running migrate again must be a no-op.
       - name: Re-run migrations
         run: docker compose exec -T owlwire owlwire migrate
