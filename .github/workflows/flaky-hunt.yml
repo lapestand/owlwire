@@ -1,0 +1,50 @@
+name: Flaky hunt
+
+# Runs the integration suite several times in shuffled order, each run with its own seed, so order-dependent
+# and timing-dependent tests show up before they block a pull request. Not a pull request check.
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flaky-hunt
+  cancel-in-progress: false
+
+jobs:
+  shuffled:
+    name: Shuffled integration run ${{ matrix.run }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+      - name: Integration tests in shuffled order
+        env:
+          RUN: ${{ matrix.run }}
+        run: |
+          seed=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
+          echo "Run $RUN uses seed $seed"
+          status=0
+          pnpm test:int --sequence.shuffle --sequence.seed="$seed" \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/int-report.json" || status=$?
+          if [ -f "$RUNNER_TEMP/int-report.json" ]; then
+            node scripts/flaky-summary.mjs "$RUNNER_TEMP/int-report.json" "$seed" "Run $RUN" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Run $RUN: failed"
+              echo
+              echo "- Seed: \`$seed\`"
+              echo "- No test report was written; see the job log."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
