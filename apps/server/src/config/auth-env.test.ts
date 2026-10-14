@@ -2,7 +2,7 @@ import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { AuthEnvError, loadAuthEnv } from './auth-env.js';
 
-const SECRET = 'Zk3vQ8xLp0Rt7YbN2mWc9HdFg5JsAe1U';
+const SECRET = 'fixture-secret-for-auth-env-tests-0123';
 
 describe('loadAuthEnv', () => {
   it('requires OWLWIRE_AUTH_SECRET', () => {
