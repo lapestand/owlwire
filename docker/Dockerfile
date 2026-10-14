@@ -25,7 +25,10 @@ FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d250
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /out /app
-RUN chmod +x /app/dist/main.js && ln -s /app/dist/main.js /usr/local/bin/owlwire
+# The server runs on node alone. The npm bundled with the base image is never used at runtime, and its own
+# dependencies (undici, brace-expansion) are what the Trivy scan reports, so it is removed from the final image.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+  && chmod +x /app/dist/main.js && ln -s /app/dist/main.js /usr/local/bin/owlwire
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
