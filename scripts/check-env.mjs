@@ -9,6 +9,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const LOADER = 'apps/server/src/config/load.ts';
+// Further files that parse the environment with their own zod object, and the const that holds it.
+export const EXTRA_SCHEMAS = [['apps/server/src/config/auth-env.ts', 'authEnvSchema']];
 export const ENV_EXAMPLE = 'deploy/compose/.env.example';
 export const COMPOSE = 'deploy/compose/docker-compose.yml';
 
@@ -27,9 +29,9 @@ export const ALLOWLIST = new Map([
 const NAME = 'OWLWIRE_[A-Z0-9_]*[A-Z0-9]';
 
 /** Keys of the zod object the config loader parses the environment with. */
-export function schemaKeys(text) {
-  const start = text.search(/\bconst envSchema\s*=\s*z\.object\(\{/);
-  if (start === -1) throw new Error(`${LOADER}: envSchema = z.object({ ... }) not found`);
+export function schemaKeys(text, constName = 'envSchema') {
+  const start = text.search(new RegExp(`\\bconst ${constName}\\s*=\\s*z\\.object\\(\\{`));
+  if (start === -1) throw new Error(`${constName} = z.object({ ... }) not found`);
   const body = text.slice(start, text.indexOf('\n});', start));
   return [...body.matchAll(new RegExp(`^\\s*['"]?(${NAME})['"]?\\s*:`, 'gm'))].map((m) => m[1]);
 }
@@ -85,6 +87,11 @@ export function codeReads(root) {
   const reads = new Map();
   for (const name of schemaKeys(readFileSync(join(root, LOADER), 'utf8'))) {
     addSource(reads, name, LOADER);
+  }
+  for (const [file, constName] of EXTRA_SCHEMAS) {
+    for (const name of schemaKeys(readFileSync(join(root, file), 'utf8'), constName)) {
+      addSource(reads, name, file);
+    }
   }
   for (const top of ROOTS) {
     let files;
