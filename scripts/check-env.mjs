@@ -9,8 +9,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const LOADER = 'apps/server/src/config/load.ts';
-// Further files that parse the environment with their own zod object, and the const that holds it.
-export const EXTRA_SCHEMAS = [['apps/server/src/config/auth-env.ts', 'authEnvSchema']];
+export const CONFIG_DIR = 'apps/server/src/config';
 export const ENV_EXAMPLE = 'deploy/compose/.env.example';
 export const COMPOSE = 'deploy/compose/docker-compose.yml';
 
@@ -28,12 +27,48 @@ export const ALLOWLIST = new Map([
 
 const NAME = 'OWLWIRE_[A-Z0-9_]*[A-Z0-9]';
 
-/** Keys of the zod object the config loader parses the environment with. */
-export function schemaKeys(text, constName = 'envSchema') {
-  const start = text.search(new RegExp(`\\bconst ${constName}\\s*=\\s*z\\.object\\(\\{`));
-  if (start === -1) throw new Error(`${constName} = z.object({ ... }) not found`);
-  const body = text.slice(start, text.indexOf('\n});', start));
-  return [...body.matchAll(new RegExp(`^\\s*['"]?(${NAME})['"]?\\s*:`, 'gm'))].map((m) => m[1]);
+/** Index just past the brace that closes the one opened at `open`, or -1 when it never closes. */
+function closingBrace(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}' && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * Keys of a zod object literal `const <constName> = z.object({ ... })`. `label` names the file in errors.
+ * Throws when the const is missing or its braces never close, so a refactor cannot silently hide variables.
+ */
+export function schemaKeys(text, constName = 'envSchema', label = LOADER) {
+  const re = new RegExp(`\\bconst ${constName}\\s*=\\s*z\\.object\\(\\{`);
+  const m = re.exec(text);
+  if (!m) throw new Error(`${label}: ${constName} = z.object({ ... }) not found`);
+  const open = m.index + m[0].length - 1;
+  const end = closingBrace(text, open);
+  if (end === -1) throw new Error(`${label}: the braces of ${constName} never close`);
+  return [...text.slice(open, end).matchAll(new RegExp(`^\\s*['"]?(${NAME})['"]?\\s*:`, 'gm'))].map(
+    (k) => k[1],
+  );
+}
+
+/**
+ * Every `const x = z.object({ ... })` in the non-test files of the config directory whose keys are OWLWIRE_*
+ * variables, as [file, keys] pairs. Discovered, not listed, so a new config file cannot be forgotten.
+ */
+export function discoverSchemas(root) {
+  const found = [];
+  for (const entry of readdirSync(join(root, CONFIG_DIR), { withFileTypes: true })) {
+    if (!entry.isFile() || !SCANNED.test(entry.name) || TEST_FILE.test(entry.name)) continue;
+    const file = `${CONFIG_DIR}/${entry.name}`;
+    const text = readFileSync(join(root, file), 'utf8');
+    for (const m of text.matchAll(/\bconst (\w+)\s*=\s*z\.object\(\{/g)) {
+      const keys = schemaKeys(text, m[1], file);
+      if (keys.length > 0) found.push([file, keys]);
+    }
+  }
+  return found;
 }
 
 /** OWLWIRE_* names read from process.env: member access, bracket access and destructuring. */
@@ -85,13 +120,10 @@ function addSource(map, name, file) {
 /** Variables the code reads, each with the files that read it. */
 export function codeReads(root) {
   const reads = new Map();
-  for (const name of schemaKeys(readFileSync(join(root, LOADER), 'utf8'))) {
-    addSource(reads, name, LOADER);
-  }
-  for (const [file, constName] of EXTRA_SCHEMAS) {
-    for (const name of schemaKeys(readFileSync(join(root, file), 'utf8'), constName)) {
-      addSource(reads, name, file);
-    }
+  // The loader must keep its envSchema; the other config files are found by their z.object schemas.
+  schemaKeys(readFileSync(join(root, LOADER), 'utf8'));
+  for (const [file, keys] of discoverSchemas(root)) {
+    for (const name of keys) addSource(reads, name, file);
   }
   for (const top of ROOTS) {
     let files;

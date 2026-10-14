@@ -42,7 +42,6 @@ function repoWith(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'env-check-'));
   const all = {
     'apps/server/src/config/load.ts': LOADER,
-    'apps/server/src/config/auth-env.ts': 'const authEnvSchema = z.object({\n});\n',
     'deploy/compose/.env.example': EXAMPLE,
     'deploy/compose/docker-compose.yml': COMPOSE,
     ...files,
@@ -63,6 +62,16 @@ describe('schemaKeys', () => {
 
   it('returns the keys of the envSchema object only', () => {
     expect(schemaKeys(LOADER)).toEqual(['OWLWIRE_DATABASE_URL', 'OWLWIRE_PORT', 'OWLWIRE_QUOTED']);
+  });
+
+  it('handles a schema chained with refinements and names the file when it is missing', () => {
+    const text =
+      'const s = z.object({\n  OWLWIRE_A: z.string(),\n  OWLWIRE_B: z.string(),\n}).superRefine(() => {});\n';
+    expect(schemaKeys(text, 's', 'x.ts')).toEqual(['OWLWIRE_A', 'OWLWIRE_B']);
+    expect(() => schemaKeys('const s = z.object({ OWLWIRE_A: 1', 's', 'broken.ts')).toThrow(
+      /broken\.ts/,
+    );
+    expect(() => schemaKeys('nothing', 's', 'other.ts')).toThrow(/other\.ts/);
   });
 
   it('throws when the loader has no envSchema', () => {
@@ -130,6 +139,36 @@ describe('checkEnv', () => {
       missing: [{ name: 'OWLWIRE_QUOTED', files: ['apps/server/src/config/load.ts'] }],
       unused: [],
     });
+  });
+
+  it('discovers schemas in any config file and reports their missing variables', () => {
+    const schema = 'const mailSchema = z.object({\n  OWLWIRE_MAIL_HOST: z.string(),\n});\n';
+    const root = repoWith({ 'apps/server/src/config/mail-env.ts': schema });
+    expect(checkEnv(root)).toEqual({
+      missing: [{ name: 'OWLWIRE_MAIL_HOST', files: ['apps/server/src/config/mail-env.ts'] }],
+      unused: [],
+    });
+    const listed = repoWith({
+      'apps/server/src/config/mail-env.ts': schema,
+      'deploy/compose/.env.example': `${EXAMPLE}OWLWIRE_MAIL_HOST=\n`,
+    });
+    expect(checkEnv(listed)).toEqual({ missing: [], unused: [] });
+  });
+
+  it('counts a variable listed in .env.example as used when a config schema declares it', () => {
+    const root = repoWith({
+      'apps/server/src/config/mail-env.ts':
+        'const s = z.object({\n  OWLWIRE_GONE: z.string(),\n});\n',
+      'deploy/compose/.env.example': `${EXAMPLE}OWLWIRE_GONE=\n`,
+    });
+    expect(checkEnv(root).unused).toEqual([]);
+  });
+
+  it('ignores config schemas whose keys are not OWLWIRE variables', () => {
+    const root = repoWith({
+      'apps/server/src/config/other.ts': 'const s = z.object({\n  name: z.string(),\n});\n',
+    });
+    expect(checkEnv(root)).toEqual({ missing: [], unused: [] });
   });
 
   it('reports a process.env read outside the loader, with every file that reads it', () => {
