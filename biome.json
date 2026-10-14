@@ -20,7 +20,8 @@
               "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db repository functions.",
               "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db repository functions.",
               "@owlwire/db/system": "SystemScope is only allowed in apps/server/src/system/**.",
-              "@owlwire/db/migrate": "Migrations run only from apps/server/src/system/**, apps/server/src/test/** and integration tests."
+              "@owlwire/db/migrate": "Migrations run only from apps/server/src/system/**, apps/server/src/test/** and integration tests.",
+              "@owlwire/db/fixtures": "@owlwire/db/fixtures is test-only: use it from *.test.ts, *.int.test.ts or apps/server/src/test/**."
             }
           }
         }
@@ -29,6 +30,27 @@
   },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "overrides": [
+    {
+      "includes": ["**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db repository functions.",
+                  "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db repository functions.",
+                  "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db repository functions.",
+                  "@owlwire/db/system": "SystemScope is only allowed in apps/server/src/system/**.",
+                  "@owlwire/db/migrate": "Migrations run only from apps/server/src/system/**, apps/server/src/test/** and integration tests."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "includes": ["apps/server/src/test/**", "**/*.int.test.ts"],
       "linter": {
@@ -60,7 +82,8 @@
                 "paths": {
                   "drizzle-orm": "Raw queries are forbidden here; use @owlwire/db/system functions.",
                   "drizzle-orm/pg-core": "Raw queries are forbidden here; use @owlwire/db/system functions.",
-                  "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db/system functions."
+                  "drizzle-orm/node-postgres": "Raw queries are forbidden here; use @owlwire/db/system functions.",
+                  "@owlwire/db/fixtures": "@owlwire/db/fixtures is test-only: use it from *.test.ts, *.int.test.ts or apps/server/src/test/**."
                 }
               }
             }

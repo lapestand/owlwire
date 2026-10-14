@@ -5,13 +5,6 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
-    // @owlwire/testing/fixtures depends on @owlwire/db, while @owlwire/db lists @owlwire/testing only for its tests.
-    // The db build compiles no tests (they are excluded from tsc -b), so it waits only for the packages its source
-    // imports; this keeps the build graph acyclic. db typecheck still waits for testing through ^build.
-    "@owlwire/db#build": {
-      "dependsOn": ["@owlwire/core#build", "@owlwire/crypto#build"],
-      "outputs": ["dist/**"]
-    },
     "typecheck": {
       "dependsOn": ["^build"]
     },
