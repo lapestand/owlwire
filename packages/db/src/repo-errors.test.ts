@@ -4,6 +4,7 @@ import {
   pgErrorCode,
   pgErrorOf,
   RepoConflictError,
+  RepoInputError,
   RepoNotFoundError,
   safeErrorMessage,
 } from './errors.js';
@@ -127,6 +128,26 @@ describe('mapPgErrors details', () => {
       },
     ).catch((e: unknown) => e);
     expect(other).toMatchObject({ entity: 'invitation', id: 'i1', constraint: 'x_fk' });
+  });
+
+  it('maps only the listed CHECK violations (23514) to RepoInputError', async () => {
+    const checkInput = { invitations_email_lower_check: 'email must be lower case' };
+    const listed = await mapPgErrors(
+      'invitation',
+      'i1',
+      () => Promise.reject(pgErr('23514', 'invitations_email_lower_check')),
+      { checkInput },
+    ).catch((e: unknown) => e);
+    expect(listed).toBeInstanceOf(RepoInputError);
+    expect(listed).toMatchObject({ entity: 'invitation', reason: 'email must be lower case' });
+    const other = pgErr('23514', 'invitations_role_check');
+    await expect(
+      mapPgErrors('invitation', 'i1', () => Promise.reject(other), { checkInput }),
+    ).rejects.toBe(other);
+    const unlisted = pgErr('23514', 'invitations_email_lower_check');
+    await expect(mapPgErrors('invitation', 'i1', () => Promise.reject(unlisted))).rejects.toBe(
+      unlisted,
+    );
   });
 
   it('leaves restrict violations (23001) unmapped', async () => {

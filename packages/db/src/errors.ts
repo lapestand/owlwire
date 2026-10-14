@@ -129,6 +129,11 @@ export async function mapPgErrors<T>(
      * insert points at): constraint name -> the entity and id to name in the RepoNotFoundError.
      */
     fkNotFound?: Readonly<Record<string, { entity: string; id: string }>>;
+    /**
+     * CHECK constraints (23514) that guard caller input: constraint name -> the RepoInputError reason. Other CHECK
+     * violations stay unmapped.
+     */
+    checkInput?: Readonly<Record<string, string>>;
   } = {},
 ): Promise<T> {
   try {
@@ -136,6 +141,10 @@ export async function mapPgErrors<T>(
   } catch (err) {
     const pg = pgErrorOf(err);
     if (pg?.code === '23505') throw new RepoConflictError(entity, pg.constraint, { cause: err });
+    if (pg?.code === '23514') {
+      const reason = pg.constraint ? opts.checkInput?.[pg.constraint] : undefined;
+      if (reason) throw new RepoInputError(entity, reason);
+    }
     if (pg?.code === '23503') {
       const named = pg.constraint ? opts.fkNotFound?.[pg.constraint] : undefined;
       if (named) throw new RepoNotFoundError(named.entity, named.id, pg.constraint, { cause: err });

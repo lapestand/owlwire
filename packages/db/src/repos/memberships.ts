@@ -27,8 +27,11 @@ export interface MemberListItem {
   joinedAt: Date;
 }
 
-/** RepoConflictError constraint used when a change would leave the workspace without an owner. */
-const LAST_OWNER = 'last_owner';
+/**
+ * `RepoConflictError.constraint` when a demotion or removal would leave the workspace without an owner. It is a reason
+ * code, not a Postgres constraint name; the API maps it to a 409.
+ */
+export const LAST_OWNER = 'last_owner';
 
 const USER_FK = 'memberships_user_id_auth_user_id_fk';
 const WORKSPACE_FK = 'memberships_workspace_id_workspaces_id_fk';
@@ -40,6 +43,11 @@ const memberKey = (t: TenantTx, userId: string) =>
  * Locks the membership of `userId` together with every owner membership of the workspace (FOR UPDATE, in user_id
  * order so that concurrent callers take the locks in the same order). A concurrent demotion or removal of another
  * owner waits here; once it commits, Postgres re-checks the locked rows, so the owner count read afterwards is current.
+ *
+ * Safe-side false conflict: a row that becomes an owner after this statement's snapshot (a concurrent transfer that
+ * promotes someone else, or an uncommitted addMembership with role owner) is not counted. The check can then refuse
+ * with LAST_OWNER although an owner would remain. It never lets the owner count reach zero; callers must treat the
+ * 409 as possible (and may retry once).
  */
 async function lockOwnersAnd(
   t: TenantTx,
@@ -104,6 +112,14 @@ export async function listMembers(t: TenantTx): Promise<MemberListItem[]> {
 /**
  * Adds the user with the given role and writes member.added. Answers false (and writes nothing) when the user is
  * already a member. A malformed user id is RepoInputError before any SQL; an unknown user is RepoNotFoundError('user').
+ *
+ * Caller invariant: `userId` is the acting session user's own id (creating a workspace, accepting an invitation),
+ * never an id taken from a client. Any instance user id is accepted here, and listMembers then shows that user's name
+ * and email to the workspace, so an "add member by id" path would disclose other users' emails.
+ *
+ * Like every membership mutator here, this does not check that the workspace is live. Callers run after the
+ * workspace access check (getMembershipContext answers null for a soft-deleted workspace); to serialise against a
+ * concurrent soft delete, take lockWorkspaceForUpdate first in the same transaction.
  */
 export async function addMembership(
   t: TenantTx,
@@ -146,8 +162,9 @@ export async function addMembership(
 /**
  * Changes a member's role and writes member.role_changed. Answers false for a non-member or a malformed id, true
  * without an audit row when the role is already the requested one. Demoting the last owner is
- * RepoConflictError('membership', 'last_owner'); the owner count is read under a row lock (see lockOwnersAnd), so two
- * concurrent demotions cannot both succeed.
+ * RepoConflictError('membership', LAST_OWNER); the owner count is read under a row lock (see lockOwnersAnd), so two
+ * concurrent demotions cannot both succeed. Under a concurrent promotion the refusal can be a false conflict (see
+ * lockOwnersAnd). Does not check that the workspace is live (see addMembership).
  */
 export async function updateMemberRole(
   t: TenantTx,
@@ -175,8 +192,9 @@ export async function updateMemberRole(
 
 /**
  * Removes a member and writes member.removed (`self` when the actor removed themselves). Answers false for a
- * non-member or a malformed id. Removing the last owner is RepoConflictError('membership', 'last_owner'), decided
- * under the same row lock as updateMemberRole.
+ * non-member or a malformed id. Removing the last owner is RepoConflictError('membership', LAST_OWNER), decided
+ * under the same row lock as updateMemberRole (including its safe-side false conflict). Does not check that the
+ * workspace is live (see addMembership).
  */
 export async function removeMembership(
   t: TenantTx,
@@ -216,7 +234,8 @@ export async function countOwners(t: TenantTx): Promise<number> {
  * `to` becomes owner and `from` steps down to admin, with one workspace-level audit entry
  * (workspace.ownership_transferred). Answers false and writes nothing when either user is not a member of this
  * workspace, when `from` is not an owner, or when an id is malformed (checked before any SQL). The same user on both
- * sides is RepoInputError: it would demote the only owner. Both rows are locked first, in user_id order.
+ * sides is RepoInputError: it would demote the only owner. Both rows are locked first, in user_id order. Does not
+ * check that the workspace is live (see addMembership).
  */
 export async function transferWorkspaceOwnership(
   t: TenantTx,

@@ -1,4 +1,5 @@
 import { newId } from '@owlwire/core';
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type DbTestEnv, setupDbTestEnv } from '../__test__/env.js';
 import { pgErrorOf, RepoConflictError, RepoInputError, RepoNotFoundError } from '../errors.js';
@@ -20,6 +21,7 @@ import {
 import { findInvitationByTokenHash, hasPendingInvitationForEmail } from '../system/invitations.js';
 import { findPersonalWorkspaceByOwner, listMembershipsForUser } from '../system/memberships.js';
 import { listAuditLog, SYSTEM_ACTOR } from './audit.js';
+import { q } from './context.js';
 import {
   createInvitation,
   deletePendingInvitationsForEmail,
@@ -33,6 +35,7 @@ import {
   countOwners,
   getMembership,
   getMembershipContext,
+  LAST_OWNER,
   listMembers,
   removeMembership,
   transferWorkspaceOwnership,
@@ -178,7 +181,7 @@ describe('memberships', () => {
       expect(out.ok ? null : out.err).toBeInstanceOf(RepoConflictError);
       expect(out.ok ? null : out.err).toMatchObject({
         entity: 'membership',
-        constraint: 'last_owner',
+        constraint: LAST_OWNER,
       });
     }
     expect(await inTenant(ws, (t) => countOwners(t))).toBe(1);
@@ -196,55 +199,152 @@ describe('memberships', () => {
     expect(await inTenant(ws, (t) => countOwners(t))).toBe(1);
   });
 
-  it('serializes two concurrent owner demotions so one of them is refused', async () => {
-    const a = await user();
-    const b = await user();
-    const ws = await community(a);
-    await inTenant(ws, (t) => addMembership(t, { userId: b, role: 'owner' }, as(a)));
+  type Op = (t: TenantTx) => Promise<boolean>;
+  interface Race {
+    /** Members besides `a` (always an owner): b and c with these roles. */
+    b: 'owner' | 'member';
+    c: 'owner' | 'member' | null;
+    first: (u: Users) => Op;
+    second: (u: Users) => Op;
+    /** What the blocked second call ends with once the first one commits. */
+    secondOutcome: 'conflict' | false;
+  }
+  interface Users {
+    a: string;
+    b: string;
+    c: string;
+  }
+  const RACES: Array<[string, Race]> = [
+    [
+      'two owner demotions',
+      {
+        b: 'owner',
+        c: null,
+        first: (u) => (t) => updateMemberRole(t, u.a, 'admin', as(u.a)),
+        second: (u) => (t) => updateMemberRole(t, u.b, 'admin', as(u.b)),
+        secondOutcome: 'conflict',
+      },
+    ],
+    [
+      'an owner removal against a demotion of the other owner',
+      {
+        b: 'owner',
+        c: null,
+        first: (u) => (t) => removeMembership(t, u.a, as(u.a)),
+        second: (u) => (t) => updateMemberRole(t, u.b, 'member', as(u.b)),
+        secondOutcome: 'conflict',
+      },
+    ],
+    [
+      'an owner demotion against a removal of the other owner',
+      {
+        b: 'owner',
+        c: null,
+        first: (u) => (t) => updateMemberRole(t, u.a, 'admin', as(u.a)),
+        second: (u) => (t) => removeMembership(t, u.b, as(u.b)),
+        secondOutcome: 'conflict',
+      },
+    ],
+    [
+      'a transfer against a demotion of the new owner',
+      {
+        b: 'member',
+        c: null,
+        first: (u) => (t) => transferWorkspaceOwnership(t, { from: u.a, to: u.b }, as(u.a)),
+        second: (u) => (t) => updateMemberRole(t, u.b, 'member', as(u.b)),
+        secondOutcome: 'conflict',
+      },
+    ],
+    [
+      'an owner demotion against a transfer away from that owner',
+      {
+        b: 'owner',
+        c: 'member',
+        first: (u) => (t) => updateMemberRole(t, u.a, 'admin', as(u.a)),
+        second: (u) => (t) => transferWorkspaceOwnership(t, { from: u.a, to: u.c }, as(u.a)),
+        secondOutcome: false,
+      },
+    ],
+  ];
 
-    let holding!: () => void;
-    const held = new Promise<void>((resolve) => {
-      holding = resolve;
-    });
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    // First transaction demotes a and keeps its locks until the gate opens.
-    const first = settle(
-      inTenant(ws, async (t) => {
-        const changed = await updateMemberRole(t, a, 'admin', as(a));
-        holding();
-        await gate;
-        return changed;
-      }),
-    );
-    await held;
-    // Second transaction demotes b while the first one is still open.
-    const second = settle(inTenant(ws, (t) => updateMemberRole(t, b, 'admin', as(b))));
-    const secondDone = second.then(() => undefined);
-    // Wait until the second one is blocked on a row lock (or has finished, which the assertions below then fail).
-    const blocked = (async () => {
-      for (let i = 0; i < 200; i++) {
-        const { rows } = await env.owner.query<{ n: number }>(
-          "select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()",
+  it.each(RACES)(
+    'serializes %s and never leaves the workspace without an owner',
+    async (_name, race) => {
+      const u: Users = { a: await user(), b: await user(), c: await user() };
+      const ws = await community(u.a);
+      await inTenant(ws, async (t) => {
+        await addMembership(t, { userId: u.b, role: race.b }, as(u.a));
+        if (race.c) await addMembership(t, { userId: u.c, role: race.c }, as(u.a));
+      });
+
+      let holding!: () => void;
+      const held = new Promise<void>((resolve) => {
+        holding = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // The first transaction runs its change and keeps its row locks until the gate opens.
+      const first = settle(
+        inTenant(ws, async (t) => {
+          const value = await race.first(u)(t);
+          holding();
+          await gate;
+          return value;
+        }),
+      );
+      await held;
+
+      // The second transaction reports its backend pid, then runs its change while the first is still open.
+      let reportPid!: (pid: number) => void;
+      const pid = new Promise<number>((resolve) => {
+        reportPid = resolve;
+      });
+      const second = settle(
+        inTenant(ws, async (t) => {
+          const result = await q(t).execute(sql`select pg_backend_pid() as pid`);
+          reportPid(Number((result.rows[0] as { pid: number }).pid));
+          return race.second(u)(t);
+        }),
+      );
+      let secondDone = false;
+      void second.then(() => {
+        secondDone = true;
+      });
+
+      // Observe exactly that backend waiting on a lock; give up if the second call finishes first.
+      const secondPid = await pid;
+      let observedBlocked = false;
+      for (let i = 0; i < 400 && !secondDone; i++) {
+        const { rows } = await env.owner.query(
+          "select 1 from pg_stat_activity where pid = $1 and wait_event_type = 'Lock'",
+          [secondPid],
         );
-        if ((rows[0]?.n ?? 0) > 0) return;
+        if (rows.length > 0) {
+          observedBlocked = true;
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-    })();
-    await Promise.race([blocked, secondDone]);
-    release();
+      release();
 
-    const [one, two] = await Promise.all([first, second]);
-    expect(one).toEqual({ ok: true, value: true });
-    expect(two.ok).toBe(false);
-    expect(two.ok ? null : two.err).toMatchObject({
-      entity: 'membership',
-      constraint: 'last_owner',
-    });
-    expect(await inTenant(ws, (t) => countOwners(t))).toBe(1);
-  });
+      const [one, two] = await Promise.all([first, second]);
+      expect(observedBlocked, 'second transaction was seen waiting on the row lock').toBe(true);
+      expect(one).toEqual({ ok: true, value: true });
+      if (race.secondOutcome === 'conflict') {
+        expect(two.ok).toBe(false);
+        expect(two.ok ? null : two.err).toBeInstanceOf(RepoConflictError);
+        expect(two.ok ? null : two.err).toMatchObject({
+          entity: 'membership',
+          constraint: LAST_OWNER,
+        });
+      } else {
+        expect(two).toEqual({ ok: true, value: false });
+      }
+      expect(await inTenant(ws, (t) => countOwners(t))).toBe(1);
+    },
+  );
 
   it('transfers ownership with a single workspace audit entry', async () => {
     const a = await user();
@@ -463,6 +563,69 @@ describe('invitations', () => {
     const [created] = await inTenant(ws, (t) => listAuditLog(t, { action: 'invitation.created' }));
     expect(created).toMatchObject({ targetType: 'invitation', targetId: inv.id });
     expect(JSON.stringify(created?.data)).not.toContain(tokenHash);
+  });
+
+  it('refuses to accept an invitation once the clock has passed its expiry, but still revokes it', async () => {
+    const a = await user();
+    const ws = await community(a);
+    const tokenHash = `late-${newId()}`;
+    const inv = await inTenant(ws, (t) =>
+      createInvitation(
+        t,
+        {
+          email: `late-${newId()}@x.test`,
+          role: 'member',
+          tokenHash,
+          invitedBy: a,
+          expiresAt: later(1),
+        },
+        as(a),
+      ),
+    );
+    const start = env.clock.now();
+    env.clock.set(new Date(start.getTime() + 2 * DAY));
+    try {
+      // The lookup still finds it (callers report "expired"), but the state change refuses it.
+      const found = await inSystem((s) => findInvitationByTokenHash(s, tokenHash));
+      expect(found?.id).toBe(inv.id);
+      expect(found && found.expiresAt.getTime() < env.clock.now().getTime()).toBe(true);
+      await inTenant(ws, async (t) => {
+        expect(await markInvitationAccepted(t, inv.id, as(a))).toBe(false);
+        expect((await getInvitationForUpdate(t, inv.id))?.acceptedAt).toBeNull();
+      });
+      expect(await actions(ws)).not.toContain('invitation.accepted');
+      expect(await inTenant(ws, (t) => revokeInvitation(t, inv.id, as(a)))).toBe(true);
+    } finally {
+      env.clock.set(start);
+    }
+  });
+
+  it('never hands out the token hash', async () => {
+    const a = await user();
+    const ws = await community(a);
+    const tokenHash = `secret-hash-${newId()}`;
+    const created = await inTenant(ws, (t) =>
+      createInvitation(
+        t,
+        {
+          email: `hash-${newId()}@x.test`,
+          role: 'admin',
+          tokenHash,
+          invitedBy: a,
+          expiresAt: later(1),
+        },
+        as(a),
+      ),
+    );
+    const listed = await inTenant(ws, (t) => listPendingInvitations(t));
+    const locked = await inTenant(ws, (t) => getInvitationForUpdate(t, created.id));
+    const lookup = await inSystem((s) => findInvitationByTokenHash(s, tokenHash));
+    expect(lookup?.id).toBe(created.id);
+    for (const row of [created, ...listed, locked, lookup]) {
+      expect(row).not.toBeNull();
+      expect(Object.keys(row ?? {})).not.toContain('tokenHash');
+      expect(JSON.stringify(row)).not.toContain(tokenHash);
+    }
   });
 
   it('replaces pending invitations for an email and revokes by id', async () => {
