@@ -163,7 +163,7 @@ describe('auth, membership and invitation schema', () => {
     );
   });
 
-  it('derives the role CHECKs from the core role lists', async () => {
+  it('derives the role check constraints from the core role lists', async () => {
     expect((await checkValues('memberships_role_check')).sort()).toEqual(
       [...WORKSPACE_ROLES].sort(),
     );
