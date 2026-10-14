@@ -39,7 +39,9 @@ hadolint lints Dockerfiles when they change, and lychee checks Markdown links wh
 Trivy scan of the Docker image runs on pull requests that touch the image inputs and weekly; it fails on high or
 critical findings that have a fix. squawk lints the migrations a pull request adds or changes in
 `packages/db/drizzle` for statements that lock or rewrite tables; rule choices and the `-- squawk-ignore <rule>`
-escape hatch are explained in `.squawk.toml`.
+escape hatch are explained in `.squawk.toml`. The nightly Flaky hunt workflow runs the integration suite four
+times in shuffled order with a random seed each time; its job summary lists the seed and the failed tests, and
+`./dev pnpm test:int --sequence.shuffle --sequence.seed=<seed>` replays the same order.
 
 ## Tests
 
