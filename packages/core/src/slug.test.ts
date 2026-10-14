@@ -2,8 +2,10 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
   generateSlug,
+  isValidSlug,
   PERSONAL_SLUG_PATTERN,
   personalSlug,
+  RESERVED_SLUGS,
   SLUG_PATTERN,
   slugify,
 } from './slug.js';
@@ -69,5 +71,56 @@ describe('slug invariants', () => {
         },
       ),
     );
+  });
+});
+
+describe('slug hardening', () => {
+  it('rejects consecutive dashes and punycode prefixes', () => {
+    for (const bad of ['a--b', 'xn--abc', 'abc--']) expect(SLUG_PATTERN.test(bad)).toBe(false);
+    expect(SLUG_PATTERN.test('a-b-c')).toBe(true);
+  });
+
+  it('rejects reserved and personal-namespace slugs for user-chosen names', () => {
+    for (const r of [
+      'api',
+      'admin',
+      'auth',
+      'www',
+      'app',
+      'static',
+      'assets',
+      'health',
+      'readyz',
+      'healthz',
+      'login',
+      'logout',
+      'signup',
+      'settings',
+      'invite',
+      'invitations',
+      'workspaces',
+      'me',
+      'v1',
+      'hooks',
+      'events',
+      'deliveries',
+    ]) {
+      expect(RESERVED_SLUGS.has(r)).toBe(true);
+      expect(isValidSlug(r)).toBe(false);
+    }
+    expect(isValidSlug(personalSlug('0192f3a4-5b6c-7d8e-9f01-23456789abcd'))).toBe(false);
+    expect(isValidSlug('kurt-surusu')).toBe(true);
+    expect(isValidSlug('ab')).toBe(false);
+  });
+
+  it('refuses unusable suffixes', () => {
+    for (const bad of ['', 'A1', 'a-b', 'x'.repeat(17)]) {
+      expect(() => generateSlug('name', bad)).toThrow(RangeError);
+    }
+  });
+
+  it('refuses non-uuid ids for personal slugs', () => {
+    expect(() => personalSlug('not-a-uuid')).toThrow(RangeError);
+    expect(() => personalSlug('')).toThrow(RangeError);
   });
 });

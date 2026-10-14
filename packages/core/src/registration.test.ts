@@ -35,3 +35,27 @@ describe('decideRegistration', () => {
     expect(defaultRegistrationForProfile('open')).toBe('open');
   });
 });
+
+describe('decideRegistration full table', () => {
+  const allow = { allowed: true };
+  const rows = [
+    ['open', false, false, allow],
+    ['open', false, true, allow],
+    ['open', true, false, allow],
+    ['open', true, true, allow],
+    ['invite', false, false, { allowed: false, reason: 'invitation_required' }],
+    ['invite', false, true, allow],
+    ['invite', true, false, allow],
+    ['invite', true, true, allow],
+    ['closed', false, false, { allowed: false, reason: 'registration_closed' }],
+    ['closed', false, true, { allowed: false, reason: 'registration_closed' }],
+    ['closed', true, false, allow],
+    ['closed', true, true, allow],
+  ] as const;
+  it.each(rows)(
+    '%s bootstrap=%s invitation=%s',
+    (mode, bootstrap, hasPendingInvitation, expected) => {
+      expect(decideRegistration({ mode, bootstrap, hasPendingInvitation })).toEqual(expected);
+    },
+  );
+});
