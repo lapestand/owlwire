@@ -59,8 +59,21 @@ export function checkCommitMessage(raw) {
   const msg = cleanMessage(raw);
   if (msg === '') return ['the message is empty'];
   const header = msg.split('\n')[0];
-  if (GENERATED.test(header)) return [];
+  const problems = [];
+  // A header git writes itself (merge, revert, fixup) is exempt from the shape rules only; the content rules below
+  // still apply to the whole message, so such a header cannot carry attribution, Turkish text or plan references.
+  if (!GENERATED.test(header)) problems.push(...headerShapeProblems(msg, header));
+  if (NON_ENGLISH.test(msg)) problems.push('write the message in English');
+  if (ATTRIBUTION.some((re) => re.test(msg)))
+    problems.push('remove tool or co-author attribution lines');
+  if (INTERNAL_REFS.some((re) => re.test(msg))) {
+    problems.push('remove references to internal plans or tasks (for example R12, P1a, task 3)');
+  }
+  return problems;
+}
 
+/** Layout rules for a hand-written message: conventional header, header length and the blank line after it. */
+function headerShapeProblems(msg, header) {
   const problems = [];
   const m = HEADER.exec(header);
   if (!m) {
@@ -78,12 +91,6 @@ export function checkCommitMessage(raw) {
   const lines = msg.split('\n');
   if (lines.length > 1 && lines[1].trim() !== '')
     problems.push('leave a blank line between the header and the body');
-  if (NON_ENGLISH.test(msg)) problems.push('write the message in English');
-  if (ATTRIBUTION.some((re) => re.test(msg)))
-    problems.push('remove tool or co-author attribution lines');
-  if (INTERNAL_REFS.some((re) => re.test(msg))) {
-    problems.push('remove references to internal plans or tasks (for example R12, P1a, task 3)');
-  }
   return problems;
 }
 
