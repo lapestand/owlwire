@@ -40,7 +40,7 @@ See [docs/security.md](docs/security.md) for details and accepted risks.
 
 ```sh
 curl -X POST http://localhost:8080/v1/events \
-  -H "Authorization: Bearer ow_inst_..." \
+  -H "Authorization: Bearer $OWLWIRE_TOKEN" \
   -H "content-type: application/json" \
   -d '{"type":"player.inactive","severity":"warning","title":"Inactive","body":"Player X went inactive","idempotencyKey":"evt-123"}'
 ```

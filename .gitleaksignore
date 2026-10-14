@@ -1,3 +1,5 @@
 # Test fixtures: fake token-like values used to prove that secrets are scrubbed from logs and error responses.
 9c999239ae82604f0626bbc17969262fa032de05:apps/server/src/http/app.test.ts:generic-api-key:108
 dcdac5e31556bbe9a6a6079790fb44441dbde137:apps/server/src/log-privacy.int.test.ts:generic-api-key:18
+# README example request (placeholder token, not a secret).
+e1c7bc9cc5c8c67e509c3ceecde4f8075e04af20:README.md:curl-auth-header:42
