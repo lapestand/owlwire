@@ -1,0 +1,14 @@
+# Link check configuration for lychee (https://github.com/lycheeverse/lychee), run by .github/workflows/links.yml.
+
+# Loopback, private and link-local addresses point at a running instance, not at something on the internet.
+exclude_loopback = true
+exclude_private = true
+exclude_link_local = true
+
+exclude = [
+  # Needs a signed-in GitHub session; anonymous requests are redirected to the login page.
+  '^https://github\.com/lapestand/owlwire/security/advisories/new',
+]
+
+# Retry transient network errors before reporting a link as broken.
+max_retries = 3
