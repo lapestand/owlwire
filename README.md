@@ -2,26 +2,42 @@
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/lapestand/owlwire/badge)](https://scorecard.dev/viewer/?uri=github.com/lapestand/owlwire)
 
-Owlwire is a source-available, self-hostable notification router. Your application sends one event over HTTP; Owlwire
-routes it to the chats that subscribed to it on **WhatsApp**, **Telegram** and **Discord**.
+Owlwire is a source-available, self-hostable notification router. Your application sends an event once over HTTP;
+Owlwire delivers it to everyone who subscribed to it, on whichever platform they use: chat apps such as WhatsApp,
+Telegram and Discord, outgoing webhooks, and more over time. Channels are adapters, so new platforms can be added
+without changing the core.
 
 It is multi-tenant from the start: one instance can serve many independent communities (workspaces), each with its
 own connections, recipients and rules, isolated from each other at the database level.
 
 > **Status: early development.** The data model, tenant isolation, encryption and a minimal Telegram delivery path
-> are in place. WhatsApp, Discord, user accounts and the web UI are not implemented yet. Do not run it in
+> are in place. The other channels, user accounts and the web UI are not implemented yet. Do not run it in
 > production.
+
+## Channels
+
+| Channel | Direction | Status |
+|---|---|---|
+| Telegram (shared bot or your own bot) | out | minimal delivery works, full adapter planned |
+| WhatsApp (your own number, via [Evolution API](https://github.com/EvolutionAPI/evolution-api)) | out | planned |
+| Discord (bot or channel webhook) | out | planned |
+| Outgoing webhooks (any HTTP endpoint, e.g. Slack, Teams, Matrix, n8n) | out | planned |
+| Email | out | planned |
+| HTTP API and incoming webhooks | in | available |
+| Alertmanager, Grafana, Home Assistant | in | planned |
+
+New channels are written against the adapter SDK in `packages/adapter-sdk`.
 
 ## How it works
 
 ```
-your app ──POST /v1/events──▶ Owlwire ──rules──▶ deliveries ──▶ Telegram / WhatsApp / Discord
+your app ──POST /v1/events──▶ Owlwire ──rules──▶ deliveries ──▶ Telegram / WhatsApp / Discord / webhooks / …
 ```
 
 - **Workspace**: a community or team. Every row of tenant data belongs to exactly one workspace.
 - **Installation**: an app connected to a workspace; it authenticates with its own token (`ow_inst_…`).
-- **Connection**: a channel account the workspace owns (a Telegram bot, a WhatsApp number via
-  [Evolution API](https://github.com/EvolutionAPI/evolution-api), a Discord bot or webhook).
+- **Connection**: a channel account the workspace owns, for example a Telegram bot, a WhatsApp number, a Discord
+  bot or an outgoing webhook.
 - **Destination / audience**: a chat, group or channel to deliver to, and named groups of them.
 - **Rule**: which event types (and severities) go to which destinations.
 

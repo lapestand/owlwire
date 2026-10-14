@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/testing",
-  "version": "0.35.47",
+  "version": "0.35.48",
   "private": true,
   "type": "module",
   "exports": {
