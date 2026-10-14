@@ -112,21 +112,23 @@ describe.each(TENANT_TABLES)('%s', (table) => {
   });
 
   it('tenant A cannot update or delete B rows', async () => {
-    const update = asApp(
-      { tenant: a.workspaceId },
-      `update ${table} set workspace_id = workspace_id where workspace_id = $1`,
-      [b.workspaceId],
-    );
-    const remove = asApp(
-      { tenant: a.workspaceId },
-      `delete from ${table} where workspace_id = $1`,
-      [b.workspaceId],
-    );
+    // Each statement starts only when it is awaited: starting both up front lets a rejected delete go
+    // unobserved while the update is still pending, which Node reports as an unhandled rejection.
+    const update = () =>
+      asApp(
+        { tenant: a.workspaceId },
+        `update ${table} set workspace_id = workspace_id where workspace_id = $1`,
+        [b.workspaceId],
+      );
+    const remove = () =>
+      asApp({ tenant: a.workspaceId }, `delete from ${table} where workspace_id = $1`, [
+        b.workspaceId,
+      ]);
     // audit_log is append-only and workspace_keys rows are never deleted by the app role.
-    if (NO_UPDATE.has(table)) await expect(update).rejects.toMatchObject({ code: '42501' });
-    else expect((await update).rowCount).toBe(0);
-    if (NO_DELETE.has(table)) await expect(remove).rejects.toMatchObject({ code: '42501' });
-    else expect((await remove).rowCount).toBe(0);
+    if (NO_UPDATE.has(table)) await expect(update()).rejects.toMatchObject({ code: '42501' });
+    else expect((await update()).rowCount).toBe(0);
+    if (NO_DELETE.has(table)) await expect(remove()).rejects.toMatchObject({ code: '42501' });
+    else expect((await remove()).rowCount).toBe(0);
   });
 
   it('system mode sees both tenants', async () => {
