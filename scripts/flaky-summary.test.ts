@@ -61,6 +61,25 @@ describe('renderFlakyMarkdown', () => {
     );
   });
 
+  it('escapes backslashes before pipes in table cells', () => {
+    const { markdown } = renderFlakyMarkdown(
+      {
+        success: false,
+        testResults: [
+          {
+            name: '/repo/c.int.test.ts',
+            status: 'failed',
+            assertionResults: [
+              { fullName: 'a \\| b', status: 'failed', failureMessages: ['Error: x'] },
+            ],
+          },
+        ],
+      },
+      { seed: '3', root: '/repo' },
+    );
+    expect(markdown).toContain('| a \\\\\\| b |');
+  });
+
   it('reports a file that failed outside of a test, such as a failing hook', () => {
     const { failures } = renderFlakyMarkdown(
       {

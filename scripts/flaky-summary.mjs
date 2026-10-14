@@ -12,8 +12,8 @@ const firstLine = (text) =>
     .map((l) => l.trim())
     .find((l) => l !== '') ?? '';
 
-/** Table cells cannot hold pipes or newlines. */
-const cell = (text) => text.replace(/\|/g, '\\|').slice(0, 300);
+/** Table cells cannot hold raw pipes; backslashes are escaped first so an escape cannot be undone. */
+const cell = (text) => text.slice(0, 300).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 
 /**
  * @param {{ success?: boolean, numTotalTests?: number, numFailedTests?: number, testResults?: Array<{
