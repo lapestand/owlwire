@@ -1,0 +1,17 @@
+# Default gitleaks rules plus allowlists for known placeholder values. Allowlists match on the line
+# content, so they keep working when commit hashes change.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fake token-like values in tests that prove secrets are scrubbed from logs and responses"
+regexTarget = "line"
+regexes = [
+  '''SECRET(-ID)?-6012345678''',
+  '''botTokenLike = \(tag: string\)''',
+]
+
+[[allowlists]]
+description = "Placeholder token in the README example request"
+regexTarget = "line"
+regexes = ['''Bearer ow_inst_\.\.\.''']
