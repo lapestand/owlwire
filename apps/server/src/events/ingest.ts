@@ -16,7 +16,7 @@ export interface IngestResult {
   duplicate: boolean;
 }
 
-export function toMessage(input: EventInput): Message {
+function toMessage(input: EventInput): Message {
   const { idempotencyKey: _ignored, severity, ...rest } = input;
   return { ...rest, severity: severity ?? 'info' };
 }

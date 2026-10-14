@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 export const ROLES = ['all', 'api', 'worker'] as const;
 export type Role = (typeof ROLES)[number];
-export const DEFAULT_CONFIG_PATH = '/etc/owlwire/owlwire.yaml';
+const DEFAULT_CONFIG_PATH = '/etc/owlwire/owlwire.yaml';
 
 export interface ServerConfig {
   /** Uygulama rolü (owlwire_app, RLS'e tabi). */

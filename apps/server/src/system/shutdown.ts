@@ -1,7 +1,7 @@
 /** Hard limit for a graceful stop; compose gives the container 40 s before SIGKILL. */
 export const SHUTDOWN_DEADLINE_MS = 25_000;
 
-export interface ShutdownLogger {
+interface ShutdownLogger {
   info(obj: object, msg: string): void;
   error(obj: object, msg: string): void;
   fatal(obj: object, msg: string): void;

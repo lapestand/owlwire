@@ -4,7 +4,7 @@ import type pg from 'pg';
 import { createDb } from './client.js';
 
 /** "owlw" — every process that migrates takes this session-level advisory lock first. */
-export const MIGRATION_LOCK_KEY = 0x6f776c77;
+const MIGRATION_LOCK_KEY = 0x6f776c77;
 
 /**
  * Resolves to packages/db/drizzle from src/ and dist/; inside the bundled server
