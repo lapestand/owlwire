@@ -19,3 +19,10 @@ overrides:
   # That put the native tsc binary into the production image, and Trivy flags the Go runtime it is built with.
   # Owlwire passes graphile-worker its options in code and never loads a TypeScript config file, so drop the peer.
   "cosmiconfig>typescript": "-"
+  # better-auth lists drizzle-kit, react, react-dom and vitest as optional peers (for its CLI, client hooks and test
+  # helpers), and pnpm fills them from the workspace. That put drizzle-kit and its esbuild binary into the production
+  # image. The server uses only the server API and the Drizzle adapter, so drop these peers.
+  "better-auth>drizzle-kit": "-"
+  "better-auth>react": "-"
+  "better-auth>react-dom": "-"
+  "better-auth>vitest": "-"
