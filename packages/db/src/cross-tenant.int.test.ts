@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { newId } from '@owlwire/core';
 import { type SQL, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { authTableExemptions } from './__test__/auth-tables.js';
 import { type DbTestEnv, setupDbTestEnv } from './__test__/env.js';
 import { type SeededTenant, seedTenant } from './__test__/seed.js';
 import { pgErrorOf, RepoInputError, RepoNotFoundError } from './errors.js';
@@ -334,15 +335,8 @@ const NON_WORKSPACE_TABLES: Record<string, string> = {
   catalog_types: 'snapshotted through apps.owner_workspace_id',
   instance_settings: 'instance-level, system-only RLS; no tenant owns a row',
   rate_buckets: 'instance-level pacing state keyed by scope text; no tenant repository writes it',
-  // Better Auth tables: instance-level, no workspace_id and no tenant RLS; the auth adapter writes them outside
-  // any scope. A user reaches a workspace only through memberships, which are snapshotted above.
-  auth_user: 'instance-level account; tied to workspaces only through snapshotted memberships',
-  auth_session: 'instance-level login session of a user; no workspace column',
-  auth_account: 'instance-level credential or social link of a user; no workspace column',
-  auth_verification: 'instance-level email verification and reset tokens; no workspace column',
-  auth_two_factor: 'instance-level TOTP secret of a user; no workspace column',
-  auth_passkey: 'instance-level WebAuthn credential of a user; no workspace column',
-  auth_rate_limit: 'instance-level sign-in rate limit buckets keyed by client address and path',
+  // A user reaches a workspace only through memberships, which are snapshotted above.
+  ...authTableExemptions(),
 };
 
 function registryDiff(

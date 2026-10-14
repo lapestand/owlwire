@@ -1,3 +1,4 @@
+import { type SQL, sql } from 'drizzle-orm';
 import { customType, timestamp } from 'drizzle-orm/pg-core';
 
 /** Postgres `bytea` carried as a Node Buffer (encrypted secrets). */
@@ -19,3 +20,10 @@ export const literalsOf =
     list: L & ([U] extends [L[number]] ? unknown : { missing: Exclude<U, L[number]> }),
   ): L =>
     list;
+
+/**
+ * `'a', 'b', ...` for an `in (...)` CHECK, built from the same constant as the column's enum so the two cannot drift.
+ * Only for compile-time constant lists: the values are inlined into DDL, with single quotes doubled.
+ */
+export const sqlList = (values: readonly string[]): SQL =>
+  sql.raw(values.map((v) => `'${v.replaceAll("'", "''")}'`).join(', '));

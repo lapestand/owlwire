@@ -1,5 +1,5 @@
 {
-  "id": "2e1db642-e719-4f98-8828-fc3f779b1bb0",
+  "id": "1b3c4fa3-6189-434b-aaa8-5e2cc2223a04",
   "prevId": "78e21432-6563-4620-be85-05f7a8d0a420",
   "version": "7",
   "dialect": "postgresql",
@@ -603,21 +603,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "auth_passkey_credential_id_idx": {
-          "name": "auth_passkey_credential_id_idx",
-          "columns": [
-            {
-              "expression": "credential_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -636,7 +621,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "auth_passkey_credential_id_unique": {
+          "name": "auth_passkey_credential_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "credential_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -836,38 +829,7 @@
           "notNull": false
         }
       },
-      "indexes": {
-        "auth_two_factor_user_id_idx": {
-          "name": "auth_two_factor_user_id_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "auth_two_factor_secret_idx": {
-          "name": "auth_two_factor_secret_idx",
-          "columns": [
-            {
-              "expression": "secret",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "auth_two_factor_user_id_auth_user_id_fk": {
           "name": "auth_two_factor_user_id_auth_user_id_fk",
@@ -884,7 +846,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "auth_two_factor_user_id_unique": {
+          "name": "auth_two_factor_user_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -966,7 +936,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "auth_user_email_lower_check": {
+          "name": "auth_user_email_lower_check",
+          "value": "\"auth_user\".\"email\" = lower(\"auth_user\".\"email\")"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.auth_verification": {
@@ -2282,6 +2257,28 @@
         }
       },
       "indexes": {
+        "invitations_pending_email_uidx": {
+          "name": "invitations_pending_email_uidx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"invitations\".\"accepted_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "invitations_workspace_id_idx": {
           "name": "invitations_workspace_id_idx",
           "columns": [
@@ -2915,7 +2912,7 @@
             }
           ],
           "isUnique": true,
-          "where": "\"workspaces\".\"kind\" = 'personal'",
+          "where": "\"workspaces\".\"kind\" = 'personal' and \"workspaces\".\"deleted_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -2932,7 +2929,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },
@@ -2951,6 +2948,10 @@
         "workspaces_kind_check": {
           "name": "workspaces_kind_check",
           "value": "\"workspaces\".\"kind\" in ('personal', 'community')"
+        },
+        "workspaces_owner_kind_check": {
+          "name": "workspaces_owner_kind_check",
+          "value": "\"workspaces\".\"kind\" = 'personal' or \"workspaces\".\"owner_user_id\" is null"
         }
       },
       "isRLSEnabled": false
