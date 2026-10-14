@@ -1,4 +1,4 @@
-name: commits
+name: Commits
 
 on:
   push:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   messages:
+    name: Commit messages
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
