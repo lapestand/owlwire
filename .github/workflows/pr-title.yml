@@ -1,5 +1,7 @@
-name: PR title
+name: Pull request
 
+# Checks on the pull request itself rather than its code. `edited` re-runs them when the title or the
+# description is fixed.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
@@ -27,3 +29,25 @@ jobs:
           title_file="$RUNNER_TEMP/pr-title.txt"
           printf '%s\n' "$PR_TITLE" > "$title_file"
           node scripts/check-commit-msg.mjs "$title_file"
+
+  issue-link:
+    name: PR issue link
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # The description must link an issue (Fixes/Closes/Resolves #n or Refs #n) or carry a "No issue: <reason>"
+      # line; Dependabot is exempt. Rules in scripts/check-pr-issue-link.mjs.
+      - name: Check that the description links an issue
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          body_file="$RUNNER_TEMP/pr-body.md"
+          printf '%s\n' "$PR_BODY" > "$body_file"
+          node scripts/check-pr-issue-link.mjs "$body_file" "$PR_AUTHOR"
