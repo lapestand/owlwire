@@ -2,6 +2,7 @@
   "verify_email": {
     "subject": "Owlwire e-posta adresinizi doğrulayın",
     "greeting": "Merhaba {name},",
+    "greeting_neutral": "Merhaba,",
     "body": "Owlwire hesabınızı etkinleştirmek için aşağıdaki bağlantıyı açın.",
     "cta": "E-postamı doğrula",
     "footer": "Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz."
@@ -9,14 +10,18 @@
   "reset_password": {
     "subject": "Owlwire şifre sıfırlama",
     "greeting": "Merhaba {name},",
-    "body": "Şifrenizi sıfırlamak için aşağıdaki bağlantıyı açın. Bağlantı kısa süre sonra geçersiz olur.",
+    "greeting_neutral": "Merhaba,",
+    "body": "Şifrenizi sıfırlamak için aşağıdaki bağlantıyı açın.",
+    "expiry": "Bağlantı {duration} boyunca geçerlidir.",
     "cta": "Şifremi sıfırla",
     "footer": "Bu isteği siz yapmadıysanız şifreniz değişmez; bu e-postayı yok sayabilirsiniz."
   },
   "invitation": {
     "subject": "{inviter} sizi Owlwire'da \"{workspace}\" workspace'ine davet etti",
+    "subject_neutral": "Owlwire'da \"{workspace}\" workspace'ine davet edildiniz",
     "greeting": "Merhaba,",
     "body": "{inviter}, sizi Owlwire'daki \"{workspace}\" workspace'ine {role} olarak davet etti.",
+    "body_neutral": "Owlwire'daki \"{workspace}\" workspace'ine {role} olarak davet edildiniz.",
     "expiry": "Davet {date} tarihine kadar geçerlidir.",
     "cta": "Daveti kabul et",
     "footer": "Bu daveti beklemiyorsanız e-postayı yok sayabilirsiniz.",
