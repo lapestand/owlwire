@@ -13,7 +13,7 @@ permissions:
 jobs:
   analysis:
     name: Scorecard
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
