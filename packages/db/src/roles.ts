@@ -188,7 +188,7 @@ async function grantAppAccess(client: pg.Client, appUser: string): Promise<void>
     await client.query(`grant execute on all functions in schema ${schema} to ${role}`);
   }
   // audit_log is append-only for the app role, and workspace keys are never deleted by it (a
-  // deleted key loses every secret of the workspace; rotation only UPDATEs them). Re-applied on every run because the
+  // deleted key loses every secret of the workspace; rotation only updates them). Re-applied on every run because the
   // blanket grant above restores them. Workspace deletion still cascades: FK actions run as the table owner.
   const restricted = await client.query<{ audit: boolean; keys: boolean }>(
     "select to_regclass('public.audit_log') is not null as audit, to_regclass('public.workspace_keys') is not null as keys",

@@ -19,7 +19,7 @@ own connections, recipients and rules, isolated from each other at the database 
 | Channel | Direction | Status |
 |---|---|---|
 | Telegram (shared bot or your own bot) | out | minimal delivery works, full adapter planned |
-| WhatsApp (your own number, via [Evolution API](https://github.com/EvolutionAPI/evolution-api)) | out | planned |
+| WhatsApp (your own number, via [Evolution API](https://github.com/evolution-foundation/evolution-api)) | out | planned |
 | Discord (bot or channel webhook) | out | planned |
 | Outgoing webhooks (any HTTP endpoint, e.g. Slack, Teams, Matrix, n8n) | out | planned |
 | Email | out | planned |
