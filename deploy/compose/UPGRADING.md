@@ -1,6 +1,6 @@
 # Upgrading the compose deployment
 
-## To P1a (two database roles, row level security)
+## To 0.35 (two database roles, row level security)
 
 1. **New required variable `OWLWIRE_DB_APP_PASSWORD`.** The server now connects as the application role `owlwire_app`,
    which is subject to row level security. Migrations run as the owner role `owlwire` (`OWLWIRE_DB_OWNER_PASSWORD`).
@@ -17,7 +17,7 @@
 2. **Upgrade every Owlwire process before writing new connections.** Migration `0006` changes the default of
    `connections.config_enc_scheme` from `kek_v0` to `dek_v1`. Existing rows keep `kek_v0`, and the server re-encrypts
    them with workspace keys when it starts. During a rolling upgrade (for example separate `--role api` and
-   `--role worker` processes), an old P0 process that still inserts connections (only `dev:seed` does) would write
+   `--role worker` processes), an older process that still inserts connections (only `dev:seed` does) would write
    rows that the new code cannot decrypt. Stop or upgrade all old processes first, then run `dev:seed`.
 
 3. **`OWLWIRE_ALLOW_INSECURE_DB_ROLE` (local development only).** `serve` refuses to start when its database

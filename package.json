@@ -1,6 +1,7 @@
 {
   "name": "owlwire",
-  "version": "0.35.19",
+  "version": "0.35.20",
+  "license": "BUSL-1.1",
   "private": true,
   "type": "module",
   "engines": {

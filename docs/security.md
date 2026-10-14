@@ -18,18 +18,18 @@
   `newId()` (UUIDv7) and passes it to `withTenant`. A client never supplies the id of a new workspace.
 - **Static guards.** Raw Drizzle is allowed only in `packages/db/src/**`. `@owlwire/db/system` (`SystemScope`,
   `withSystem`) is allowed only there and in `apps/server/src/system/**`. `pg` value imports and
-  `@owlwire/db/migrate` are allowed only in the places listed in R91. dependency-cruiser enforces these rules
+  `@owlwire/db/migrate` are allowed only in a short list of database, worker and test modules. dependency-cruiser enforces these rules
   (`pnpm depcruise`), and Biome shows them in the editor. Outside `packages/db/src/**`, the Biome plugin
   `tools/biome/no-unsafe-sql.grit` forbids `sql.raw` and any `.query(...)` whose SQL text uses template
   interpolation or `+` concatenation.
 
-### Accepted risk (R123)
+### Accepted risk
 
 PostgreSQL does not tie custom settings to role privileges. Anyone who can run arbitrary SQL as the application role
 can run `set_config('owlwire.system', 'on', true)` and read or write every tenant's rows. So SQL injection breaks
 tenant isolation completely. We reduce this risk by building every query with bound parameters, through the static
-guards above. These checks are textual: a setting name passed as a bound parameter is not detected. We will
-reconsider a separate system database role instead of the setting in P2.3.
+guards above. These checks are textual: a setting name passed as a bound parameter is not detected. A separate
+system database role, instead of the setting, may replace this in a later release.
 
 ## Background jobs
 
@@ -65,7 +65,7 @@ single-role local database, `OWLWIRE_ALLOW_INSECURE_DB_ROLE=true` lets `serve` s
 The opt-in is ignored when `NODE_ENV=production`, which the Owlwire image sets.
 
 Two keyring checks stop startup in every environment. First, the keyring must hold, with the right key material, every
-KEK version that wraps a stored workspace key. Second, the startup legacy upgrade tries to open every P0 (`kek_v0`)
+KEK version that wraps a stored workspace key. Second, the startup legacy upgrade tries to open every legacy (`kek_v0`)
 connection secret; if any is sealed with a KEK version that is not configured, `serve` upgrades the ones it can open
 and then refuses to start, naming the missing version (set `OWLWIRE_KEK_PREVIOUS` to it). A legacy secret that fails
 for another reason (a corrupt row) is logged and does not block startup.

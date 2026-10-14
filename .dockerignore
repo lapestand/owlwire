@@ -5,9 +5,8 @@
 **/*.tsbuildinfo
 apps/server/drizzle
 apps/server/public
-.git
-.github
-.superpowers
+.*
+!.nvmrc
 docs
 dev
 **/.env
