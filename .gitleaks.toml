@@ -9,6 +9,7 @@ regexTarget = "line"
 regexes = [
   '''SECRET(-ID)?-6012345678''',
   '''botTokenLike = \(tag: string\)''',
+  '''const SECRET = 'Zk3vQ8xLp0Rt7YbN2mWc9HdFg5JsAe1U';''',
 ]
 
 [[allowlists]]
