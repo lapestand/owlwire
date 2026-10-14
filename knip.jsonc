@@ -23,9 +23,8 @@
         // Built first through turbo's ^build, then copied into public/ by scripts/copy-assets.mjs.
         "@owlwire/web",
         // Installed ahead of the account and sign-in code that imports them. Remove each entry in the change that
-        // adds its first import: nodemailer with the mailer, better-auth with the auth setup, the passkey plugin
-        // with two-factor and passkey support.
-        "nodemailer",
+        // adds its first import: better-auth with the auth setup, the passkey plugin with two-factor and passkey
+        // support.
         "better-auth",
         "@better-auth/passkey"
       ]
