@@ -2,6 +2,7 @@
   "verify_email": {
     "subject": "Verify your Owlwire email address",
     "greeting": "Hi {name},",
+    "greeting_neutral": "Hi,",
     "body": "Open the link below to activate your Owlwire account.",
     "cta": "Verify my email",
     "footer": "If you did not request this, you can ignore this email."
@@ -9,14 +10,18 @@
   "reset_password": {
     "subject": "Reset your Owlwire password",
     "greeting": "Hi {name},",
-    "body": "Open the link below to reset your password. The link expires soon.",
+    "greeting_neutral": "Hi,",
+    "body": "Open the link below to reset your password.",
+    "expiry": "The link is valid for {duration}.",
     "cta": "Reset my password",
     "footer": "If you did not request this, your password stays unchanged and you can ignore this email."
   },
   "invitation": {
     "subject": "{inviter} invited you to \"{workspace}\" on Owlwire",
+    "subject_neutral": "You were invited to \"{workspace}\" on Owlwire",
     "greeting": "Hi,",
     "body": "{inviter} invited you to the \"{workspace}\" workspace on Owlwire as {role}.",
+    "body_neutral": "You were invited to the \"{workspace}\" workspace on Owlwire as {role}.",
     "expiry": "The invitation is valid until {date}.",
     "cta": "Accept the invitation",
     "footer": "If you were not expecting this invitation, you can ignore this email.",
