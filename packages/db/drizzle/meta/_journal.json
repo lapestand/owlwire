@@ -50,6 +50,20 @@
       "when": 1791912575612,
       "tag": "0006_connections_scheme_default_dek_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792000090179,
+      "tag": "0007_p1b_auth_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792000091690,
+      "tag": "0008_p1b_rls_policies",
+      "breakpoints": true
     }
   ]
 }

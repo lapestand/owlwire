@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/web",
-  "version": "0.35.73",
+  "version": "0.35.74",
   "private": true,
   "type": "module",
   "scripts": {

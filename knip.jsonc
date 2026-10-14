@@ -30,10 +30,7 @@
       ]
     },
     "apps/web": {},
-    "packages/db": {
-      // Installed ahead of the auth adapter that imports it; remove this entry together with that change.
-      "ignoreDependencies": ["better-auth"]
-    },
+    "packages/db": {},
     "packages/*": {},
     "packages/adapters/*": {}
   }

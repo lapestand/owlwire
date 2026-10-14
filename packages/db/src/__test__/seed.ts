@@ -15,7 +15,10 @@ import { createRule } from '../repos/rules.js';
 import { tenantScope, withTenant } from '../scope.js';
 import { createTestWorkspace } from './fixtures.js';
 
-/** One fully populated workspace built only through the tenant repository functions. */
+/**
+ * One fully populated workspace, built through the tenant repository functions where they exist and raw inserts
+ * (app role, own scope) where no repository writes the table yet.
+ */
 export interface SeededTenant {
   workspaceId: string;
   connectionId: string;
@@ -27,6 +30,10 @@ export interface SeededTenant {
   eventId: string;
   deliveryId: string;
   digestId: string;
+  /** Instance-level auth_user row, owner of the workspace through a membership. */
+  userId: string;
+  invitationId: string;
+  invitationEmail: string;
   secret: string;
 }
 
@@ -90,6 +97,19 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       values (${conn.id}, ${workspaceId}, '2026-10-12', 1)`);
     await q(t).execute(sql`insert into catalog_types (app_id, key, name)
       values (${app.id}, ${`${label}.type`}, ${label})`);
+    // A user who owns the workspace and a pending invitation, so membership and invitation attacks have a target.
+    const userId = newId();
+    await q(t).execute(sql`insert into auth_user (id, name, email)
+      values (${userId}, ${label}, ${`${label}-${userId}@seed.test`})`);
+    await q(t).execute(sql`insert into memberships (workspace_id, user_id, role)
+      values (${workspaceId}, ${userId}, 'owner')`);
+    const invitationId = newId();
+    const invitationEmail = `${label}-invitee-${invitationId}@seed.test`;
+    await q(
+      t,
+    ).execute(sql`insert into invitations (id, workspace_id, email, role, token_hash, invited_by, expires_at)
+      values (${invitationId}, ${workspaceId}, ${invitationEmail}, 'member', ${`${label}-inv-${randomUUID()}`},
+              ${userId}, now() + interval '7 days')`);
     return {
       workspaceId,
       connectionId: conn.id,
@@ -101,6 +121,9 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       eventId: ev.eventId,
       deliveryId: delivery.id,
       digestId,
+      userId,
+      invitationId,
+      invitationEmail,
       secret,
     };
   });
