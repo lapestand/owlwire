@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/adapter-telegram",
-  "version": "0.35.71",
+  "version": "0.35.72",
   "private": true,
   "type": "module",
   "exports": {

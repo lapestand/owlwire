@@ -2,6 +2,16 @@ import { z } from 'zod';
 
 export const PROFILES = ['personal', 'community', 'open'] as const;
 export const REGISTRATION_MODES = ['closed', 'invite', 'open'] as const;
+
+/** Registration mode a profile implies when the config does not name one. */
+export const PROFILE_REGISTRATION_DEFAULTS: Record<
+  (typeof PROFILES)[number],
+  (typeof REGISTRATION_MODES)[number]
+> = {
+  personal: 'closed',
+  community: 'invite',
+  open: 'open',
+};
 // Hız ön ayarları tanımlandığında z.enum(PACING_PRESET_NAMES) ile değiştirilecek
 const pacingPreset = z.enum(['safe', 'normal', 'fast', 'off']);
 
@@ -73,9 +83,17 @@ function deepMerge(base: unknown, override: unknown): unknown {
   return out;
 }
 
-/** Parses the YAML-decoded edition config; missing keys fall back to DEFAULT_EDITION_CONFIG. */
+/** Parses the YAML-decoded edition config; missing keys fall back to DEFAULT_EDITION_CONFIG,
+ *  a missing `registration` to the default of the effective profile. */
 export function parseEditionConfig(raw: unknown): EditionConfig {
   if (raw === undefined || raw === null) return editionConfigSchema.parse(DEFAULT_EDITION_CONFIG);
   if (!isPlainObject(raw)) throw new Error('edition config must be a mapping (YAML object)');
-  return editionConfigSchema.parse(deepMerge(DEFAULT_EDITION_CONFIG, raw));
+  const merged = deepMerge(DEFAULT_EDITION_CONFIG, raw) as Record<string, unknown>;
+  if (!('registration' in raw)) {
+    const profile = (PROFILES as readonly unknown[]).includes(merged.profile)
+      ? (merged.profile as (typeof PROFILES)[number])
+      : DEFAULT_EDITION_CONFIG.profile;
+    merged.registration = PROFILE_REGISTRATION_DEFAULTS[profile];
+  }
+  return editionConfigSchema.parse(merged);
 }
