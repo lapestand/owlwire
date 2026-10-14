@@ -21,10 +21,20 @@
         "drizzle-orm",
         "grammy",
         // Built first through turbo's ^build, then copied into public/ by scripts/copy-assets.mjs.
-        "@owlwire/web"
+        "@owlwire/web",
+        // Installed ahead of the account and sign-in code that imports them. Remove each entry in the change that
+        // adds its first import: nodemailer with the mailer, better-auth with the auth setup, the passkey plugin
+        // with two-factor and passkey support.
+        "nodemailer",
+        "better-auth",
+        "@better-auth/passkey"
       ]
     },
     "apps/web": {},
+    "packages/db": {
+      // Installed ahead of the auth adapter that imports it; remove this entry together with that change.
+      "ignoreDependencies": ["better-auth"]
+    },
     "packages/*": {},
     "packages/adapters/*": {}
   }
