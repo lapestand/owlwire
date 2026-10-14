@@ -15,3 +15,7 @@ allowBuilds:
 overrides:
   "@esbuild-kit/core-utils>esbuild": ^0.28.2
   "tsup>esbuild": ^0.28.2
+  # cosmiconfig (via graphile-worker) has an optional typescript peer, which pnpm fills from the workspace root.
+  # That put the native tsc binary into the production image, and Trivy flags the Go runtime it is built with.
+  # Owlwire passes graphile-worker its options in code and never loads a TypeScript config file, so drop the peer.
+  "cosmiconfig>typescript": "-"
