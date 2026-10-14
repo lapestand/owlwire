@@ -26,6 +26,9 @@ export async function startPostgres(
   };
 }
 
+/** 55006: the database is still being accessed by other users. */
+const OBJECT_IN_USE = '55006';
+
 export interface ScratchDatabase {
   url: string;
   drop(): Promise<void>;
@@ -52,10 +55,21 @@ export async function createTestDatabase(adminUrl: string): Promise<ScratchDatab
   return {
     url: url.toString(),
     drop: async () => {
-      await withAdmin(adminUrl, (c) =>
-        // biome-ignore lint/plugin: identifier escaped with escapeIdentifier
-        c.query(`drop database if exists ${c.escapeIdentifier(name)} with (force)`),
-      );
+      await withAdmin(adminUrl, async (c) => {
+        const db = c.escapeIdentifier(name);
+        try {
+          // pg-pool's end() resolves before its sockets close, so the server may still be serving
+          // sessions that are already on their way out. A plain drop waits (up to 5 s) for them;
+          // FORCE would terminate them with 57P01, which an idle pg client emits as 'error'.
+          // biome-ignore lint/plugin: identifier escaped with escapeIdentifier
+          await c.query(`drop database if exists ${db}`);
+        } catch (err) {
+          if ((err as { code?: unknown }).code !== OBJECT_IN_USE) throw err;
+          // A session that never ended: drop anyway so the scratch database does not leak.
+          // biome-ignore lint/plugin: identifier escaped with escapeIdentifier
+          await c.query(`drop database if exists ${db} with (force)`);
+        }
+      });
     },
   };
 }
