@@ -1,9 +1,14 @@
 name: CI
 
+# Every check of a pull request (and of a push to main) runs from this workflow: the jobs below plus the other
+# per-PR workflows, which are reusable (workflow_call). The last job, CI passed, needs all of them and is the only
+# required status check, so path-filtered jobs can be skipped without blocking a merge.
 on:
   push:
     branches: [main]
   pull_request:
+    # edited: a fixed PR title or description re-runs the checks, including PR title and PR issue link.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -13,6 +18,57 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Path filters for the jobs that only matter when certain files change. A change to this file runs all of them.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # list the files of the pull request
+    outputs:
+      dockerfiles: ${{ steps.filter.outputs.dockerfiles }}
+      image: ${{ steps.filter.outputs.image }}
+      markdown: ${{ steps.filter.outputs.markdown }}
+      migrations: ${{ steps.filter.outputs.migrations }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            dockerfiles:
+              - '**/Dockerfile'
+              - '**/*.Dockerfile'
+              - '**/Dockerfile.*'
+              - .github/workflows/hadolint.yml
+              - .github/workflows/ci.yml
+            image:
+              - 'docker/**'
+              - 'apps/**'
+              - 'packages/**'
+              - package.json
+              - pnpm-lock.yaml
+              - pnpm-workspace.yaml
+              - .dockerignore
+              - .github/workflows/trivy.yml
+              - .github/workflows/ci.yml
+            markdown:
+              - '**/*.md'
+              - lychee.toml
+              - .github/workflows/links.yml
+              - .github/workflows/ci.yml
+            migrations:
+              - 'packages/db/drizzle/*.sql'
+              - .squawk.toml
+              - .github/workflows/migration-lint.yml
+              - .github/workflows/ci.yml
+            workflows:
+              - '.github/**'
+
   lint:
     name: Lint & boundaries
     runs-on: ubuntu-26.04
@@ -114,3 +170,119 @@ jobs:
         run: pnpm exec vitest run --coverage --passWithNoTests
       - name: Write coverage summary
         run: node scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+
+  # Reusable workflows. A job name here prefixes the check names, for example "Docker / Docker image smoke test".
+  docker:
+    name: Docker
+    uses: ./.github/workflows/docker.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  hadolint:
+    name: Dockerfiles
+    needs: changes
+    if: needs.changes.outputs.dockerfiles == 'true'
+    uses: ./.github/workflows/hadolint.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  trivy:
+    name: Trivy
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    permissions:
+      contents: read
+      security-events: write # upload the results to code scanning
+    uses: ./.github/workflows/trivy.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  codeql:
+    name: CodeQL
+    permissions:
+      contents: read
+      security-events: write # upload the results to code scanning
+    uses: ./.github/workflows/codeql.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  secrets:
+    name: Secrets
+    uses: ./.github/workflows/secrets.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/dependency-review.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  commits:
+    name: Commits
+    uses: ./.github/workflows/commits.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  pull-request:
+    name: Pull request
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  actionlint:
+    name: Workflows
+    uses: ./.github/workflows/actionlint.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  zizmor:
+    name: Workflow security
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.workflows == 'true'
+    uses: ./.github/workflows/zizmor.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  spelling:
+    name: Spelling
+    uses: ./.github/workflows/spelling.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  links:
+    name: Links
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.markdown == 'true'
+    uses: ./.github/workflows/links.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  migration-lint:
+    name: Migration lint
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.migrations == 'true'
+    uses: ./.github/workflows/migration-lint.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
+
+  # The only required status check. It runs even when something failed or the run was cancelled (always()), so it
+  # never ends up skipped, which branch protection would count as passing. Every job above must be listed in
+  # needs; a job that succeeded or was skipped by its condition is fine, anything else fails the gate.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs:
+      - changes
+      - lint
+      - typecheck
+      - build
+      - unit
+      - integration
+      - migrations
+      - coverage
+      - docker
+      - hadolint
+      - trivy
+      - codeql
+      - secrets
+      - dependency-review
+      - commits
+      - pull-request
+      - actionlint
+      - zizmor
+      - spelling
+      - links
+      - migration-lint
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Check the result of every job
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key' <<< "$NEEDS")
+          if [ -n "$failed" ]; then
+            for job in $failed; do
+              echo "::error::$job did not succeed ($(jq -r --arg j "$job" '.[$j].result' <<< "$NEEDS"))"
+            done
+            exit 1
+          fi
+          echo "All jobs succeeded or were skipped."

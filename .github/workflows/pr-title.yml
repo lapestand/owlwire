@@ -1,10 +1,10 @@
 name: Pull request
 
-# Checks on the pull request itself rather than its code. `edited` re-runs them when the title or the
-# description is fixed.
+# Checks on the pull request itself rather than its code. ci.yml also runs on `edited`, so fixing the title or
+# the description re-runs them.
 on:
-  pull_request:
-    types: [opened, edited, reopened, synchronize]
+  # Pull requests run this through ci.yml; the gate job there (CI passed) is the required check.
+  workflow_call:
 
 permissions:
   contents: read

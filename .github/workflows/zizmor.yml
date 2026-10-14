@@ -1,11 +1,9 @@
 name: Workflow security
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    paths:
-      - .github/**
+  # Pull requests and pushes to main run this through ci.yml, which decides from the changed paths whether
+  # it is needed; the gate job there (CI passed) is the required check.
+  workflow_call:
 
 permissions:
   contents: read

@@ -1,19 +1,9 @@
 name: Dockerfiles
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**/Dockerfile'
-      - '**/*.Dockerfile'
-      - '**/Dockerfile.*'
-      - .github/workflows/hadolint.yml
-  pull_request:
-    paths:
-      - '**/Dockerfile'
-      - '**/*.Dockerfile'
-      - '**/Dockerfile.*'
-      - .github/workflows/hadolint.yml
+  # Pull requests and pushes to main run this through ci.yml, which decides from the changed paths whether
+  # it is needed; the gate job there (CI passed) is the required check.
+  workflow_call:
 
 permissions:
   contents: read
