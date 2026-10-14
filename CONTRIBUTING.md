@@ -63,6 +63,11 @@ exclusion. Do not loosen these tests to make a change pass.
 required checks pass. Keep pull requests focused on one change, and rebase on `main` rather than merging `main` into
 your branch.
 
+The pull request description must link the issue it works on: `Fixes #123` (or `Closes` / `Resolves`) closes it on
+merge, and `Refs #123` only references it. For a trivial change without an issue, add a line
+`No issue: <reason>` instead. The `PR issue link` check enforces this and re-runs when you edit the description;
+Dependabot pull requests are exempt.
+
 If a change affects how Owlwire is deployed or upgraded, update `deploy/compose/UPGRADING.md`. If it changes the
 security model or an accepted risk, update `docs/security.md`.
 
