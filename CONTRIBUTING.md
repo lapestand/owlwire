@@ -24,7 +24,7 @@ at `/var/run/docker.sock` or in `DOCKER_HOST`, set `OWLWIRE_DEV_DOCKER_SOCK` to 
 ## Checks and tests
 
 ```sh
-./dev pnpm lint           # Biome and the system-mode guard
+./dev pnpm lint           # Biome, the system-mode guard and the .env.example sync check
 ./dev pnpm depcruise      # dependency boundaries
 ./dev pnpm typecheck
 ./dev pnpm test           # unit tests
