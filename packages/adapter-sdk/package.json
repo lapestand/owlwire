@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/adapter-sdk",
-  "version": "0.35.76",
+  "version": "0.35.77",
   "private": true,
   "type": "module",
   "sideEffects": false,
