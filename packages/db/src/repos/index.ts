@@ -103,6 +103,7 @@ export {
   countOwners,
   getMembership,
   getMembershipContext,
+  LAST_OWNER,
   listMembers,
   type MemberListItem,
   type MembershipContext,

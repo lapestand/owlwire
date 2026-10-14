@@ -6,13 +6,15 @@ import type { TenantTx } from '../scope.js';
 import { type AuditActor, writeAudit } from './audit.js';
 import { now, q } from './context.js';
 
+/**
+ * An invitation as callers see it. The token hash stays inside the repository layer: it is written once by
+ * createInvitation and only ever compared in SQL (findInvitationByTokenHash), never returned.
+ */
 export interface InvitationRow {
   id: string;
   workspaceId: string;
   email: string;
   role: InvitableRole;
-  /** Hash of the invitation token; the token itself is never stored. */
-  tokenHash: string;
   invitedBy: string | null;
   expiresAt: Date;
   acceptedAt: Date | null;
@@ -28,6 +30,19 @@ export interface CreateInvitationInput {
   expiresAt: Date;
 }
 
+/** Package internal: the InvitationRow columns, shared with the system lookup. Deliberately without token_hash. */
+export const invitationColumns = {
+  id: invitations.id,
+  workspaceId: invitations.workspaceId,
+  email: invitations.email,
+  role: invitations.role,
+  invitedBy: invitations.invitedBy,
+  expiresAt: invitations.expiresAt,
+  acceptedAt: invitations.acceptedAt,
+  createdAt: invitations.createdAt,
+};
+
+const EMAIL_LOWER_CHECK = 'invitations_email_lower_check';
 const INVITER_FK = 'invitations_invited_by_auth_user_id_fk';
 const WORKSPACE_FK = 'invitations_workspace_id_workspaces_id_fk';
 
@@ -37,13 +52,19 @@ const normalizeEmail = (email: string): string => email.trim().toLowerCase();
 const byId = (t: TenantTx, id: string) =>
   and(eq(invitations.workspaceId, t.workspaceId), eq(invitations.id, id));
 
-const pending = (t: TenantTx, id: string) => and(byId(t, id), isNull(invitations.acceptedAt));
+/** Not accepted yet; expired rows included (they can still be revoked). */
+const notAccepted = (t: TenantTx, id: string) => and(byId(t, id), isNull(invitations.acceptedAt));
 
 /**
  * Creates an invitation and writes invitation.created (email and role only, never the token hash). A second open
  * invitation for the same email in this workspace is RepoConflictError (`invitations_pending_email_uidx`); replace it
  * with deletePendingInvitationsForEmail first. A malformed inviter id, an empty email or token hash and an invalid
- * expiry are RepoInputError before any SQL; an unknown inviter is RepoNotFoundError('user').
+ * expiry are RepoInputError before any SQL; an unknown inviter is RepoNotFoundError('user'). An email that Postgres
+ * lower() would still change after the JS lower-casing (possible for rare non-ASCII characters under some
+ * collations) fails the table's lower-case CHECK and is RepoInputError too.
+ *
+ * Does not check that the workspace is live: callers reach this only after the workspace access check, which
+ * answers 404 for a soft-deleted workspace.
  */
 export async function createInvitation(
   t: TenantTx,
@@ -76,12 +97,13 @@ export async function createInvitation(
           expiresAt: input.expiresAt,
           createdAt: now(t),
         })
-        .returning(),
+        .returning(invitationColumns),
     {
       fkNotFound: {
         [INVITER_FK]: { entity: 'user', id: input.invitedBy ?? '' },
         [WORKSPACE_FK]: { entity: 'workspace', id: t.workspaceId },
       },
+      checkInput: { [EMAIL_LOWER_CHECK]: 'email is not in lower case form' },
     },
   );
   const row = rows[0];
@@ -99,7 +121,7 @@ export async function createInvitation(
 /** Open invitations of the workspace: not accepted and not expired, oldest first. */
 export async function listPendingInvitations(t: TenantTx): Promise<InvitationRow[]> {
   return q(t)
-    .select()
+    .select(invitationColumns)
     .from(invitations)
     .where(
       and(
@@ -155,7 +177,7 @@ export async function revokeInvitation(
 ): Promise<boolean> {
   if (!isUuid(id)) return false;
   const rows = await mapPgErrors('invitation', id, () =>
-    q(t).delete(invitations).where(pending(t, id)).returning({ id: invitations.id }),
+    q(t).delete(invitations).where(notAccepted(t, id)).returning({ id: invitations.id }),
   );
   if (rows.length === 0) return false;
   await writeAudit(t, {
@@ -174,13 +196,20 @@ export async function getInvitationForUpdate(
   id: string,
 ): Promise<InvitationRow | null> {
   if (!isUuid(id)) return null;
-  const rows = await q(t).select().from(invitations).where(byId(t, id)).limit(1).for('update');
+  const rows = await q(t)
+    .select(invitationColumns)
+    .from(invitations)
+    .where(byId(t, id))
+    .limit(1)
+    .for('update');
   return rows[0] ?? null;
 }
 
 /**
- * Marks a not yet accepted invitation accepted and writes invitation.accepted. Answers false for an unknown, already
- * accepted or malformed id. Expiry is the caller's check (it reads the row with getInvitationForUpdate first).
+ * Marks an open invitation accepted and writes invitation.accepted. Open means not accepted and not expired, both
+ * checked by the same UPDATE, so an expired or already accepted invitation can never be accepted, whatever the caller
+ * checked before. Answers false for an unknown, expired, already accepted or malformed id. A caller that wants to tell
+ * "expired" apart reads the row with getInvitationForUpdate first.
  */
 export async function markInvitationAccepted(
   t: TenantTx,
@@ -192,7 +221,7 @@ export async function markInvitationAccepted(
     q(t)
       .update(invitations)
       .set({ acceptedAt: now(t) })
-      .where(pending(t, id))
+      .where(and(notAccepted(t, id), gt(invitations.expiresAt, now(t))))
       .returning({ role: invitations.role }),
   );
   const row = rows[0];
