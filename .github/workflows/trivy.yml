@@ -3,7 +3,7 @@ name: Trivy
 on:
   push:
     branches: [main]
-    paths: &image-paths
+    paths:
       - docker/**
       - apps/**
       - packages/**
@@ -13,7 +13,15 @@ on:
       - .dockerignore
       - .github/workflows/trivy.yml
   pull_request:
-    paths: *image-paths
+    paths:
+      - docker/**
+      - apps/**
+      - packages/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .dockerignore
+      - .github/workflows/trivy.yml
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
