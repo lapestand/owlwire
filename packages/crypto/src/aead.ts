@@ -54,8 +54,18 @@ function assertKey(key: Uint8Array): void {
   if (key.length !== KEY_BYTES) throw new RangeError(`key must be ${KEY_BYTES} bytes`);
 }
 
-/** The format byte is part of the authenticated data, so the header cannot be relabelled. */
+/** A lone UTF-16 surrogate: in u-mode a valid pair is one astral code point, so only unpaired halves match. */
+const LONE_SURROGATE = /\p{Cs}/u;
+
+/**
+ * The format byte is part of the authenticated data, so the header cannot be relabelled. UTF-8 encoding replaces every
+ * lone surrogate with U+FFFD, which would let distinct AAD strings (`'\uD800'`, `'\uDC00'`, `'\uFFFD'`) authenticate
+ * the same ciphertext; such strings are refused instead.
+ */
 function boundAad(aad: string): Buffer {
+  if (LONE_SURROGATE.test(aad)) {
+    throw new RangeError('aad must be well-formed Unicode (it contains a lone surrogate)');
+  }
   return Buffer.concat([Buffer.of(FORMAT_V1), Buffer.from(aad, 'utf8')]);
 }
 
@@ -86,6 +96,8 @@ export function openBytes(key: Uint8Array, sealed: Uint8Array, aad: string): Buf
   if (buf.length < 1 + NONCE_LEN + TAG_LEN || buf[0] !== FORMAT_V1) {
     throw new DecryptError('unsupported ciphertext format');
   }
+  // Nothing can have been sealed under such an AAD, so opening with one is an ordinary decryption failure.
+  if (LONE_SURROGATE.test(aad)) throw new DecryptError();
   const nonce = buf.subarray(1, 1 + NONCE_LEN);
   const tag = buf.subarray(buf.length - TAG_LEN);
   const body = buf.subarray(1 + NONCE_LEN, buf.length - TAG_LEN);
