@@ -1,6 +1,6 @@
 {
   "name": "@owlwire/contracts",
-  "version": "0.35.43",
+  "version": "0.35.44",
   "private": true,
   "type": "module",
   "exports": {

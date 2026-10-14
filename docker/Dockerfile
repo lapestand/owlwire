@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 
 FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build
+# Fail a RUN when any command in a pipe fails, not only the last one (the checksum check below pipes into sha512sum).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 # corepack is installed from the exact npm registry tarball, checked against pinned digests (BuildKit verifies the
@@ -18,8 +20,8 @@ RUN echo "4a2889b01859a9d0623c74c497a393dec012ad1aca21c61340cb15197c7a104fe033c5
 WORKDIR /repo
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile
-RUN pnpm turbo run build --filter=@owlwire/server...
-RUN pnpm --filter @owlwire/server deploy --prod --legacy /out
+RUN pnpm turbo run build --filter=@owlwire/server... \
+  && pnpm --filter @owlwire/server deploy --prod --legacy /out
 
 FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS runtime
 ENV NODE_ENV=production
@@ -29,7 +31,8 @@ COPY --from=build /out /app
 # dependencies (undici, brace-expansion) are what the Trivy scan reports, so it is removed from the final image.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
   && chmod +x /app/dist/main.js && ln -s /app/dist/main.js /usr/local/bin/owlwire
-USER node
+# The node user of the base image, by number, so that runtimes that check runAsNonRoot can verify it.
+USER 1000:1000
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.OWLWIRE_PORT || 8080) + '/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

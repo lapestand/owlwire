@@ -1,6 +1,11 @@
 # Development container used by ./dev (deploy/compose/docker-compose.dev.yml).
 # The base digest is kept current by Dependabot (docker ecosystem, /docker).
 FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
+# Fail a RUN when any command in a pipe fails, not only the last one (the checksum check below pipes into sha512sum).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Debian replaces package versions in place on security updates, so exact apt pins would break this build within
+# weeks. The base image is pinned by digest and Dependabot bumps it; apt installs the current Debian release of these.
+# hadolint ignore=DL3008
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git openssl \
   && rm -rf /var/lib/apt/lists/*
