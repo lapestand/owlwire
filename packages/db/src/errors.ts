@@ -122,7 +122,14 @@ export async function mapPgErrors<T>(
   entity: string,
   id: string,
   fn: () => Promise<T>,
-  opts: { fkViolation?: 'not_found' | 'conflict' } = {},
+  opts: {
+    fkViolation?: 'not_found' | 'conflict';
+    /**
+     * Foreign keys whose violation means a different row is missing than `entity`/`id` (for example the user an
+     * insert points at): constraint name -> the entity and id to name in the RepoNotFoundError.
+     */
+    fkNotFound?: Readonly<Record<string, { entity: string; id: string }>>;
+  } = {},
 ): Promise<T> {
   try {
     return await fn();
@@ -130,6 +137,8 @@ export async function mapPgErrors<T>(
     const pg = pgErrorOf(err);
     if (pg?.code === '23505') throw new RepoConflictError(entity, pg.constraint, { cause: err });
     if (pg?.code === '23503') {
+      const named = pg.constraint ? opts.fkNotFound?.[pg.constraint] : undefined;
+      if (named) throw new RepoNotFoundError(named.entity, named.id, pg.constraint, { cause: err });
       if (opts.fkViolation === 'conflict') {
         throw new RepoConflictError(entity, pg.constraint, { cause: err });
       }

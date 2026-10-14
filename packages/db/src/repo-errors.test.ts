@@ -105,6 +105,35 @@ describe('mapPgErrors details', () => {
     expect(nf).toMatchObject({ entity: 'destination', id: 'id2', constraint: 'x_fk' });
   });
 
+  it('names the missing row of a listed foreign key instead of the entity being written', async () => {
+    const fk = pgErr('23503', 'invitations_invited_by_auth_user_id_fk');
+    const fkNotFound = { invitations_invited_by_auth_user_id_fk: { entity: 'user', id: 'u1' } };
+    const err = await mapPgErrors('invitation', 'i1', () => Promise.reject(fk), {
+      fkNotFound,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RepoNotFoundError);
+    expect(err).toMatchObject({
+      entity: 'user',
+      id: 'u1',
+      constraint: 'invitations_invited_by_auth_user_id_fk',
+    });
+    expect((err as Error).cause).toBe(fk);
+    const other = await mapPgErrors(
+      'invitation',
+      'i1',
+      () => Promise.reject(pgErr('23503', 'x_fk')),
+      {
+        fkNotFound,
+      },
+    ).catch((e: unknown) => e);
+    expect(other).toMatchObject({ entity: 'invitation', id: 'i1', constraint: 'x_fk' });
+  });
+
+  it('leaves restrict violations (23001) unmapped', async () => {
+    const original = pgErr('23001', 'workspaces_owner_user_id_auth_user_id_fk');
+    await expect(mapPgErrors('user', 'u1', () => Promise.reject(original))).rejects.toBe(original);
+  });
+
   it('rethrows privilege and RLS WITH CHECK violations (42501) unchanged', async () => {
     const original = pgErr('42501');
     await expect(mapPgErrors('audience', 'id3', () => Promise.reject(original))).rejects.toBe(

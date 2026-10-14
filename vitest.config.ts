@@ -10,6 +10,10 @@ const alias = [
   { find: /^@owlwire\/db\/migrate$/, replacement: r('./packages/db/src/migrate-all.ts') },
   { find: /^@owlwire\/db\/system$/, replacement: r('./packages/db/src/system/index.ts') },
   { find: /^@owlwire\/db$/, replacement: r('./packages/db/src/index.ts') },
+  {
+    find: /^@owlwire\/testing\/fixtures$/,
+    replacement: r('./packages/testing/src/fixtures/index.ts'),
+  },
   { find: /^@owlwire\/testing$/, replacement: r('./packages/testing/src/index.ts') },
   { find: /^@owlwire\/contracts$/, replacement: r('./packages/contracts/src/index.ts') },
   { find: /^@owlwire\/adapter-sdk$/, replacement: r('./packages/adapter-sdk/src/index.ts') },

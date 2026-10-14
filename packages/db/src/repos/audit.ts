@@ -32,6 +32,12 @@ export const AUDIT_ACTIONS = [
   'member.removed',
   'member.role_changed',
   'settings.updated',
+  'workspace.updated',
+  'workspace.deleted',
+  'invitation.created',
+  'invitation.revoked',
+  'invitation.accepted',
+  'instance.admin_granted',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -46,6 +52,8 @@ export const AUDIT_TARGET_TYPES = [
   'rule',
   'member',
   'settings',
+  'invitation',
+  'instance',
 ] as const;
 export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number];
 

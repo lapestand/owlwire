@@ -6,11 +6,13 @@ import { createApp } from '../repos/apps.js';
 import { createAudience, setAudienceMembers } from '../repos/audiences.js';
 import { SYSTEM_ACTOR } from '../repos/audit.js';
 import { createConnection } from '../repos/connections.js';
-import { q } from '../repos/context.js';
+import { now, q } from '../repos/context.js';
 import { createDeliveries } from '../repos/deliveries.js';
 import { createDestination } from '../repos/destinations.js';
 import { insertEvent } from '../repos/events.js';
 import { createInstallation } from '../repos/installations.js';
+import { createInvitation } from '../repos/invitations.js';
+import { addMembership } from '../repos/memberships.js';
 import { createRule } from '../repos/rules.js';
 import { tenantScope, withTenant } from '../scope.js';
 import { createTestWorkspace } from './fixtures.js';
@@ -32,6 +34,8 @@ export interface SeededTenant {
   digestId: string;
   /** Instance-level auth_user row, owner of the workspace through a membership. */
   userId: string;
+  /** Instance-level auth_user row, a plain member of the workspace. */
+  memberUserId: string;
   invitationId: string;
   invitationEmail: string;
   secret: string;
@@ -97,19 +101,32 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       values (${conn.id}, ${workspaceId}, '2026-10-12', 1)`);
     await q(t).execute(sql`insert into catalog_types (app_id, key, name)
       values (${app.id}, ${`${label}.type`}, ${label})`);
-    // A user who owns the workspace and a pending invitation, so membership and invitation attacks have a target.
+    // Two users, the owner and a plain member, plus a pending invitation, so membership and invitation attacks have
+    // targets. auth_user is an instance-level table without a repository here, so its rows are raw inserts; the
+    // memberships and the invitation go through the tenant repositories.
     const userId = newId();
-    await q(t).execute(sql`insert into auth_user (id, name, email)
-      values (${userId}, ${label}, ${`${label}-${userId}@seed.test`})`);
-    await q(t).execute(sql`insert into memberships (workspace_id, user_id, role)
-      values (${workspaceId}, ${userId}, 'owner')`);
-    const invitationId = newId();
-    const invitationEmail = `${label}-invitee-${invitationId}@seed.test`;
-    await q(
+    const memberUserId = newId();
+    for (const [id, suffix] of [
+      [userId, 'owner'],
+      [memberUserId, 'member'],
+    ] as const) {
+      await q(t).execute(sql`insert into auth_user (id, name, email)
+        values (${id}, ${`${label}-${suffix}`}, ${`${label}-${suffix}-${id}@seed.test`})`);
+    }
+    await addMembership(t, { userId, role: 'owner', via: 'create' }, SYSTEM_ACTOR);
+    await addMembership(t, { userId: memberUserId, role: 'member' }, SYSTEM_ACTOR);
+    const invitationEmail = `${label}-invitee-${randomUUID()}@seed.test`;
+    const invitation = await createInvitation(
       t,
-    ).execute(sql`insert into invitations (id, workspace_id, email, role, token_hash, invited_by, expires_at)
-      values (${invitationId}, ${workspaceId}, ${invitationEmail}, 'member', ${`${label}-inv-${randomUUID()}`},
-              ${userId}, now() + interval '7 days')`);
+      {
+        email: invitationEmail,
+        role: 'member',
+        tokenHash: `${label}-inv-${randomUUID()}`,
+        invitedBy: userId,
+        expiresAt: new Date(now(t).getTime() + 7 * 24 * 60 * 60 * 1000),
+      },
+      SYSTEM_ACTOR,
+    );
     return {
       workspaceId,
       connectionId: conn.id,
@@ -122,7 +139,8 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       deliveryId: delivery.id,
       digestId,
       userId,
-      invitationId,
+      memberUserId,
+      invitationId: invitation.id,
       invitationEmail,
       secret,
     };
