@@ -42,6 +42,7 @@ function repoWith(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'env-check-'));
   const all = {
     'apps/server/src/config/load.ts': LOADER,
+    'apps/server/src/config/auth-env.ts': 'const authEnvSchema = z.object({\n});\n',
     'deploy/compose/.env.example': EXAMPLE,
     'deploy/compose/docker-compose.yml': COMPOSE,
     ...files,
@@ -55,6 +56,11 @@ function repoWith(files: Record<string, string>): string {
 }
 
 describe('schemaKeys', () => {
+  it('reads the keys of a differently named schema const', () => {
+    const text = 'const authEnvSchema = z.object({\n  OWLWIRE_AUTH_SECRET: z.string(),\n});\n';
+    expect(schemaKeys(text, 'authEnvSchema')).toEqual(['OWLWIRE_AUTH_SECRET']);
+  });
+
   it('returns the keys of the envSchema object only', () => {
     expect(schemaKeys(LOADER)).toEqual(['OWLWIRE_DATABASE_URL', 'OWLWIRE_PORT', 'OWLWIRE_QUOTED']);
   });
