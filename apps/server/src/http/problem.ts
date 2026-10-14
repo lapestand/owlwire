@@ -37,7 +37,7 @@ export class ProblemError extends Error {
   }
 }
 
-export function problemBody(status: number, code: ProblemCode, detail?: string) {
+function problemBody(status: number, code: ProblemCode, detail?: string) {
   return {
     type: `https://owlwire.dev/errors/${code}`,
     title: TITLES[code],

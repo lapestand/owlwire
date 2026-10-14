@@ -3,7 +3,7 @@ import type { TenantTx } from '../scope.js';
 import { loadWorkspaceDek } from './workspace-keys.js';
 
 /** Paket içi. AAD bağlantı kimliğine bağlıdır: şifreli metin başka satıra taşınırsa açılmaz. */
-export const connectionConfigAad = (connectionId: string): string =>
+const connectionConfigAad = (connectionId: string): string =>
   buildAad('owlwire:connection-config', connectionId);
 
 /** Paket içi. Workspace DEK'i ile mühürler; açık DEK işi biter bitmez sıfırlanır. */
