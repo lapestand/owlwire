@@ -66,6 +66,7 @@ Everything runs inside a Docker toolbox container, so only Docker is needed on t
 ./dev pnpm lint && ./dev pnpm typecheck
 ./dev pnpm test        # unit tests
 ./dev pnpm test:int    # integration tests (Testcontainers, needs the Docker socket)
+./dev pnpm test:coverage  # unit + integration coverage (v8), report in coverage/
 ```
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) in English, for example

@@ -97,3 +97,20 @@ jobs:
             git diff -- packages/db/drizzle
             exit 1
           fi
+
+  # Informational: merged unit + integration coverage in the job summary. No threshold; not a required check.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Unit and integration tests with coverage
+        run: pnpm exec vitest run --coverage --passWithNoTests
+      - name: Write coverage summary
+        run: node scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"
