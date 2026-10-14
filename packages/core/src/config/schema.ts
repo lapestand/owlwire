@@ -89,7 +89,7 @@ export function parseEditionConfig(raw: unknown): EditionConfig {
   if (raw === undefined || raw === null) return editionConfigSchema.parse(DEFAULT_EDITION_CONFIG);
   if (!isPlainObject(raw)) throw new Error('edition config must be a mapping (YAML object)');
   const merged = deepMerge(DEFAULT_EDITION_CONFIG, raw) as Record<string, unknown>;
-  if (!('registration' in raw)) {
+  if (raw.registration === undefined || raw.registration === null) {
     const profile = (PROFILES as readonly unknown[]).includes(merged.profile)
       ? (merged.profile as (typeof PROFILES)[number])
       : DEFAULT_EDITION_CONFIG.profile;

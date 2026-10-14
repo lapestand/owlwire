@@ -1,6 +1,11 @@
-import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { canChangeRole, canRemoveMember, roleAtLeast, WORKSPACE_ROLES } from './roles.js';
+import {
+  canChangeRole,
+  canRemoveMember,
+  type MemberDecision,
+  roleAtLeast,
+  WORKSPACE_ROLES,
+} from './roles.js';
 
 describe('roleAtLeast', () => {
   it('orders roles owner > admin > member', () => {
@@ -116,52 +121,71 @@ describe('canRemoveMember', () => {
   });
 });
 
-describe('role invariants', () => {
-  const role = fc.constantFrom(...WORKSPACE_ROLES);
+describe('exhaustive role rules', () => {
+  const R = WORKSPACE_ROLES;
+  const touchesOwner = (t: string, n: string) => t === 'owner' || n === 'owner';
 
-  it('roleAtLeast is a total order', () => {
-    fc.assert(
-      fc.property(role, role, role, (a, b, c) => {
+  it('roleAtLeast is a total order over all pairs', () => {
+    for (const a of R) {
+      for (const b of R) {
         expect(roleAtLeast(a, b) || roleAtLeast(b, a)).toBe(true);
         if (roleAtLeast(a, b) && roleAtLeast(b, a)) expect(a).toBe(b);
-        if (roleAtLeast(a, b) && roleAtLeast(b, c)) expect(roleAtLeast(a, c)).toBe(true);
-      }),
-    );
+        for (const c of R)
+          if (roleAtLeast(a, b) && roleAtLeast(b, c)) expect(roleAtLeast(a, c)).toBe(true);
+      }
+    }
   });
 
-  it('never leaves a workspace without an owner', () => {
-    fc.assert(
-      fc.property(
-        role,
-        role,
-        role,
-        fc.integer({ min: 1, max: 3 }),
-        fc.boolean(),
-        (actorRole, targetRole, newRole, ownerCount, personal) => {
-          const d = canChangeRole({ actorRole, targetRole, newRole, ownerCount, personal });
-          if (d.ok && targetRole === 'owner' && newRole !== 'owner')
-            expect(ownerCount).toBeGreaterThan(1);
-        },
-      ),
-    );
-    fc.assert(
-      fc.property(
-        role,
-        role,
-        fc.boolean(),
-        fc.integer({ min: 1, max: 3 }),
-        fc.boolean(),
-        (actorRole, targetRole, isSelf, ownerCount, targetIsPersonalOwner) => {
-          const d = canRemoveMember({
-            actorRole,
-            targetRole,
-            isSelf,
-            ownerCount,
-            targetIsPersonalOwner,
-          });
-          if (d.ok && targetRole === 'owner') expect(ownerCount).toBeGreaterThan(1);
-        },
-      ),
-    );
+  it('canChangeRole matches the rule table for every combination', () => {
+    for (const actorRole of R)
+      for (const targetRole of R)
+        for (const newRole of R)
+          for (const personal of [false, true])
+            for (const ownerCount of [1, 2]) {
+              const d = canChangeRole({ actorRole, targetRole, newRole, ownerCount, personal });
+              const owner = touchesOwner(targetRole, newRole);
+              let expected: MemberDecision;
+              if (personal && owner) expected = { ok: false, reason: 'personal_workspace' };
+              else if (owner ? actorRole !== 'owner' : actorRole === 'member')
+                expected = { ok: false, reason: 'forbidden' };
+              else if (targetRole === 'owner' && newRole !== 'owner' && ownerCount === 1)
+                expected = { ok: false, reason: 'last_owner' };
+              else expected = { ok: true };
+              expect(d).toEqual(expected);
+              // only an owner can touch an owner; a member can never act
+              if (d.ok && owner) expect(actorRole).toBe('owner');
+              if (actorRole === 'member') expect(d.ok).toBe(false);
+              if (d.ok && targetRole === 'owner' && newRole !== 'owner') expect(ownerCount).toBe(2);
+            }
+  });
+
+  it('canRemoveMember matches the rule table for every combination', () => {
+    for (const actorRole of R)
+      for (const targetRole of R)
+        for (const isSelf of [false, true])
+          for (const targetIsPersonalOwner of [false, true])
+            for (const ownerCount of [1, 2]) {
+              const d = canRemoveMember({
+                actorRole,
+                targetRole,
+                isSelf,
+                ownerCount,
+                targetIsPersonalOwner,
+              });
+              let expected: MemberDecision;
+              if (targetIsPersonalOwner) expected = { ok: false, reason: 'personal_workspace' };
+              else if (isSelf || actorRole === 'owner')
+                expected =
+                  targetRole === 'owner' && ownerCount === 1
+                    ? { ok: false, reason: 'last_owner' }
+                    : { ok: true };
+              else if (actorRole === 'admin' && targetRole === 'member') expected = { ok: true };
+              else expected = { ok: false, reason: 'forbidden' };
+              expect(d).toEqual(expected);
+              // a member can only ever remove themselves; nobody below owner removes an owner
+              if (d.ok && actorRole === 'member') expect(isSelf).toBe(true);
+              if (d.ok && targetRole === 'owner' && !isSelf) expect(actorRole).toBe('owner');
+              if (d.ok && targetRole === 'owner') expect(ownerCount).toBe(2);
+            }
   });
 });

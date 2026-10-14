@@ -17,4 +17,13 @@ describe('parseEditionConfig registration default', () => {
       'open',
     );
   });
+
+  it('treats an empty registration key like an omitted one', () => {
+    expect(parseEditionConfig({ profile: 'community', registration: null }).registration).toBe(
+      'invite',
+    );
+    expect(parseEditionConfig({ profile: 'open', registration: undefined }).registration).toBe(
+      'open',
+    );
+  });
 });
