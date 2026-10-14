@@ -1,0 +1,23 @@
+# Spell check configuration for typos (https://github.com/crate-ci/typos), run by .github/workflows/spelling.yml.
+# Keep the allowlist small: fix real typos instead of adding them here.
+
+[files]
+extend-exclude = [
+  # Integrity hashes and package names, not prose.
+  "pnpm-lock.yaml",
+]
+
+[default.extend-words]
+# Project terms.
+owlwire = "owlwire"
+# Evolution API, the WhatsApp gateway the planned adapter talks to.
+evolution = "evolution"
+
+# Turkish words in code comments, which typos reads as misspelt English.
+ine = "ine"
+nin = "nin"
+paket = "paket"
+parametre = "parametre"
+sistem = "sistem"
+siz = "siz"
+standart = "standart"
