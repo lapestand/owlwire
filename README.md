@@ -66,6 +66,10 @@ Everything runs inside a Docker toolbox container, so only Docker is needed on t
 ./dev pnpm test:int    # integration tests (Testcontainers, needs the Docker socket)
 ```
 
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) in English, for example
+`fix(db): close scoped transactions on rollback`. Enable the local check with
+`git config core.hooksPath tools/hooks`; CI runs the same check on every push and pull request.
+
 Stack: TypeScript, Node.js, Hono, Drizzle ORM, PostgreSQL, Graphile Worker, React + Vite, pnpm + Turborepo.
 
 ## License

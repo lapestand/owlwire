@@ -1,0 +1,4 @@
+#!/bin/sh
+# Enforces the commit message policy in scripts/check-commit-msg.mjs.
+# Enable with: git config core.hooksPath tools/hooks
+exec node "$(git rev-parse --show-toplevel)/scripts/check-commit-msg.mjs" "$1"
