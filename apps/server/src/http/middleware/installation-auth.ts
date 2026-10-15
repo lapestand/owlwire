@@ -1,12 +1,9 @@
 import { isInstallationToken } from '@owlwire/crypto';
 import type { OwlwireDb } from '@owlwire/db';
 import type { MiddlewareHandler } from 'hono';
+import { BEARER_CHALLENGE, ProblemError } from '../../errors.js';
 import { authenticateInstallationToken } from '../../system/installation-auth.js';
-import { ProblemError } from '../problem.js';
 import type { AppEnv } from '../types.js';
-
-/** RFC 6750 challenge sent with every installation-token 401 (middleware and ingest). */
-export const CHALLENGE = { 'www-authenticate': 'Bearer' };
 
 function extractToken(
   authorization: string | undefined,
@@ -33,15 +30,20 @@ export function installationAuth(
         401,
         'unauthorized',
         'missing or malformed installation token',
-        CHALLENGE,
+        BEARER_CHALLENGE,
       );
     }
     // System lookup (cross-tenant) finishes here; tenant scopes are opened later by the handlers.
     const result = await authenticateInstallationToken(db, token);
     if (!result.ok) {
       throw result.code === 'installation_revoked'
-        ? new ProblemError(401, 'installation_revoked', 'installation has been revoked', CHALLENGE)
-        : new ProblemError(401, 'unauthorized', 'invalid installation token', CHALLENGE);
+        ? new ProblemError(
+            401,
+            'installation_revoked',
+            'installation has been revoked',
+            BEARER_CHALLENGE,
+          )
+        : new ProblemError(401, 'unauthorized', 'invalid installation token', BEARER_CHALLENGE);
     }
     const { id, appId, workspaceId, grantedTypes } = result.installation;
     c.set('installation', { id, appId, workspaceId, grantedTypes });

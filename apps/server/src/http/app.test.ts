@@ -12,6 +12,7 @@ import {
 } from '@owlwire/db';
 import { HTTPException } from 'hono/http-exception';
 import { describe, expect, it } from 'vitest';
+import { INVALID_INPUT_DETAIL } from '../errors.js';
 import { createLogger } from '../logger.js';
 import { type AppDeps, AUDIT_DATA_DETAIL, createApp, NOT_FOUND_DETAIL } from './app.js';
 
@@ -105,6 +106,32 @@ describe('errors', () => {
     const conflict = await app.request('/conflict');
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({ code: 'conflict', status: 409 });
+  });
+
+  it('answers repository input and conflict errors on /v1 with the fixed details of /api', async () => {
+    const app = makeApp();
+    app.post('/v1/events/input', () => {
+      throw new RepoInputError('event', 'idempotencyKey must be a non-empty string');
+    });
+    app.post('/v1/events/conflict', () => {
+      throw new RepoConflictError('event', 'events_idempotency_unique');
+    });
+    const input = await app.request('/v1/events/input', { method: 'POST' });
+    expect(input.status).toBe(422);
+    const inputText = await input.text();
+    expect(inputText).not.toContain('idempotencyKey');
+    expect(JSON.parse(inputText)).toMatchObject({
+      code: 'validation_failed',
+      detail: INVALID_INPUT_DETAIL,
+    });
+    const conflict = await app.request('/v1/events/conflict', { method: 'POST' });
+    expect(conflict.status).toBe(409);
+    const conflictText = await conflict.text();
+    expect(conflictText).not.toContain('events_idempotency_unique');
+    expect(conflictText).not.toContain('event');
+    const body = JSON.parse(conflictText);
+    expect(body).toMatchObject({ code: 'conflict', status: 409 });
+    expect(body.detail).toBeUndefined();
   });
 
   it('maps audit guard errors to 422 validation_failed without echoing input keys', async () => {

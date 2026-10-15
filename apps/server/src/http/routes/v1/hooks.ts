@@ -1,10 +1,11 @@
 import { EventInput, HookJsonInput } from '@owlwire/contracts';
 import type { OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
+import { ProblemError } from '../../../errors.js';
 import { ingestEvent } from '../../../events/ingest.js';
 import { idempotencyHeader, isJsonContentType, readJsonBody } from '../../body.js';
 import { installationAuth } from '../../middleware/installation-auth.js';
-import { ProblemError, validationProblem } from '../../problem.js';
+import { validationProblem } from '../../problem.js';
 import type { AppEnv } from '../../types.js';
 import { assertTypeGranted } from './events.js';
 

@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 import type { Handler } from 'hono';
-import { ProblemError } from './problem.js';
+import { ProblemError } from '../errors.js';
 import type { AppEnv } from './types.js';
 
 const CONTENT_TYPES: Record<string, string> = {

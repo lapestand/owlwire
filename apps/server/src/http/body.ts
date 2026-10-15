@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { ProblemError } from './problem.js';
+import { ProblemError } from '../errors.js';
 import type { AppEnv } from './types.js';
 
 export function isJsonContentType(c: Context<AppEnv>): boolean {

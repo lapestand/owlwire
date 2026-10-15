@@ -7,9 +7,8 @@ import {
   tenantScope,
   withTenant,
 } from '@owlwire/db';
-import { CHALLENGE } from '../http/middleware/installation-auth.js';
-import { ProblemError } from '../http/problem.js';
-import type { InstallationContext } from '../http/types.js';
+import type { InstallationContext } from '../auth/installation-context.js';
+import { BEARER_CHALLENGE, ProblemError } from '../errors.js';
 
 export interface IngestResult {
   eventId: string;
@@ -67,7 +66,7 @@ export async function ingestEvent(
         401,
         'installation_revoked',
         'installation has been revoked',
-        CHALLENGE,
+        BEARER_CHALLENGE,
       );
     }
     throw err;

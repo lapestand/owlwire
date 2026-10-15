@@ -8,8 +8,9 @@ import {
 } from '@owlwire/db';
 import type { MiddlewareHandler } from 'hono';
 import type { BaseDeps } from '../../base-deps.js';
-import type { ApiEnv, WorkspaceContext } from '../routes/api/env.js';
-import { notFound } from '../routes/api/problems.js';
+import { notFound } from '../../errors.js';
+import type { WorkspaceContext } from '../../workspaces/context.js';
+import type { ApiEnv } from '../routes/api/env.js';
 
 /**
  * The membership of `userId` in `workspaceId` together with the workspace; null for a malformed id, a non-member,
