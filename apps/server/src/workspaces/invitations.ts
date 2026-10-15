@@ -12,7 +12,7 @@ import {
 import type { SessionUser } from '../auth/session-user.js';
 import type { Deps } from '../deps.js';
 import { notFound, ProblemError } from '../errors.js';
-import { canEmailLinks, mailFailure } from '../mail/links.js';
+import { canEmailLinks, INSECURE_LINK_REASON, MAIL_NOT_SENT, mailFailure } from '../mail/links.js';
 import { type MailLocale, pickLocale } from '../mail/locale.js';
 import { renderMail } from '../mail/templates.js';
 import { getRegistrationMode } from '../system/registration.js';
@@ -101,14 +101,24 @@ export async function inviteMember(
       emailSent = true;
     } catch (err) {
       deps.logger.warn(
-        { ...mailFailure(err), workspaceId: ws.id, invitationId: invitation.id },
-        'invitation email not sent',
+        {
+          kind: 'invitation',
+          ...mailFailure(err),
+          workspaceId: ws.id,
+          invitationId: invitation.id,
+        },
+        MAIL_NOT_SENT,
       );
     }
   } else if (deps.mailer) {
     deps.logger.warn(
-      { reason: 'insecure_public_url', workspaceId: ws.id, invitationId: invitation.id },
-      'invitation email not sent',
+      {
+        kind: 'invitation',
+        reason: INSECURE_LINK_REASON,
+        workspaceId: ws.id,
+        invitationId: invitation.id,
+      },
+      MAIL_NOT_SENT,
     );
   }
   return { invitation, acceptUrl, emailSent };

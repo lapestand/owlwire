@@ -433,9 +433,10 @@ describe('management api: invitations with a failing smtp server', () => {
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as Created;
-    const logged = lines.slice(from).filter((l) => l.includes('invitation email not sent'));
+    const logged = lines.slice(from).filter((l) => l.includes('"msg":"email not sent"'));
     expect(logged).toHaveLength(1);
     expect(JSON.parse(logged[0] ?? '{}')).toMatchObject({
+      kind: 'invitation',
       reason: 'transport',
       workspaceId: ws,
       invitationId: body.invitation.id,
@@ -445,6 +446,30 @@ describe('management api: invitations with a failing smtp server', () => {
       expect(line).not.toContain(tokenOf(body));
       expect(line.toLowerCase()).not.toContain(email.toLowerCase());
     }
+  });
+
+  it('logs an http public URL in production under the same reason as the sign-in emails', async () => {
+    const owner = await h.createUser();
+    const ws = await seedCommunityWorkspace(h.deps.db, owner.id);
+    const config = h.deps.config as { allowHttpLinks: boolean };
+    const from = lines.length;
+    config.allowHttpLinks = false;
+    try {
+      const res = await h.request(`/api/workspaces/${ws}/invitations`, {
+        body: { email: uniqueEmail('insecure') },
+        cookie: owner.cookie,
+      });
+      expect(res.status).toBe(201);
+      expect(((await res.json()) as Created).emailSent).toBe(false);
+    } finally {
+      config.allowHttpLinks = true;
+    }
+    const logged = lines.slice(from).filter((l) => l.includes('"msg":"email not sent"'));
+    expect(logged).toHaveLength(1);
+    expect(JSON.parse(logged[0] ?? '{}')).toMatchObject({
+      kind: 'invitation',
+      reason: 'insecure_public_url',
+    });
   });
 
   it('reports a message the mailer refuses as not sent', async () => {
