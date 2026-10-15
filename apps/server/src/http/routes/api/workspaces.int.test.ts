@@ -1,13 +1,16 @@
+import { openDatabase } from '@owlwire/db';
 import { listAuditActions, seedMembership } from '@owlwire/db/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SESSION_EXPIRES_IN_SECONDS } from '../../../auth/auth.js';
 import { createAuthHooks } from '../../../auth/hooks.js';
+import { createLogger } from '../../../logger.js';
 import {
   type AuthHarness,
   createAuthHarness,
   TEST_BASE_URL,
   uniqueEmail,
 } from '../../../test/auth-harness.js';
+import { createApp } from '../../app.js';
 import { resolveWorkspaceContext } from '../../middleware/workspace-access.js';
 import { API_BASE_PATH, createApiRouter, PUBLIC_API_PATHS } from './index.js';
 import { CROSS_SITE_DETAIL, UNSUPPORTED_MEDIA_TYPE_DETAIL } from './problems.js';
@@ -495,6 +498,48 @@ describe('management api: request hardening', () => {
     expect(unknown.status).toBe(404);
     expect(await unknown.json()).toMatchObject({ code: 'not_found' });
     expect((await h.request('/api/me/not-a-route')).status).toBe(404);
+  });
+
+  it('answers HEAD on a registered GET route with 401, and OPTIONS or an unregistered method with 404', async () => {
+    // No session: HEAD is served as the GET route behind the session check.
+    const head = await h.request('/api/workspaces', { method: 'HEAD' });
+    expect(head.status).toBe(401);
+    // No route answers these, so they read as gone whether or not a session is sent.
+    const u = await h.createUser();
+    for (const cookie of [undefined, u.cookie]) {
+      const init = cookie ? { cookie } : {};
+      const options = await h.request('/api/workspaces', { ...init, method: 'OPTIONS' });
+      expect(options.status).toBe(404);
+      expect(await options.json()).toMatchObject({ code: 'not_found' });
+      const del = await h.request('/api/workspaces', { ...init, method: 'DELETE' });
+      expect(del.status).toBe(404);
+      expect(await del.json()).toMatchObject({ code: 'not_found' });
+    }
+  });
+
+  it('logs a failure nothing maps once and answers a 500 Problem without its message', async () => {
+    const u = await h.createUser();
+    const lines: string[] = [];
+    const logger = createLogger('debug', { write: (line: string) => void lines.push(line) });
+    // listWorkspacesForUser reaches the database through deps.db: a closed handle makes every query fail with a plain Error.
+    const db = openDatabase({
+      url: h.deps.config.databaseUrl,
+      keyring: h.deps.keyring,
+      clock: h.deps.clock,
+    });
+    await db.close();
+    const app = createApp({ ...h.deps, db, logger, webDir: null });
+    const res = await app.request(`${TEST_BASE_URL}/api/workspaces`, {
+      headers: { cookie: u.cookie, origin: TEST_BASE_URL },
+    });
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
+    const body = await res.text();
+    expect(JSON.parse(body)).toMatchObject({ code: 'internal', status: 500 });
+    expect(JSON.parse(body).detail).toBeUndefined();
+    const logged = lines.map((l) => JSON.parse(l)).filter((l) => l.msg === 'unhandled error');
+    expect(logged).toHaveLength(1);
+    expect(logged[0].err).toBeDefined();
   });
 });
 

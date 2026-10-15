@@ -44,9 +44,11 @@ function routeMatcher(api: OpenAPIHono<ApiEnv>): (method: string, path: string) 
 /**
  * The session-authenticated management API under /api. Unsafe methods pass the cross-site guard first; every route
  * not in PUBLIC_API_PATHS then needs a session; a path no route answers is a 404 before the session check, so a
- * removed or mistyped endpoint reads as gone, not as "sign in first" (route names are public in the API document,
- * so this tells nobody anything new; a path the matcher misses is refused, never let through without a session); routes under /workspaces/{workspaceId} also need a live membership
- * of that workspace (404 otherwise).
+ * removed or mistyped endpoint reads as gone, not as "sign in first" (the route list is public in the open-source
+ * repository, so this tells nobody anything new; a path the matcher misses is refused, never let through without a
+ * session). Routes under /workspaces/{workspaceId} also need a live membership of that workspace (404 otherwise).
+ * Only routes registered on this router are known to the matcher: a handler mounted on the parent app under /api
+ * gets 404 here.
  */
 export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   const api = new OpenAPIHono<ApiEnv>({
