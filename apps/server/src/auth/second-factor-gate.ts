@@ -111,6 +111,7 @@ export function socialSecondFactorGate(): BetterAuthPlugin {
             ctx.context.setNewSession(null);
 
             const identifier = `${CHALLENGE_PREFIX}${generateRandomString(20)}`;
+            // The plugin's own clock: its verify endpoints check this expiry against Date.now(), so it is set by it too.
             const expiresAt = new Date(Date.now() + CHALLENGE_MAX_AGE_SECONDS * 1000);
             await ctx.context.internalAdapter.createVerificationValue({
               value: user.id,
