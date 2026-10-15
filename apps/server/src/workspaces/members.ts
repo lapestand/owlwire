@@ -19,14 +19,18 @@ import { lockForActor } from './write-lock.js';
 /** Fixed detail of the 422 for a transfer to the caller themselves. */
 const TARGET_IS_SELF = 'target_is_self';
 
+/** Fixed detail of the 409 for a transfer to a user who already owns the workspace. */
+const ALREADY_OWNER = 'already_owner';
+
 const userActor = (userId: string): AuditActor => ({ kind: 'user', userId });
 
 /** Every member with the name and email the workspace may see (the column-granted auth_user fields only). */
 export function listWorkspaceMembers(
   deps: Pick<BaseDeps, 'db'>,
   workspaceId: string,
+  filter?: { userIds?: readonly string[] },
 ): Promise<MemberListItem[]> {
-  return withTenant(deps.db, tenantScope(workspaceId), (t) => listMembers(t));
+  return withTenant(deps.db, tenantScope(workspaceId), (t) => listMembers(t, filter));
 }
 
 /**
@@ -59,7 +63,7 @@ export async function changeMemberRole(
     // The repository re-checks the last owner under its own row lock and raises LAST_OWNER (409) itself.
     if (!(await updateMemberRole(t, targetUserId, newRole, userActor(actorUserId))))
       throw notFound();
-    const item = (await listMembers(t)).find((m) => m.userId === targetUserId);
+    const [item] = await listMembers(t, { userIds: [targetUserId] });
     if (!item) throw notFound();
     return item;
   });
@@ -85,7 +89,8 @@ export async function removeMember(
       targetRole: target.role,
       isSelf: actorUserId === targetUserId,
       ownerCount: await countOwners(t),
-      targetIsPersonalOwner: workspace.kind === 'personal' && target.role === 'owner',
+      targetIsPersonalOwner:
+        workspace.kind === 'personal' && workspace.ownerUserId === targetUserId,
     });
     if (!decision.ok) throw decisionProblem(decision);
     if (!(await removeMembership(t, targetUserId, userActor(actorUserId)))) throw notFound();
@@ -95,7 +100,8 @@ export async function removeMember(
 /**
  * Makes the target an owner and the caller an admin, in one transaction with one workspace.ownership_transferred
  * entry. Only an owner may transfer (403); a personal workspace cannot be transferred (409 personal_workspace); the
- * caller as target is 422 target_is_self; a target who is not a member is 404.
+ * caller as target is 422 target_is_self; a target who is already an owner is 409 already_owner (the caller would
+ * otherwise step down for nothing); a target who is not a member is 404.
  */
 export async function transferOwnership(
   deps: Pick<BaseDeps, 'db'>,
@@ -110,7 +116,9 @@ export async function transferOwnership(
     if (actorUserId === targetUserId) {
       throw new ProblemError(422, 'validation_failed', TARGET_IS_SELF);
     }
-    if (!(await getMembership(t, targetUserId))) throw notFound();
+    const target = await getMembership(t, targetUserId);
+    if (!target) throw notFound();
+    if (target.role === 'owner') throw new ProblemError(409, 'conflict', ALREADY_OWNER);
     const moved = await transferWorkspaceOwnership(
       t,
       { from: actorUserId, to: targetUserId },
