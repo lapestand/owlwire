@@ -21,6 +21,7 @@ export const TYPES = [
   'revert',
 ];
 export const MAX_HEADER = 72;
+const PR_SUFFIX = / \(#\d+\)$/;
 
 const HEADER = new RegExp(`^(${TYPES.join('|')})(\\([a-z0-9][a-z0-9._/-]*\\))?(!)?: (.+)$`);
 // Messages git writes itself.
@@ -86,7 +87,8 @@ function headerShapeProblems(msg, header) {
       problems.push('the description must start with a lowercase letter');
     if (/[.!?]$/.test(description)) problems.push('the description must not end with punctuation');
   }
-  if (header.length > MAX_HEADER)
+  // GitHub appends " (#123)" to a squash-merge header; the limit applies to the header as written.
+  if (header.replace(PR_SUFFIX, '').length > MAX_HEADER)
     problems.push(`the header is longer than ${MAX_HEADER} characters`);
   const lines = msg.split('\n');
   if (lines.length > 1 && lines[1].trim() !== '')

@@ -33,6 +33,7 @@ describe('checkCommitMessage', () => {
     ['feat: Add discord adapter', 'lowercase'],
     ['feat: add discord adapter.', 'punctuation'],
     [`feat: ${'a'.repeat(80)}`, 'longer than'],
+    [`feat: ${'a'.repeat(67)} (#12)`, 'longer than'],
     ['feat: add adapter\nbody without blank line', 'blank line'],
     ['feat: discord adaptörü ekle', 'English'],
     ['fix: handle errors\n\nCo-authored-by: Someone <s@example.org>', 'attribution'],
@@ -56,6 +57,10 @@ describe('checkCommitMessage', () => {
   it('does not treat SQLSTATE-like codes or versions as plan references', () => {
     expect(checkCommitMessage('fix(db): map sqlstate 22p02 and p0001 errors')).toEqual([]);
     expect(checkCommitMessage('chore(deps): bump node to 26.1')).toEqual([]);
+  });
+
+  it('measures a squash-merge header without the pull request suffix', () => {
+    expect(checkCommitMessage(`feat: ${'a'.repeat(66)} (#379)`)).toEqual([]);
   });
 });
 
