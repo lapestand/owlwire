@@ -20,6 +20,7 @@ export async function underWorkspaceLock(
   fire: () => Promise<Response>,
 ): Promise<Response> {
   const client = await pool.connect();
+  let pending: Promise<Response> | undefined;
   try {
     await client.query('BEGIN');
     await client.query('SELECT id FROM workspaces WHERE id = $1 FOR NO KEY UPDATE', [ws]);
@@ -28,7 +29,7 @@ export async function underWorkspaceLock(
       'SELECT pg_current_xact_id()::text AS xid',
     );
     const xid = rows[0]?.xid ?? '';
-    const pending = fire();
+    pending = fire();
     await waitFor(
       async () => {
         const waiting = await pool.query(
@@ -44,6 +45,8 @@ export async function underWorkspaceLock(
     return await pending;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
+    // The rollback releases the request waiting on the lock; settle it so it is not left running past the test.
+    if (pending) await pending.catch(() => undefined);
     throw err;
   } finally {
     client.release();

@@ -138,7 +138,7 @@ export async function lockWorkspaceForUpdate(t: TenantTx): Promise<WorkspaceSumm
  */
 export async function updateWorkspace(
   t: TenantTx,
-  patch: { name?: string; slug?: string },
+  patch: { name?: string | undefined; slug?: string | undefined },
   actor: AuditActor,
 ): Promise<WorkspaceSummary | null> {
   const set: { name?: string; slug?: string } = {};

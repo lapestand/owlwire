@@ -205,6 +205,18 @@ describe('management api: members', () => {
     expect(await roleOf(personal, guest.id, owner.cookie)).toBe('member');
   });
 
+  it('keys the personal owner check on the workspace owner, not on any owner role', async () => {
+    const owner = await h.createUser();
+    const second = await h.createUser();
+    const personal = owner.personalWorkspaceId ?? '';
+    await seedMembership(h.deps.db, personal, second.id, 'owner');
+    // the second owner is not the workspace's owner: removing them is an ordinary removal
+    expect((await remove(personal, second.id, owner.cookie)).status).toBe(204);
+    const refused = await remove(personal, owner.id, owner.cookie);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ detail: 'personal_workspace' });
+  });
+
   it('validates the role value', async () => {
     const t = await team();
     expect((await patchRole(t.ws, t.member.id, 'root', t.owner.cookie)).status).toBe(422);
@@ -278,6 +290,23 @@ describe('management api: members', () => {
         data: { from: t.owner.id, to: t.member.id },
       }),
     ]);
+  });
+
+  it('refuses a transfer to a user who is already an owner and keeps the caller an owner', async () => {
+    const t = await team();
+    await patchRole(t.ws, t.admin.id, 'owner', t.owner.cookie);
+    const before = count(
+      await listAuditActions(h.deps.db, t.ws),
+      'workspace.ownership_transferred',
+    );
+    const res = await transfer(t.ws, t.admin.id, t.owner.cookie);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'conflict', detail: 'already_owner' });
+    expect(await roleOf(t.ws, t.owner.id, t.owner.cookie)).toBe('owner');
+    expect(await roleOf(t.ws, t.admin.id, t.owner.cookie)).toBe('owner');
+    expect(count(await listAuditActions(h.deps.db, t.ws), 'workspace.ownership_transferred')).toBe(
+      before,
+    );
   });
 
   it('refuses transfers by non-owners, to self, to outsiders and in personal workspaces', async () => {
@@ -414,8 +443,10 @@ describe('management api: members', () => {
       locked();
       await released;
     });
+    // A failing lock call rejects the transaction before `locked` runs; the race then fails fast instead of hanging.
+    holder.catch(() => undefined);
     try {
-      await isLocked;
+      await Promise.race([isLocked, holder]);
       // a membership insert (foreign key check on the workspace) and its audit entry, from another transaction
       const insert = seedMembership(h.deps.db, t.ws, joiner.id, 'member').then(
         () => 'done' as const,
