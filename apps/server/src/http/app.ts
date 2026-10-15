@@ -43,7 +43,13 @@ function withClientIp(c: Context, resolve: ClientIpResolver): Request {
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
-  const resolveClientIp = createClientIpResolver(deps.config.trustedProxies);
+  const resolveClientIp = createClientIpResolver(deps.config.trustedProxies, {
+    onUntrustedForwarded: () =>
+      deps.logger.warn(
+        'X-Forwarded-For arrived from a peer that is not in OWLWIRE_TRUSTED_PROXIES; sign-in rate limits use the ' +
+          'peer address, so clients behind an unlisted proxy share one limit',
+      ),
+  });
   const app = new Hono<AppEnv>();
   app.use('*', requestId(deps.logger));
   app.onError((err, c) => {

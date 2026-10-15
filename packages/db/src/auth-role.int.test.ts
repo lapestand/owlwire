@@ -41,6 +41,12 @@ const open = (url: string): OwlwireDb => {
   return db;
 };
 
+/** Closes a handle before afterAll does, for example so the role it signed in as can be dropped. */
+const closeNow = async (db: OwlwireDb): Promise<void> => {
+  opened.splice(opened.indexOf(db), 1);
+  await db.close();
+};
+
 async function insertUser(): Promise<string> {
   const id = newId();
   await owner.query('insert into auth_user (id, name, email) values ($1, $2, $3)', [
@@ -58,6 +64,24 @@ async function withAppGrant(grant: string, revoke: string, fn: () => Promise<voi
     await fn();
   } finally {
     await owner.query(revoke);
+  }
+}
+
+/**
+ * Creates a login role named `<prefix>_<suffix>` with password 'x', runs fn with it, and always drops it again.
+ * Roles live in the cluster, not in the scratch database, so a role left behind would outlive the test run.
+ */
+async function withTestRole(
+  prefix: string,
+  attributes: string,
+  fn: (role: string) => Promise<void>,
+): Promise<void> {
+  const role = `${prefix}_${suffix}`;
+  await owner.query(`create role ${role} login password 'x' ${attributes}`);
+  try {
+    await fn(role);
+  } finally {
+    await owner.query(`drop role ${role}`);
   }
 }
 
@@ -199,33 +223,33 @@ describe('ensureAuthRole', () => {
   });
 
   it('refuses a BYPASSRLS role', async () => {
-    const evil = `evil_auth_${suffix}`;
-    await owner.query(`create role ${evil} login password 'x' bypassrls`);
-    const result = ensureAuthRole(tdb.ownerUrl, urlAs(tdb.authUrl, evil, 'x'), tdb.appUrl);
-    await expect(result).rejects.toBeInstanceOf(AppRoleError);
-    await expect(result).rejects.toThrow(/the auth role must be subject to row level security/);
+    await withTestRole('evil_auth', 'bypassrls', async (evil) => {
+      const result = ensureAuthRole(tdb.ownerUrl, urlAs(tdb.authUrl, evil, 'x'), tdb.appUrl);
+      await expect(result).rejects.toBeInstanceOf(AppRoleError);
+      await expect(result).rejects.toThrow(/the auth role must be subject to row level security/);
+    });
   });
 
   it('refuses a member of the owner role', async () => {
-    const member = `auth_owner_member_${suffix}`;
-    await owner.query(`create role ${member} login password 'x' nosuperuser nobypassrls`);
-    await owner.query(`grant ${TEST_OWNER.user} to ${member}`);
-    await expect(
-      ensureAuthRole(tdb.ownerUrl, urlAs(tdb.authUrl, member, 'x'), tdb.appUrl),
-    ).rejects.toThrow(/member of the owner role/);
+    await withTestRole('auth_owner_member', 'nosuperuser nobypassrls', async (member) => {
+      await owner.query(`grant ${TEST_OWNER.user} to ${member}`);
+      await expect(
+        ensureAuthRole(tdb.ownerUrl, urlAs(tdb.authUrl, member, 'x'), tdb.appUrl),
+      ).rejects.toThrow(/member of the owner role/);
+    });
   });
 
   it('refuses an auth role the application role can switch to', async () => {
-    const linked = `auth_linked_${suffix}`;
-    await owner.query(`create role ${linked} login password 'x' nosuperuser nobypassrls`);
-    await owner.query(`grant ${linked} to ${TEST_APP.user}`);
-    try {
-      await expect(
-        ensureAuthRole(tdb.ownerUrl, urlAs(tdb.authUrl, linked, 'x'), tdb.appUrl),
-      ).rejects.toThrow(/members of each other/);
-    } finally {
-      await owner.query(`revoke ${linked} from ${TEST_APP.user}`);
-    }
+    await withTestRole('auth_linked', 'nosuperuser nobypassrls', async (linked) => {
+      await owner.query(`grant ${linked} to ${TEST_APP.user}`);
+      try {
+        await expect(
+          ensureAuthRole(tdb.ownerUrl, urlAs(tdb.authUrl, linked, 'x'), tdb.appUrl),
+        ).rejects.toThrow(/members of each other/);
+      } finally {
+        await owner.query(`revoke ${linked} from ${TEST_APP.user}`);
+      }
+    });
   });
 });
 
@@ -276,6 +300,97 @@ describe('checkAuthRoleSeparation', () => {
     expect(result.reasons).toContain(
       'auth role lacks SELECT, INSERT, UPDATE or DELETE on auth_session',
     );
+  });
+
+  // The shared test roles stay untouched: each case makes a fresh role that acts as one side (it inherits the
+  // shared role's privileges) and links it to the other side. Membership without INHERIT grants no table privilege,
+  // so only the membership check can see it, yet it still allows SET ROLE.
+  it('fails when the application role can switch to the auth role', async () => {
+    await withTestRole('app_into_auth', 'nosuperuser nobypassrls', async (role) => {
+      await owner.query(`grant ${TEST_APP.user} to ${role}`);
+      await owner.query(`grant ${TEST_AUTH.user} to ${role} with inherit false`);
+      const appDb = open(urlAs(tdb.appUrl, role, 'x'));
+      try {
+        const result = await checkAuthRoleSeparation(SYSTEM, appDb, open(tdb.authUrl));
+        expect(result.separated).toBe(false);
+        // SET ROLE reaches the auth role's privileges too, so those are reported as well.
+        expect(result.reasons).toEqual(
+          expect.arrayContaining([
+            `roles ${role} and ${TEST_AUTH.user} are members of each other`,
+            'application role can access auth_session',
+          ]),
+        );
+      } finally {
+        await closeNow(appDb);
+      }
+    });
+  });
+
+  it('fails when the auth role can switch to the application role', async () => {
+    await withTestRole('auth_into_app', 'nosuperuser nobypassrls', async (role) => {
+      await owner.query(`grant ${TEST_AUTH.user} to ${role}`);
+      await owner.query(`grant ${TEST_APP.user} to ${role} with inherit false`);
+      const authDb = open(urlAs(tdb.authUrl, role, 'x'));
+      try {
+        const result = await checkAuthRoleSeparation(SYSTEM, open(tdb.appUrl), authDb);
+        expect(result).toEqual({
+          separated: false,
+          reasons: [`roles ${TEST_APP.user} and ${role} are members of each other`],
+        });
+      } finally {
+        await closeNow(authDb);
+      }
+    });
+  });
+
+  // An application role that can only SET ROLE to a role with auth-table privileges reaches those tables too, while
+  // has_table_privilege on the application role alone says no.
+  it('fails when the application role can switch to pg_read_all_data', async () => {
+    await withTestRole('app_read_all', 'nosuperuser nobypassrls', async (role) => {
+      await owner.query(`grant ${TEST_APP.user} to ${role}`);
+      await owner.query(`grant pg_read_all_data to ${role} with inherit false`);
+      const appDb = open(urlAs(tdb.appUrl, role, 'x'));
+      try {
+        const result = await checkAuthRoleSeparation(SYSTEM, appDb, open(tdb.authUrl));
+        expect(result.separated).toBe(false);
+        expect(result.reasons).toEqual(
+          expect.arrayContaining([
+            ...AUTH_SECRET_TABLES.map((t) => `application role can access ${t}`),
+            'application role has table-wide privileges on auth_user',
+            'application role can read auth_user.is_instance_admin',
+          ]),
+        );
+      } finally {
+        await closeNow(appDb);
+        await owner.query(`revoke pg_read_all_data from ${role}`);
+      }
+    });
+  });
+
+  it('fails when a role the application role can switch to holds a forbidden privilege', async () => {
+    await withTestRole('app_via', 'nosuperuser nobypassrls', async (role) => {
+      await withTestRole('auth_reader', 'nosuperuser', async (reader) => {
+        await owner.query(`grant ${TEST_APP.user} to ${role}`);
+        await owner.query(`grant select on auth_two_factor to ${reader}`);
+        await owner.query(`grant select (two_factor_enabled) on auth_user to ${reader}`);
+        await owner.query(`grant ${reader} to ${role} with inherit false`);
+        const appDb = open(urlAs(tdb.appUrl, role, 'x'));
+        try {
+          const result = await checkAuthRoleSeparation(SYSTEM, appDb, open(tdb.authUrl));
+          expect(result).toEqual({
+            separated: false,
+            reasons: [
+              'application role can access auth_two_factor',
+              'application role can read auth_user.two_factor_enabled',
+            ],
+          });
+        } finally {
+          await closeNow(appDb);
+          await owner.query(`revoke select on auth_two_factor from ${reader}`);
+          await owner.query(`revoke select (two_factor_enabled) on auth_user from ${reader}`);
+        }
+      });
+    });
   });
 
   it('fails when the auth connection can bypass row level security or owns the tables', async () => {

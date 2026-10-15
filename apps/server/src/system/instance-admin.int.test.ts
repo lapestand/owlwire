@@ -8,7 +8,12 @@ import {
 } from '../test/auth-harness.js';
 import { testAuthEnv } from '../test/config.js';
 import { collectAuthStartupWarnings } from './auth-warnings.js';
-import { AdminInputError, bootstrapInstanceAdmin } from './instance-admin.js';
+import {
+  AdminInputError,
+  bootstrapInstanceAdmin,
+  ConcurrentAdminUserError,
+  MAX_PASSWORD_LENGTH,
+} from './instance-admin.js';
 import { setRegistrationMode } from './registration.js';
 import { listWorkspacesForUser } from './user-workspaces.js';
 import { findUserByEmail } from './users.js';
@@ -71,6 +76,7 @@ describe('instance admin bootstrap', () => {
       created: false,
       generatedPassword: null,
       passwordIgnored: true,
+      emailVerified: true,
     });
     expect((await findUserByEmail(h.deps, u.email))?.isInstanceAdmin).toBe(true);
     expect((await h.signInResponse(u.email)).status).toBe(200);
@@ -80,6 +86,59 @@ describe('instance admin bootstrap', () => {
       created: false,
       generatedPassword: null,
       passwordIgnored: false,
+      emailVerified: true,
+    });
+  });
+
+  it('refuses a password longer than the sign-in library accepts', async () => {
+    const email = uniqueEmail('long');
+    await expect(
+      bootstrapInstanceAdmin(h.deps, { email, password: 'x'.repeat(MAX_PASSWORD_LENGTH + 1) }),
+    ).rejects.toBeInstanceOf(AdminInputError);
+    expect(await findUserByEmail(h.deps, email)).toBeNull();
+    const r = await bootstrapInstanceAdmin(h.deps, {
+      email,
+      password: 'x'.repeat(MAX_PASSWORD_LENGTH),
+    });
+    expect(r.created).toBe(true);
+  });
+
+  it('does not promote a user that a concurrent sign-up created first', async () => {
+    const email = uniqueEmail('race');
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    let stranger: string | undefined;
+    // A sign-up for the same email lands between the existence check and the command's own sign-up.
+    const real = h.deps.auth.api.signUpEmail;
+    const signUpEmail = (async (args: Parameters<typeof real>[0]) => {
+      expect((await h.signUp(email, { password: 'stranger-password-1' })).status).toBe(200);
+      stranger = (await findUserByEmail(h.deps, email))?.id;
+      return real(args);
+    }) as typeof real;
+    try {
+      await expect(
+        bootstrapInstanceAdmin(
+          {
+            authDb: h.deps.authDb,
+            auth: { ...h.deps.auth, api: { ...h.deps.auth.api, signUpEmail } },
+          },
+          { email },
+        ),
+      ).rejects.toThrow(new ConcurrentAdminUserError(email.toLowerCase()).message);
+    } finally {
+      await setRegistrationMode(h.deps, 'closed', SYSTEM_ACTOR);
+    }
+    expect(stranger).toBeDefined();
+    const user = await findUserByEmail(h.deps, email);
+    expect(user?.id).toBe(stranger);
+    expect(user?.isInstanceAdmin).toBe(false);
+    expect(user?.emailVerified).toBe(false);
+    // The promote path named in the message is explicit about whose account it is promoting.
+    expect(await bootstrapInstanceAdmin(h.deps, { email })).toEqual({
+      userId: stranger,
+      created: false,
+      generatedPassword: null,
+      passwordIgnored: false,
+      emailVerified: false,
     });
   });
 
