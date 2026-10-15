@@ -13,6 +13,8 @@ export interface DbTestEnv {
   keyring: Keyring;
   /** Opened with the app role (owlwire_app), so RLS applies. */
   db: OwlwireDb;
+  /** Opened with the auth role (owlwire_auth): the auth adapter and the auth_user system functions. */
+  authDb: OwlwireDb;
   open(keyring: Keyring): OwlwireDb;
   stop(): Promise<void>;
 }
@@ -28,6 +30,8 @@ export async function setupDbTestEnv(): Promise<DbTestEnv> {
     return handle;
   };
   const db = open(keyring);
+  const authDb = openDatabase({ url: tdb.authUrl, keyring, clock });
+  opened.push(authDb);
   const owner = new pg.Pool({ connectionString: tdb.ownerUrl });
   return {
     tdb,
@@ -35,6 +39,7 @@ export async function setupDbTestEnv(): Promise<DbTestEnv> {
     clock,
     keyring,
     db,
+    authDb,
     open,
     stop: async () => {
       for (const handle of opened) await handle.close();
