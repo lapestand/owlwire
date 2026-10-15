@@ -418,6 +418,22 @@ describe('better auth hardening', () => {
     expect(EMAIL_VERIFICATION_EXPIRES_IN_SECONDS).toBe(3600);
   });
 
+  it('keeps change-email off, since its verification link would sign in without the second factor', async () => {
+    expect(h.deps.auth.options.user?.changeEmail?.enabled).toBe(false);
+    const u = await h.createUser();
+    const res = await h.request('/api/auth/change-email', {
+      body: { newEmail: uniqueEmail('changed') },
+      cookie: u.cookie,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'CHANGE_EMAIL_DISABLED' });
+    const { rows } = await h.harness.ownerPool.query(
+      'select 1 from auth_verification where value like $1',
+      ['%changed%'],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
   it('turns telemetry off, hashes verification identifiers and encrypts provider tokens', () => {
     expect(h.deps.auth.options.telemetry).toEqual({ enabled: false });
     expect(h.deps.auth.options.verification).toMatchObject({ storeIdentifier: 'hashed' });
