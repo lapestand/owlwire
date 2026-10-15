@@ -11,6 +11,8 @@ import { type Mailer, MailMessageError } from '../mail/mailer.js';
 import { type MailTemplate, MailTemplateError, renderMail } from '../mail/templates.js';
 import { betterAuthLogger } from './auth-logger.js';
 import { isBootstrap } from './bootstrap-context.js';
+import { passkeyOptions, passkeyUserVerificationRequest } from './passkey.js';
+import { socialSecondFactorGate } from './second-factor-gate.js';
 import { buildSocialProviders } from './social.js';
 
 export const AUTH_BASE_PATH = '/api/auth';
@@ -43,15 +45,6 @@ const TWO_FACTOR_LOCKOUT = { lockAfter: 10, lockSeconds: 15 * 60 } as const;
 /** Secure + __Secure- cookies whenever OWLWIRE_PUBLIC_URL is https. */
 export function secureCookiesFor(baseURL: string): boolean {
   return new URL(baseURL).protocol === 'https:';
-}
-
-/**
- * WebAuthn relying party: passkeys are bound to the host of OWLWIRE_PUBLIC_URL, and registration and sign-in
- * responses must come from that exact origin (never from the origin a client claims).
- */
-export function passkeyRelyingParty(baseURL: string): { rpID: string; origin: string } {
-  const url = new URL(baseURL);
-  return { rpID: url.hostname, origin: url.origin };
 }
 
 /** @public Why a registration hook refused a new user. */
@@ -154,7 +147,6 @@ export function createAuth(o: CreateAuthOptions) {
   const emailEnabled = o.mailer !== null;
   const allowHttpLinks = ('nodeEnv' in o ? o.nodeEnv : process.env.NODE_ENV) !== 'production';
   const log = o.logger.child({ component: 'auth' });
-  const relyingParty = passkeyRelyingParty(o.env.baseURL);
 
   /**
    * Never throws and never waits for the mail server: the message is built and sent in the background, so a request
@@ -217,6 +209,8 @@ export function createAuth(o: CreateAuthOptions) {
     },
     user: {
       modelName: 'auth_user',
+      // Every user creation then needs an endpoint context and a provisioning source (the library refuses one without
+      // them): create users through auth.api (for example signUpEmail), never internalAdapter.createUser directly.
       // A provider address the provider has not verified never creates a user or joins an existing one: otherwise
       // someone could pre-register a victim's address through a provider that skips verification and keep a way
       // into the account the victim later claims.
@@ -242,10 +236,11 @@ export function createAuth(o: CreateAuthOptions) {
       encryptOAuthTokens: true,
       accountLinking: {
         enabled: true,
-        // No provider is trusted blindly: a social sign-in joins an existing account only when the provider has
-        // verified the address and the local account's address is verified too (the library's default local check).
-        // Otherwise the user links the provider explicitly while signed in (/link-social), which also requires a
-        // verified provider address.
+        // A social sign-in never joins an existing account on its own, even with a verified address on both sides:
+        // whoever controls the mailbox could otherwise add a permanent way in. The user links a provider only while
+        // signed in (/link-social), which also requires an address the provider has verified; no provider is trusted
+        // blindly.
+        disableImplicitLinking: true,
         trustedProviders: [],
         allowDifferentEmails: false,
       },
@@ -318,12 +313,10 @@ export function createAuth(o: CreateAuthOptions) {
           durationSeconds: TWO_FACTOR_LOCKOUT.lockSeconds,
         },
       }),
-      passkey({
-        rpID: relyingParty.rpID,
-        rpName: 'Owlwire',
-        origin: relyingParty.origin,
-        schema: { passkey: { modelName: 'auth_passkey' } },
-      }),
+      // Second factor after social sign-in too; listed after twoFactor, whose challenge it reuses.
+      socialSecondFactorGate(),
+      passkey(passkeyOptions(o.env.baseURL)),
+      passkeyUserVerificationRequest(),
     ],
     databaseHooks: {
       user: {
