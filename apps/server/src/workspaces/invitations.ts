@@ -35,19 +35,16 @@ const userActor = (userId: string): AuditActor => ({ kind: 'user', userId });
 
 /**
  * The link to the invitation page: the public URL plus the percent-encoded token. Emailing it needs an https public
- * URL; plain http is accepted only outside production (local development), like the sign-in emails.
+ * URL; plain http only when `allowHttp` (outside production, like the sign-in emails).
  */
 function acceptLink(
   baseURL: string,
   token: string,
-  nodeEnv: string | undefined,
+  allowHttp: boolean,
 ): { url: string; emailable: boolean } {
   const url = `${baseURL}${INVITE_PATH}${encodeURIComponent(token)}`;
   const protocol = new URL(baseURL).protocol;
-  return {
-    url,
-    emailable: protocol === 'https:' || (protocol === 'http:' && nodeEnv !== 'production'),
-  };
+  return { url, emailable: protocol === 'https:' || (protocol === 'http:' && allowHttp) };
 }
 
 /** Log fields for a failed invitation email: the error's class and code, never the link, address or message. */
@@ -59,10 +56,11 @@ function mailFailure(err: unknown): Record<string, unknown> {
 }
 
 /**
- * Invites an email address (lower-cased) into the workspace. Under the workspace lock (see lockForActor) the caller
- * must still be an owner or admin (403 otherwise, 404 when no longer a member); an address that already belongs to a
- * member is 409 already_member; a pending invitation for the same address is replaced (invitation.revoked, reason
- * 'replaced') in the same transaction as the new one (invitation.created).
+ * Invites an email address (lower-cased) into the workspace. A personal workspace has only its owner and takes no
+ * invitations (409 personal_workspace). Under the workspace lock (see lockForActor) the caller must still be an owner
+ * or admin (403 otherwise, 404 when no longer a member); an address that already belongs to a member is 409
+ * already_member; a pending invitation for the same address is replaced (invitation.revoked, reason 'replaced') in the
+ * same transaction as the new one (invitation.created).
  *
  * The email is sent after the commit and awaited, so the answer can say whether it went out: `emailSent` is false
  * without SMTP, for a link that may not be emailed (http public URL in production) and when rendering or sending
@@ -71,13 +69,14 @@ function mailFailure(err: unknown): Record<string, unknown> {
  * the 409 would not.
  */
 export async function inviteMember(
-  deps: Pick<Deps, 'db' | 'authDb' | 'clock' | 'mailer' | 'logger' | 'authEnv'>,
+  deps: Pick<Deps, 'db' | 'authDb' | 'clock' | 'mailer' | 'logger' | 'authEnv' | 'config'>,
   ws: WorkspaceContext,
   actor: SessionUser,
   input: { email: string; role: InvitableRole; locale?: MailLocale | undefined },
   acceptLanguage: string | undefined,
-  nodeEnv: string | undefined = process.env.NODE_ENV,
 ): Promise<CreatedInvitation> {
+  // The kind of a workspace never changes, so the check needs no lock.
+  if (ws.kind === 'personal') throw new ProblemError(409, 'conflict', 'personal_workspace');
   const email = input.email.trim().toLowerCase();
   const existingUser = await findUserByEmail(deps, email);
   const { token, tokenHash } = newInvitationToken();
@@ -102,7 +101,7 @@ export async function inviteMember(
     );
   });
 
-  const link = acceptLink(deps.authEnv.baseURL, token, nodeEnv);
+  const link = acceptLink(deps.authEnv.baseURL, token, deps.config.allowHttpLinks);
   let emailSent = false;
   if (deps.mailer && link.emailable) {
     try {

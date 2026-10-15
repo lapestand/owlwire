@@ -31,6 +31,7 @@ export function attachAuth(
     mailer,
     logger: base.logger,
     hooks: hooks(base),
+    allowHttpLinks: base.config.allowHttpLinks,
   });
   return { ...base, authEnv, mailer, auth };
 }

@@ -37,6 +37,13 @@ describe('loadConfig', () => {
     );
   });
 
+  it('allows http mail links everywhere but NODE_ENV=production', () => {
+    expect(loadConfig(base, noFile).allowHttpLinks).toBe(true);
+    expect(loadConfig({ ...base, NODE_ENV: 'development' }, noFile).allowHttpLinks).toBe(true);
+    expect(loadConfig({ ...base, NODE_ENV: 'test' }, noFile).allowHttpLinks).toBe(true);
+    expect(loadConfig({ ...base, NODE_ENV: 'production' }, noFile).allowHttpLinks).toBe(false);
+  });
+
   it('exposes the parsed auth environment', () => {
     expect(loadConfig(base, noFile).authEnv).toMatchObject({
       baseURL: 'http://localhost:8080',

@@ -1,6 +1,7 @@
 import { REGISTRATION_MODES, type RegistrationMode } from '@owlwire/core';
 import type { AuditActor } from '@owlwire/db';
 import {
+  findInvitationByTokenHash,
   getInstanceSetting,
   hasPendingInvitationForEmail,
   SYSTEM,
@@ -9,6 +10,7 @@ import {
 } from '@owlwire/db/system';
 import { z } from 'zod';
 import type { BaseDeps } from '../base-deps.js';
+import { hashInvitationToken } from '../workspaces/invitation-token.js';
 
 const KEY = 'registration';
 const ModeSchema = z.enum(REGISTRATION_MODES);
@@ -50,4 +52,25 @@ export async function setRegistrationMode(
 /** Whether a live workspace holds an open, unexpired invitation for the email (case-insensitive). */
 export function hasPendingInvitation(deps: Pick<BaseDeps, 'db'>, email: string): Promise<boolean> {
   return withSystem(deps.db, SYSTEM, (s) => hasPendingInvitationForEmail(s, email));
+}
+
+/**
+ * Whether `token` belongs to an open, unexpired invitation of a live workspace for exactly this (lower-cased) email.
+ * Fails closed: no token, an unknown or malformed one, or any mismatch is false. Every token is hashed and looked up
+ * the same way as on the public invitation lookup, so this costs no more and tells no more than that endpoint.
+ */
+export async function invitationAdmits(
+  deps: Pick<BaseDeps, 'db' | 'clock'>,
+  email: string,
+  token: string | null,
+): Promise<boolean> {
+  if (!token) return false;
+  const tokenHash = hashInvitationToken(token);
+  const inv = await withSystem(deps.db, SYSTEM, (s) => findInvitationByTokenHash(s, tokenHash));
+  return (
+    inv !== null &&
+    inv.acceptedAt === null &&
+    inv.expiresAt > deps.clock.now() &&
+    inv.email === email
+  );
 }

@@ -1,5 +1,6 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi';
 import { MeSchema } from '@owlwire/contracts';
+import { SYSTEM_ACTOR } from '@owlwire/db';
 import type { Deps } from '../../../deps.js';
 import { ensurePersonalWorkspace } from '../../../system/personal-workspace.js';
 import { findUserById } from '../../../system/users.js';
@@ -18,9 +19,9 @@ export function registerMeRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void {
     async (c) => {
       const user = c.get('user');
       // Also repairs a missing personal workspace (the sign-up hook can fail after the user row committed); the
-      // workspace is found by its owner, never by slug.
+      // workspace is found by its owner, never by slug. A repair is the system's doing, not the user's.
       const [personalWorkspaceId, row] = await Promise.all([
-        ensurePersonalWorkspace(deps, user),
+        ensurePersonalWorkspace(deps, user, SYSTEM_ACTOR),
         findUserById(deps, user.id),
       ]);
       return c.json(

@@ -54,7 +54,8 @@ export async function lookupInvitation(
  *
  * The session's email must be the invited one (403 email_mismatch); with SMTP configured it must also be verified
  * (403 email_not_verified). An unknown, revoked or expired token and an invitation of a deleted workspace are 404.
- * Accepting the same invitation again as the member it made is answered 200 again, without new audit entries.
+ * Accepting the same invitation again as the member it made is answered 200 again, without new audit entries. An
+ * invitation of a personal workspace is 409 personal_workspace.
  *
  * The transaction takes the workspace lock first, the lock workspace deletion takes too, so an acceptance either
  * commits before a concurrent delete or sees the workspace gone (404); without it the membership insert would not
@@ -72,7 +73,10 @@ export async function acceptInvitation(
   }
   const actor = { kind: 'user' as const, userId: user.id };
   return withTenant(deps.db, tenantScope(found.workspaceId), async (t) => {
-    if (!(await lockWorkspaceForUpdate(t))) throw notFound();
+    const ws = await lockWorkspaceForUpdate(t);
+    if (!ws) throw notFound();
+    // Personal workspaces take no invitations; creation refuses them, and so does acceptance.
+    if (ws.kind === 'personal') throw new ProblemError(409, 'conflict', 'personal_workspace');
     const inv = await getInvitationForUpdate(t, found.id);
     if (!inv) throw notFound();
     const existing = await getMembership(t, user.id);
