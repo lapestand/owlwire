@@ -18,9 +18,9 @@
   `newId()` (UUIDv7) and passes it to `withTenant`. A client never supplies the id of a new workspace.
 - **Static guards.** Raw Drizzle is allowed only in `packages/db/src/**`. `@owlwire/db/system` (`SystemScope`,
   `withSystem`) is allowed only there and in `apps/server/src/system/**`. `pg` value imports and
-  `@owlwire/db/migrate` are allowed only in a short list of database, worker and test modules. dependency-cruiser enforces these rules
-  (`pnpm depcruise`), and Biome shows them in the editor. Outside `packages/db/src/**`, the Biome plugin
-  `tools/biome/no-unsafe-sql.grit` forbids `sql.raw` and any `.query(...)` whose SQL text uses template
+  `@owlwire/db/migrate` are allowed only in a short list of database, worker and test modules. dependency-cruiser
+  enforces these rules (`pnpm depcruise`), and Biome shows them in the editor. Outside `packages/db/src/**`, the
+  Biome plugin `tools/biome/no-unsafe-sql.grit` forbids `sql.raw` and any `.query(...)` whose SQL text uses template
   interpolation or `+` concatenation.
 
 ### Accepted risk
@@ -66,8 +66,8 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   of the other in any form: a grant `WITH INHERIT FALSE` (or `SET` only) adds no inherited privilege, but it still
   allows `SET ROLE`. For the same reason the application-role privileges above are checked for every role
   `owlwire_app` is a member of in any form, not only for the role itself, so access through a role it can only
-  `SET ROLE` to (a predefined role such as `pg_read_all_data` included) is refused too. `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns these into warnings outside
-  production, as for the RLS check below.
+  `SET ROLE` to (a predefined role such as `pg_read_all_data` included) is refused too.
+  `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns these into warnings outside production, as for the RLS check below.
 
 ### Sign-in library hardening
 
@@ -158,7 +158,10 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   account, a challenge whose 5 attempts are used up, a failure while creating the session) is spent too; the user
   waits up to 30 seconds for the next one. The hook relies on the plugin's TOTP defaults (SHA-1, 6 digits,
   30 seconds, a window of one step) and on its internal `two_factor` cookie and `2fa-` challenge rows; the
-  integration tests fail if either changes.
+  integration tests fail if either changes. With several server instances, single use assumes their clocks are
+  synchronized (NTP). The record's expiry is the moment the step stops being accepted on a correct clock; an
+  instance whose clock lags accepts the step for longer, and once the record has expired and been removed, it could
+  accept the same code a second time.
 - **Where the second factor applies.** A user who has turned TOTP on is asked for it after an email and password
   sign-in (the library) and after a social sign-in (`apps/server/src/auth/second-factor-gate.ts`): the session the
   provider sign-in created is revoked and its cookies dropped, and the two-factor plugin's own challenge is issued
@@ -228,8 +231,15 @@ reads the caller's membership again under that lock. The lock is `FOR NO KEY UPD
 does not block inserts that only reference the workspace (audit entries, new memberships). Such writes run one after
 another per workspace, and each decides on the roles the previous one left: a caller demoted meanwhile gets `403`, one
 removed meanwhile gets `404`. The last owner of a workspace cannot be demoted or removed (`409`, detail `last_owner`);
-the data layer enforces this a second time under its own row lock. An admin may demote another admin (or themselves) and
-then remove them; only an owner can restore the role.
+the data layer enforces this a second time under its own row lock. An admin may demote another admin (or
+themselves) and then remove them; another admin or an owner can restore the admin role, since promoting a member to
+admin needs only the admin role. Only an owner can make someone an owner or change an owner's role.
+
+Only an owner can transfer ownership (`POST /api/workspaces/{workspaceId}/transfer-ownership`): the target becomes an
+owner and the caller an admin, in one transaction with one audit entry. A personal workspace cannot be transferred
+(`409`, detail `personal_workspace`). A target who is already an owner gets `409`, detail `already_owner`, and nothing
+changes: otherwise the caller would step down to admin for nothing. The caller as target is `422`, detail
+`target_is_self`, and a user who is not a member is `404`.
 
 Any member can read the member list: user id, name, image, role and join date. Only owners and admins also see each
 member's email; nothing else from the user record is exposed. The workspace's audit log is readable by owners and
@@ -339,11 +349,13 @@ must update this section.
 
 `serve` refuses to start when its database connection can bypass RLS: a superuser, `BYPASSRLS`, a member of any
 superuser or `BYPASSRLS` role (it could `SET ROLE`), or the owner of any relation or schema in `public`,
-`owlwire_private` or `graphile_worker`, directly or through membership. It also refuses when RLS is disabled on any `public`
-table that has a policy or a `workspace_id` column (for example `workspaces`, `apps`, `instance_settings`). This is the same read-only query that `ensureAppRole` runs at migration time
-(`rlsSubjectQuery` in `packages/db/src/rls-subject.ts`), run for the connection's own role. This usually happens when `OWLWIRE_DATABASE_URL` and `OWLWIRE_MIGRATION_DATABASE_URL` use the same role. For a
-single-role local database, `OWLWIRE_ALLOW_INSECURE_DB_ROLE=true` lets `serve` start and logs each reason as a warning.
-The opt-in is ignored when `NODE_ENV=production`, which the Owlwire image sets.
+`owlwire_private` or `graphile_worker`, directly or through membership. It also refuses when RLS is disabled on any
+`public` table that has a policy or a `workspace_id` column (for example `workspaces`, `apps`, `instance_settings`).
+This is the same read-only query that `ensureAppRole` runs at migration time (`rlsSubjectQuery` in
+`packages/db/src/rls-subject.ts`), run for the connection's own role. This usually happens when
+`OWLWIRE_DATABASE_URL` and `OWLWIRE_MIGRATION_DATABASE_URL` use the same role. For a single-role local database,
+`OWLWIRE_ALLOW_INSECURE_DB_ROLE=true` lets `serve` start and logs each reason as a warning. The opt-in is ignored
+when `NODE_ENV=production`, which the Owlwire image sets.
 
 Two keyring checks stop startup in every environment. First, the keyring must hold, with the right key material, every
 KEK version that wraps a stored workspace key. Second, the startup legacy upgrade tries to open every legacy (`kek_v0`)

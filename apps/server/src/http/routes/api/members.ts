@@ -106,6 +106,10 @@ export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
     createRoute({
       method: 'post',
       path: '/workspaces/{workspaceId}/transfer-ownership',
+      description:
+        'Owner only. Makes the target member an owner and the caller an admin. A personal workspace answers 409 ' +
+        'personal_workspace, a target who is already an owner 409 already_owner, the caller as target 422 ' +
+        'target_is_self and a user who is not a member 404.',
       tags: TAGS,
       security: SECURITY,
       request: {
