@@ -279,7 +279,9 @@ URL with `NODE_ENV=production` (no `Secure` cookies, passkeys only on localhost,
 IP address as the public URL host (passkeys need a domain name), an `smtp://` `OWLWIRE_SMTP_URL` without
 `requireTLS=true` with `NODE_ENV=production` (STARTTLS is then optional, so a network attacker can strip it and read
 sign-in links and the SMTP password; `smtps://` or `?requireTLS=true` closes this) and the trusted-proxy case above.
-These are warnings: the server still starts. No warning prints a URL, so SMTP credentials never reach the log.
+These are warnings: the server still starts. The only URL part a warning prints is the fallback origin used when
+`OWLWIRE_PUBLIC_URL` is not set (for example `http://localhost:8080`); configured URLs, and so any credentials in them
+(the SMTP URL, the database URLs), never reach the log.
 
 ## Background jobs
 
