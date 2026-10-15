@@ -1,3 +1,4 @@
+import { lockWorkspaceForUpdate, tenantScope, withTenant } from '@owlwire/db';
 import { listAuditActions, seedCommunityWorkspace, seedMembership } from '@owlwire/db/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type AuthHarness, createAuthHarness, type TestUser } from '../../../test/auth-harness.js';
@@ -6,7 +7,8 @@ import { waitFor } from '../../../test/wait.js';
 interface MemberDto {
   userId: string;
   name: string;
-  email: string;
+  email?: string;
+  image: string | null;
   role: 'owner' | 'admin' | 'member';
   joinedAt: string;
 }
@@ -73,7 +75,8 @@ describe('management api: members', () => {
   const count = (actions: string[], action: string) => actions.filter((a) => a === action).length;
 
   /**
-   * Runs `fire` while another transaction holds the workspace row lock and has already made `change` (not yet
+   * Runs `fire` while another transaction holds the workspace row lock (in the same mode as the server's write lock)
+   * and has already made `change` (not yet
    * committed). The request passes the access check on the committed state, then waits for the lock; the change is
    * committed only once the request is seen waiting on it, so the write must decide on the state after the change.
    */
@@ -86,7 +89,7 @@ describe('management api: members', () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT id FROM workspaces WHERE id = $1 FOR UPDATE', [ws]);
+      await client.query('SELECT id FROM workspaces WHERE id = $1 FOR NO KEY UPDATE', [ws]);
       await client.query(change.sql, change.params);
       const { rows } = await client.query<{ xid: string }>(
         'SELECT pg_current_xact_id()::text AS xid',
@@ -128,19 +131,48 @@ describe('management api: members', () => {
     expect(items.map((m) => m.role).sort()).toEqual(['admin', 'member', 'owner']);
   });
 
-  it('exposes only the member fields of the contract', async () => {
+  it('shows plain members no emails', async () => {
     const t = await team();
     const items = await members(t.ws, t.member.cookie);
-    const owner = items.find((m) => m.userId === t.owner.id);
-    expect(owner).toEqual({
+    expect(items.find((m) => m.userId === t.owner.id)).toEqual({
       userId: t.owner.id,
       name: t.owner.name,
-      email: t.owner.email,
+      image: null,
       role: 'owner',
       joinedAt: expect.any(String),
     });
     for (const item of items)
-      expect(Object.keys(item).sort()).toEqual(['email', 'joinedAt', 'name', 'role', 'userId']);
+      expect(Object.keys(item).sort()).toEqual(['image', 'joinedAt', 'name', 'role', 'userId']);
+    const raw = await (
+      await h.request(`/api/workspaces/${t.ws}/members`, { cookie: t.member.cookie })
+    ).text();
+    for (const u of [t.owner, t.admin, t.member]) expect(raw).not.toContain(u.email);
+  });
+
+  it('shows owners and admins every member email', async () => {
+    const t = await team();
+    for (const viewer of [t.owner, t.admin]) {
+      const items = await members(t.ws, viewer.cookie);
+      expect(items.find((m) => m.userId === t.member.id)).toEqual({
+        userId: t.member.id,
+        name: t.member.name,
+        email: t.member.email,
+        image: null,
+        role: 'member',
+        joinedAt: expect.any(String),
+      });
+      for (const item of items)
+        expect(Object.keys(item).sort()).toEqual([
+          'email',
+          'image',
+          'joinedAt',
+          'name',
+          'role',
+          'userId',
+        ]);
+    }
+    const promoted = await patchRole(t.ws, t.member.id, 'admin', t.admin.cookie);
+    expect(await promoted.json()).toMatchObject({ userId: t.member.id, email: t.member.email });
   });
 
   it('applies the role change matrix', async () => {
@@ -161,7 +193,7 @@ describe('management api: members', () => {
     expect(await res.json()).toMatchObject({ code: 'conflict', detail: 'last_owner' });
   });
 
-  it('answers a change to the current role like the change itself, without an audit entry', async () => {
+  it('answers a change to the current role with 200 and no audit entry when the caller may make it', async () => {
     const t = await team();
     const before = count(await listAuditActions(h.deps.db, t.ws), 'member.role_changed');
     const same = await patchRole(t.ws, t.admin.id, 'admin', t.owner.cookie);
@@ -169,7 +201,7 @@ describe('management api: members', () => {
     expect(await same.json()).toMatchObject({ userId: t.admin.id, role: 'admin' });
     // owner -> owner by the only owner: allowed (nothing is demoted), not last_owner
     expect((await patchRole(t.ws, t.owner.id, 'owner', t.owner.cookie)).status).toBe(200);
-    // the same no-op still needs the role the real change would need
+    // the same no-op still needs the permission the real change would need
     expect((await patchRole(t.ws, t.owner.id, 'owner', t.admin.cookie)).status).toBe(403);
     expect((await patchRole(t.ws, t.member.id, 'member', t.member.cookie)).status).toBe(403);
     expect(count(await listAuditActions(h.deps.db, t.ws), 'member.role_changed')).toBe(before);
@@ -193,9 +225,16 @@ describe('management api: members', () => {
     const guest = await h.createUser();
     const personal = owner.personalWorkspaceId ?? '';
     await seedMembership(h.deps.db, personal, guest.id, 'member');
+    // owner -> owner changes nothing: 200, not personal_workspace, and no audit entry
+    const before = count(await listAuditActions(h.deps.db, personal), 'member.role_changed');
+    const same = await patchRole(personal, owner.id, 'owner', owner.cookie);
+    expect(same.status).toBe(200);
+    expect(await same.json()).toMatchObject({ userId: owner.id, role: 'owner' });
+    expect(count(await listAuditActions(h.deps.db, personal), 'member.role_changed')).toBe(before);
+    // a member's no-op on the owner is still refused for lack of permission
+    expect((await patchRole(personal, owner.id, 'owner', guest.cookie)).status).toBe(403);
     for (const res of [
       await patchRole(personal, owner.id, 'admin', owner.cookie),
-      await patchRole(personal, owner.id, 'owner', owner.cookie),
       await patchRole(personal, guest.id, 'owner', owner.cookie),
       await remove(personal, owner.id, owner.cookie),
     ]) {
@@ -382,11 +421,61 @@ describe('management api: members', () => {
     });
   });
 
+  it('keeps the audit log from plain members', async () => {
+    const t = await team();
+    for (const query of ['', '?limit=10', '?action=member.added']) {
+      const res = await h.request(`/api/workspaces/${t.ws}/audit${query}`, {
+        cookie: t.member.cookie,
+      });
+      expect(res.status, query).toBe(403);
+      expect(await res.json()).toMatchObject({ code: 'forbidden' });
+    }
+    expect(
+      (await h.request(`/api/workspaces/${t.ws}/audit`, { cookie: t.owner.cookie })).status,
+    ).toBe(200);
+    expect(
+      (await h.request(`/api/workspaces/${t.ws}/audit`, { cookie: t.admin.cookie })).status,
+    ).toBe(200);
+  });
+
+  it('does not block inserts that reference the workspace while the write lock is held', async () => {
+    const t = await team();
+    const joiner = await h.createUser();
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked: () => void = () => undefined;
+    const isLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const holder = withTenant(h.deps.db, tenantScope(t.ws), async (tx) => {
+      expect(await lockWorkspaceForUpdate(tx)).not.toBeNull();
+      locked();
+      await released;
+    });
+    try {
+      await isLocked;
+      // a membership insert (foreign key check on the workspace) and its audit entry, from another transaction
+      const insert = seedMembership(h.deps.db, t.ws, joiner.id, 'member').then(
+        () => 'done' as const,
+      );
+      const timeout = new Promise<'blocked'>((resolve) =>
+        setTimeout(() => resolve('blocked'), 5_000),
+      );
+      expect(await Promise.race([insert, timeout])).toBe('done');
+    } finally {
+      release();
+      await holder;
+    }
+    expect(await roleOf(t.ws, joiner.id, t.owner.cookie)).toBe('member');
+  });
+
   it('pages the audit log newest first, filters by action and hides it from outsiders', async () => {
     const t = await team();
     await patchRole(t.ws, t.member.id, 'admin', t.owner.cookie);
     await patchRole(t.ws, t.member.id, 'member', t.owner.cookie);
-    const first = await audit(t.ws, '?limit=2', t.member.cookie);
+    const first = await audit(t.ws, '?limit=2', t.admin.cookie);
     expect(first.items.map((i) => i.action)).toEqual([
       'member.role_changed',
       'member.role_changed',
@@ -395,23 +484,23 @@ describe('management api: members', () => {
     const rest = await audit(
       t.ws,
       `?limit=100&cursor=${encodeURIComponent(first.nextCursor ?? '')}`,
-      t.member.cookie,
+      t.admin.cookie,
     );
     expect(rest.items.map((i) => i.action)).toEqual(
       expect.arrayContaining(['member.added', 'workspace.created']),
     );
     expect(rest.nextCursor).toBeNull();
-    const added = await audit(t.ws, '?action=member.added', t.member.cookie);
+    const added = await audit(t.ws, '?action=member.added', t.admin.cookie);
     expect(added.items).toHaveLength(3);
     expect(added.items.every((i) => i.action === 'member.added')).toBe(true);
     expect(
-      (await h.request(`/api/workspaces/${t.ws}/audit?cursor=garbage`, { cookie: t.member.cookie }))
+      (await h.request(`/api/workspaces/${t.ws}/audit?cursor=garbage`, { cookie: t.admin.cookie }))
         .status,
     ).toBe(422);
     expect(
       (
         await h.request(`/api/workspaces/${t.ws}/audit?action=no.such_action`, {
-          cookie: t.member.cookie,
+          cookie: t.admin.cookie,
         })
       ).status,
     ).toBe(422);
@@ -481,17 +570,17 @@ describe('management api: members', () => {
       `?cursor=${'A'.repeat(201)}`,
     ]) {
       const res = await h.request(`/api/workspaces/${t.ws}/audit${query}`, {
-        cookie: t.member.cookie,
+        cookie: t.admin.cookie,
       });
       expect(res.status, query).toBe(422);
       expect(await res.json()).toMatchObject({ code: 'validation_failed' });
     }
     const forged = Buffer.from(`2026-10-12T09:30:00.123Z|not-a-uuid`).toString('base64url');
     const res = await h.request(`/api/workspaces/${t.ws}/audit?cursor=${forged}`, {
-      cookie: t.member.cookie,
+      cookie: t.admin.cookie,
     });
     expect(res.status).toBe(422);
     expect(JSON.stringify(await res.json())).not.toContain('not-a-uuid');
-    expect((await audit(t.ws, '', t.member.cookie)).items.length).toBeGreaterThan(0);
+    expect((await audit(t.ws, '', t.admin.cookie)).items.length).toBeGreaterThan(0);
   });
 });
