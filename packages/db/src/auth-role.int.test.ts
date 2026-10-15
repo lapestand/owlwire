@@ -312,10 +312,14 @@ describe('checkAuthRoleSeparation', () => {
       const appDb = open(urlAs(tdb.appUrl, role, 'x'));
       try {
         const result = await checkAuthRoleSeparation(SYSTEM, appDb, open(tdb.authUrl));
-        expect(result).toEqual({
-          separated: false,
-          reasons: [`roles ${role} and ${TEST_AUTH.user} are members of each other`],
-        });
+        expect(result.separated).toBe(false);
+        // SET ROLE reaches the auth role's privileges too, so those are reported as well.
+        expect(result.reasons).toEqual(
+          expect.arrayContaining([
+            `roles ${role} and ${TEST_AUTH.user} are members of each other`,
+            'application role can access auth_session',
+          ]),
+        );
       } finally {
         await closeNow(appDb);
       }
@@ -336,6 +340,56 @@ describe('checkAuthRoleSeparation', () => {
       } finally {
         await closeNow(authDb);
       }
+    });
+  });
+
+  // An application role that can only SET ROLE to a role with auth-table privileges reaches those tables too, while
+  // has_table_privilege on the application role alone says no.
+  it('fails when the application role can switch to pg_read_all_data', async () => {
+    await withTestRole('app_read_all', 'nosuperuser nobypassrls', async (role) => {
+      await owner.query(`grant ${TEST_APP.user} to ${role}`);
+      await owner.query(`grant pg_read_all_data to ${role} with inherit false`);
+      const appDb = open(urlAs(tdb.appUrl, role, 'x'));
+      try {
+        const result = await checkAuthRoleSeparation(SYSTEM, appDb, open(tdb.authUrl));
+        expect(result.separated).toBe(false);
+        expect(result.reasons).toEqual(
+          expect.arrayContaining([
+            ...AUTH_SECRET_TABLES.map((t) => `application role can access ${t}`),
+            'application role has table-wide privileges on auth_user',
+            'application role can read auth_user.is_instance_admin',
+          ]),
+        );
+      } finally {
+        await closeNow(appDb);
+        await owner.query(`revoke pg_read_all_data from ${role}`);
+      }
+    });
+  });
+
+  it('fails when a role the application role can switch to holds a forbidden privilege', async () => {
+    await withTestRole('app_via', 'nosuperuser nobypassrls', async (role) => {
+      await withTestRole('auth_reader', 'nosuperuser', async (reader) => {
+        await owner.query(`grant ${TEST_APP.user} to ${role}`);
+        await owner.query(`grant select on auth_two_factor to ${reader}`);
+        await owner.query(`grant select (two_factor_enabled) on auth_user to ${reader}`);
+        await owner.query(`grant ${reader} to ${role} with inherit false`);
+        const appDb = open(urlAs(tdb.appUrl, role, 'x'));
+        try {
+          const result = await checkAuthRoleSeparation(SYSTEM, appDb, open(tdb.authUrl));
+          expect(result).toEqual({
+            separated: false,
+            reasons: [
+              'application role can access auth_two_factor',
+              'application role can read auth_user.two_factor_enabled',
+            ],
+          });
+        } finally {
+          await closeNow(appDb);
+          await owner.query(`revoke select on auth_two_factor from ${reader}`);
+          await owner.query(`revoke select (two_factor_enabled) on auth_user from ${reader}`);
+        }
+      });
     });
   });
 

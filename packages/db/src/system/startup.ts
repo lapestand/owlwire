@@ -108,7 +108,8 @@ interface AuthRoleAccess {
 }
 
 /**
- * Whether the auth tables are reachable only through the auth role. On the application connection (`appDb`): no
+ * Whether the auth tables are reachable only through the auth role. On the application connection (`appDb`), for
+ * the application role and every role it is a member of in any form (inherited or SET ROLE only): no
  * privilege at all on AUTH_SECRET_TABLES, no table-level privilege and no INSERT/UPDATE/REFERENCES on auth_user,
  * and SELECT on no auth_user column outside APP_AUTH_USER_COLUMNS. On the auth connection (`authDb`): a different
  * role than the application's, subject to row level security exactly like the application role (no superuser,
@@ -127,24 +128,31 @@ export async function checkAuthRoleSeparation(
       sql`select to_regclass('public.auth_user') is not null as "present"`,
     );
     if (!(present.rows[0] as { present: boolean } | undefined)?.present) return null;
+    // Every role the application role can act as: itself, roles it inherits, and roles it may only SET ROLE to (a
+    // grant WITH INHERIT FALSE, or a predefined role such as pg_read_all_data granted that way). has_*_privilege on
+    // current_user alone ignores the non-inherited ones, so each privilege is checked for every such role.
     const res = await q(s).execute(sql`
+      with reach as (
+        select r.oid from pg_roles r where pg_has_role(current_user, r.oid, 'MEMBER')
+      )
       select
         current_user::text as "role",
         coalesce((
           select array_agg(t.name order by t.name) from unnest(${secret}) as t(name)
           where to_regclass('public.' || quote_ident(t.name)) is not null
-            and has_table_privilege(current_user, ('public.' || quote_ident(t.name))::regclass,
-              'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+            and exists (select 1 from reach where has_table_privilege(reach.oid,
+              ('public.' || quote_ident(t.name))::regclass,
+              'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'))
         ), '{}') as "secretTables",
-        has_table_privilege(current_user, 'public.auth_user'::regclass,
-          'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') as "userTableWide",
-        has_any_column_privilege(current_user, 'public.auth_user'::regclass, 'INSERT, UPDATE, REFERENCES')
-          as "userColumnWrite",
+        exists (select 1 from reach where has_table_privilege(reach.oid, 'public.auth_user'::regclass,
+          'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')) as "userTableWide",
+        exists (select 1 from reach where has_any_column_privilege(reach.oid, 'public.auth_user'::regclass,
+          'INSERT, UPDATE, REFERENCES')) as "userColumnWrite",
         coalesce((
           select array_agg(a.attname::text order by a.attnum) from pg_attribute a
           where a.attrelid = 'public.auth_user'::regclass and a.attnum > 0 and not a.attisdropped
             and a.attname <> all(${allowed})
-            and has_column_privilege(current_user, a.attrelid, a.attnum, 'SELECT')
+            and exists (select 1 from reach where has_column_privilege(reach.oid, a.attrelid, a.attnum, 'SELECT'))
         ), '{}') as "userColumns"`);
     return res.rows[0] as unknown as AppAuthAccess;
   });

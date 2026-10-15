@@ -63,8 +63,10 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   privilege on those six tables, any table-level privilege or any write privilege on `auth_user`, or `SELECT` on an
   `auth_user` column outside the list; or when the auth connection is the application role, can bypass RLS, owns
   the tables or lacks DML on any auth table (`checkAuthRoleSeparation`). It also refuses when either role is a member
-  of the other in any form: a grant `WITH INHERIT FALSE` (or `SET` only) adds no table privilege, so the privilege
-  checks miss it, but it still allows `SET ROLE`. `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns these into warnings outside
+  of the other in any form: a grant `WITH INHERIT FALSE` (or `SET` only) adds no inherited privilege, but it still
+  allows `SET ROLE`. For the same reason the application-role privileges above are checked for every role
+  `owlwire_app` is a member of in any form, not only for the role itself, so access through a role it can only
+  `SET ROLE` to (a predefined role such as `pg_read_all_data` included) is refused too. `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns these into warnings outside
   production, as for the RLS check below.
 
 ### Sign-in library hardening
