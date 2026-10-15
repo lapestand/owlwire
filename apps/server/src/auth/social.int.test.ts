@@ -10,9 +10,12 @@ import {
   cookieFrom,
   createAuthHarness,
   TEST_BASE_URL,
+  TEST_PASSWORD,
   uniqueEmail,
 } from '../test/auth-harness.js';
+import { totp } from '../test/totp.js';
 import { INVITATION_TTL_MS, newInvitationToken } from '../workspaces/invitation-token.js';
+import { TWO_FACTOR_CHALLENGE_PATH } from './second-factor-gate.js';
 
 // No request leaves the process: the GitHub token and profile endpoints are answered by a fetch stub.
 
@@ -84,7 +87,12 @@ describe('social sign-in', () => {
   let h: AuthHarness;
   beforeAll(async () => {
     h = await createAuthHarness({
-      env: { OWLWIRE_GITHUB_CLIENT_ID: 'gh-id', OWLWIRE_GITHUB_CLIENT_SECRET: 'gh-secret' },
+      env: {
+        OWLWIRE_GITHUB_CLIENT_ID: 'gh-id',
+        OWLWIRE_GITHUB_CLIENT_SECRET: 'gh-secret',
+        OWLWIRE_GOOGLE_CLIENT_ID: 'google-id',
+        OWLWIRE_GOOGLE_CLIENT_SECRET: 'google-secret',
+      },
     });
   });
   afterEach(() => {
@@ -99,6 +107,12 @@ describe('social sign-in', () => {
       'select count(*)::int as n from workspaces',
     );
     return rows[0]?.n ?? -1;
+  };
+
+  const sessionUserId = async (cookie: string): Promise<string | null> => {
+    const res = await h.request('/api/auth/get-session', { cookie });
+    const body = (await res.json()) as { user?: { id: string } } | null;
+    return body?.user?.id ?? null;
   };
 
   const githubAccountsOf = async (userId: string): Promise<number> => {
@@ -123,7 +137,7 @@ describe('social sign-in', () => {
 
   it('refuses an unconfigured provider', async () => {
     const res = await h.request('/api/auth/sign-in/social', {
-      body: { provider: 'google', callbackURL: '/' },
+      body: { provider: 'discord', callbackURL: '/' },
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
@@ -264,16 +278,20 @@ describe('social sign-in', () => {
       }
     });
 
-    it('links a provider address verified on both sides to the existing account', async () => {
+    it('does not link a provider address verified on both sides without the user signed in', async () => {
+      // Whoever controls the mailbox could otherwise add a provider account at the address and get a permanent way
+      // in that skips the password and the second factor.
       await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
       const local = await h.createUser(uniqueEmail('linked'));
+      expect((await findUserByEmail(h.deps, local.email))?.emailVerified).toBe(true);
+      const before = await workspaceCount();
       mockGitHub({ email: local.email, verified: true });
       const res = await githubRoundTrip(h);
-      expect(errorOf(res)).toBeNull();
-      expect(hasSessionCookie(res)).toBe(true);
-      expect(await githubAccountsOf(local.id)).toBe(1);
-      // No second user and no second personal workspace.
-      expect(await listWorkspacesForUser(h.deps, local.id)).toHaveLength(1);
+      expect(res.status).toBe(302);
+      expect(errorOf(res)).toBe('account_not_linked');
+      expect(hasSessionCookie(res)).toBe(false);
+      expect(await githubAccountsOf(local.id)).toBe(0);
+      expect(await workspaceCount()).toBe(before);
     });
 
     it('refuses an explicit link of an unverified provider address while signed in', async () => {
@@ -297,7 +315,7 @@ describe('social sign-in', () => {
     it('links a verified provider address explicitly while signed in', async () => {
       await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
       const local = await h.createUser(uniqueEmail('explicit-ok'));
-      mockGitHub({ email: local.email, verified: true });
+      const githubId = mockGitHub({ email: local.email, verified: true });
       const start = await h.request('/api/auth/link-social', {
         body: { provider: 'github', callbackURL: '/' },
         cookie: local.cookie,
@@ -310,6 +328,111 @@ describe('social sign-in', () => {
       expect(res.status).toBe(302);
       expect(errorOf(res)).toBeNull();
       expect(await githubAccountsOf(local.id)).toBe(1);
+
+      // The linked provider now signs this user in (no second factor is enabled).
+      vi.restoreAllMocks();
+      mockGitHub({ email: local.email, verified: true, id: githubId });
+      const again = await githubRoundTrip(h);
+      expect(errorOf(again)).toBeNull();
+      expect(hasSessionCookie(again)).toBe(true);
+      expect(await sessionUserId(cookieFrom(again))).toBe(local.id);
     });
+  });
+
+  describe('second factor', () => {
+    /** Links GitHub while signed in, then turns TOTP on; returns the GitHub id and the TOTP secret. */
+    const linkedTotpUser = async () => {
+      await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+      const u = await h.createUser(uniqueEmail('totp'));
+      const githubId = mockGitHub({ email: u.email, verified: true });
+      const start = await h.request('/api/auth/link-social', {
+        body: { provider: 'github', callbackURL: '/' },
+        cookie: u.cookie,
+      });
+      const linked = await completeAtCallback(
+        h,
+        start.clone(),
+        [u.cookie, cookieFrom(start)].join('; '),
+      );
+      expect(errorOf(linked)).toBeNull();
+      vi.restoreAllMocks();
+      const enable = await h.request('/api/auth/two-factor/enable', {
+        body: { password: TEST_PASSWORD },
+        cookie: u.cookie,
+      });
+      expect(enable.status).toBe(200);
+      const { totpURI, backupCodes } = (await enable.json()) as {
+        totpURI: string;
+        backupCodes: string[];
+      };
+      const secret = new URL(totpURI).searchParams.get('secret') ?? '';
+      const verify = await h.request('/api/auth/two-factor/verify-totp', {
+        body: { code: totp(secret, new Date()) },
+        cookie: u.cookie,
+      });
+      expect(verify.status).toBe(200);
+      return { u, githubId, secret, backupCodes };
+    };
+
+    const sessionCount = async (userId: string): Promise<number> => {
+      const { rows } = await h.harness.ownerPool.query<{ n: number }>(
+        'select count(*)::int as n from auth_session where user_id = $1',
+        [userId],
+      );
+      return rows[0]?.n ?? -1;
+    };
+
+    it('asks a TOTP user for the code after GitHub sign-in and signs in only with it', async () => {
+      const { u, githubId, secret } = await linkedTotpUser();
+      const sessionsBefore = await sessionCount(u.id);
+      mockGitHub({ email: u.email, verified: true, id: githubId });
+      const res = await githubRoundTrip(h);
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('location') ?? '', TEST_BASE_URL);
+      expect(location.origin).toBe(TEST_BASE_URL);
+      expect(location.pathname).toBe(TWO_FACTOR_CHALLENGE_PATH);
+      expect(location.searchParams.get('callbackURL')).toBe(`${TEST_BASE_URL}/`);
+      expect(hasSessionCookie(res)).toBe(false);
+      // The session the provider sign-in created is revoked, not just hidden.
+      expect(await sessionCount(u.id)).toBe(sessionsBefore);
+      const challenge = cookieFrom(res);
+      expect(await sessionUserId(challenge)).toBeNull();
+
+      const wrong = await h.request('/api/auth/two-factor/verify-totp', {
+        body: { code: totp(secret, new Date()) === '000000' ? '111111' : '000000' },
+        cookie: challenge,
+      });
+      expect(wrong.status).toBe(401);
+      const ok = await h.request('/api/auth/two-factor/verify-totp', {
+        body: { code: totp(secret, new Date()) },
+        cookie: challenge,
+      });
+      expect(ok.status).toBe(200);
+      expect(await sessionUserId(cookieFrom(ok))).toBe(u.id);
+    });
+
+    it('completes a GitHub sign-in with a backup code', async () => {
+      const { u, githubId, backupCodes } = await linkedTotpUser();
+      mockGitHub({ email: u.email, verified: true, id: githubId });
+      const res = await githubRoundTrip(h);
+      expect(hasSessionCookie(res)).toBe(false);
+      const ok = await h.request('/api/auth/two-factor/verify-backup-code', {
+        body: { code: backupCodes[0] },
+        cookie: cookieFrom(res),
+      });
+      expect(ok.status).toBe(200);
+      expect(await sessionUserId(cookieFrom(ok))).toBe(u.id);
+    });
+  });
+
+  it('refuses Google id-token sign-in', async () => {
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    const res = await h.request('/api/auth/sign-in/social', {
+      body: { provider: 'google', idToken: { token: 'not-a-real-id-token' } },
+    });
+    // Refused before the token is looked at (a bad token alone would answer 401 INVALID_TOKEN).
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'ID_TOKEN_NOT_SUPPORTED' });
+    expect(hasSessionCookie(res)).toBe(false);
   });
 });

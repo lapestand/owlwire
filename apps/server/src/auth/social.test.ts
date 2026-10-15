@@ -20,7 +20,7 @@ describe('social providers', () => {
     });
     expect(buildSocialProviders(env)).toEqual({
       discord: { clientId: 'd', clientSecret: 'ds' },
-      google: { clientId: 'g', clientSecret: 'gs' },
+      google: { clientId: 'g', clientSecret: 'gs', disableIdTokenSignIn: true },
     });
     expect(enabledSocialProviders(env)).toEqual(['discord', 'google']);
   });

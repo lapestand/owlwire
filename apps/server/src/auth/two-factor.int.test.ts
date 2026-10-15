@@ -168,7 +168,24 @@ describe('two factor and passkeys', () => {
     };
     expect(body.challenge.length).toBeGreaterThan(10);
     expect(body.rp).toMatchObject({ id: 'localhost', name: 'Owlwire' });
+    expect(
+      (body as unknown as { authenticatorSelection: { userVerification: string } })
+        .authenticatorSelection.userVerification,
+    ).toBe('required');
     expect(body.user.name).toBe(u.email);
+  });
+
+  it('asks the authenticator to verify the user at passkey sign-in', async () => {
+    const res = await h.request('/api/auth/passkey/generate-authenticate-options');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      challenge: string;
+      rpId: string;
+      userVerification: string;
+    };
+    expect(body.challenge.length).toBeGreaterThan(10);
+    expect(body.rpId).toBe('localhost');
+    expect(body.userVerification).toBe('required');
   });
 
   it('offers no passkey registration options without a session', async () => {

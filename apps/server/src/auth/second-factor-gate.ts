@@ -1,0 +1,109 @@
+import type { BetterAuthPlugin } from 'better-auth';
+import { createAuthMiddleware } from 'better-auth/api';
+import { deleteSessionCookie } from 'better-auth/cookies';
+import { generateRandomString } from 'better-auth/crypto';
+
+/**
+ * Where a social sign-in that still needs the second factor lands: the web app's code step, which posts the code to
+ * /api/auth/two-factor/verify-totp or /verify-backup-code. The page receives the original destination as
+ * `callbackURL`.
+ */
+export const TWO_FACTOR_CHALLENGE_PATH = '/sign-in/two-factor';
+
+/**
+ * Pending second-factor state, in the shape the two-factor plugin issues after a password sign-in and reads back
+ * in its verify endpoints. The names are the plugin's own (not exported by the library); the integration tests pin
+ * them by completing a challenge issued here.
+ */
+const TWO_FACTOR_COOKIE = 'two_factor';
+const CHALLENGE_PREFIX = '2fa-';
+const ATTEMPTS_PREFIX = '2fa-attempts-';
+const CHALLENGE_MAX_AGE_SECONDS = 600;
+
+function isSocialSignIn(ctx: { path?: string; body?: unknown }): boolean {
+  const path = ctx.path ?? '';
+  if (path.startsWith('/callback/')) return true;
+  const body = ctx.body as { idToken?: unknown } | undefined;
+  return path === '/sign-in/social' && Boolean(body?.idToken);
+}
+
+/**
+ * The two-factor plugin asks for the second factor only after a password sign-in. This plugin extends it to social
+ * sign-in (the OAuth callback and the id-token request): when the user has two-factor authentication on, the session
+ * the provider sign-in just created is revoked and its cookies dropped, and the plugin's own challenge is issued in
+ * its place, so a TOTP or backup code (with the plugin's attempt cap and account lockout) completes the sign-in.
+ * List it after the two-factor plugin.
+ */
+export function socialSecondFactorGate(): BetterAuthPlugin {
+  return {
+    id: 'owlwire-social-second-factor',
+    hooks: {
+      after: [
+        {
+          matcher: isSocialSignIn,
+          handler: createAuthMiddleware(async (ctx) => {
+            const pending = ctx.context.newSession;
+            const user = pending?.user as
+              | { id: string; twoFactorEnabled?: boolean | null }
+              | undefined;
+            if (!pending || !user?.twoFactorEnabled) return;
+
+            // Drop the session cookies the sign-in set, then expire them, and revoke the session itself.
+            const sessionCookies = new Set(
+              Object.values(ctx.context.authCookies).map((c: { name: string }) => c.name),
+            );
+            const headers = ctx.context.responseHeaders;
+            const destination = headers?.get('location') ?? null;
+            if (headers) {
+              const kept = headers
+                .getSetCookie()
+                .filter((c) => !sessionCookies.has(c.slice(0, c.indexOf('='))));
+              headers.delete('set-cookie');
+              for (const c of kept) headers.append('set-cookie', c);
+            }
+            deleteSessionCookie(ctx, true);
+            await ctx.context.internalAdapter.deleteSession(pending.session.token);
+            ctx.context.setNewSession(null);
+
+            const identifier = `${CHALLENGE_PREFIX}${generateRandomString(20)}`;
+            const expiresAt = new Date(Date.now() + CHALLENGE_MAX_AGE_SECONDS * 1000);
+            await ctx.context.internalAdapter.createVerificationValue({
+              value: user.id,
+              identifier,
+              expiresAt,
+            });
+            await ctx.context.internalAdapter.createVerificationValue({
+              value: '0',
+              identifier: `${ATTEMPTS_PREFIX}${identifier}`,
+              expiresAt,
+            });
+            const cookie = ctx.context.createAuthCookie(TWO_FACTOR_COOKIE, {
+              maxAge: CHALLENGE_MAX_AGE_SECONDS,
+            });
+            await ctx.setSignedCookie(
+              cookie.name,
+              identifier,
+              ctx.context.secret,
+              cookie.attributes,
+            );
+
+            if (!ctx.path.startsWith('/callback/')) {
+              return ctx.json({ twoFactorRedirect: true, twoFactorMethods: ['totp'] });
+            }
+            const origin = new URL(ctx.context.baseURL).origin;
+            const target = new URL(TWO_FACTOR_CHALLENGE_PATH, origin);
+            if (destination) {
+              try {
+                const next = new URL(destination, origin);
+                if (next.origin === origin) target.searchParams.set('callbackURL', next.href);
+              } catch {
+                // no destination
+              }
+            }
+            throw ctx.redirect(target.href);
+          }),
+        },
+      ],
+    },
+  };
+}
