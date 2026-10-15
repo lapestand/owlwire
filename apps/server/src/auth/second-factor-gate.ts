@@ -15,10 +15,41 @@ export const TWO_FACTOR_CHALLENGE_PATH = '/sign-in/two-factor';
  * in its verify endpoints. The names are the plugin's own (not exported by the library); the integration tests pin
  * them by completing a challenge issued here.
  */
-const TWO_FACTOR_COOKIE = 'two_factor';
+export const TWO_FACTOR_COOKIE = 'two_factor';
 const CHALLENGE_PREFIX = '2fa-';
 const ATTEMPTS_PREFIX = '2fa-attempts-';
 const CHALLENGE_MAX_AGE_SECONDS = 600;
+
+/**
+ * Callback error codes that depend on whether an account exists for the provider address. An unverified address
+ * with no account fails user creation (`email_not_verified`, with a description); with an account it fails linking
+ * (`account_not_linked`). Both are answered as the second, without a description.
+ */
+const ACCOUNT_DEPENDENT_ERRORS = new Set(['email_not_verified', 'account_not_linked']);
+const COLLAPSED_ERROR = 'account_not_linked';
+
+function isCallback(ctx: { path?: string }): boolean {
+  return (ctx.path ?? '').startsWith('/callback/');
+}
+
+/** The callback's error redirect with an account-dependent code collapsed; null when there is nothing to change. */
+function collapsedErrorLocation(location: string, baseURL: string): string | null {
+  const origin = new URL(baseURL).origin;
+  let url: URL;
+  try {
+    url = new URL(location, origin);
+  } catch {
+    return null;
+  }
+  // The library appends its code to the error page's own query, so a page that already has `error` carries the
+  // library's code as a later value: every value is checked, and all of them are replaced by one.
+  if (!url.searchParams.getAll('error').some((e) => ACCOUNT_DEPENDENT_ERRORS.has(e))) return null;
+  url.searchParams.delete('error');
+  url.searchParams.delete('error_description');
+  url.searchParams.set('error', COLLAPSED_ERROR);
+  const absolute = /^[a-z][a-z\d+.-]*:/i.test(location);
+  return absolute ? url.href : `${url.pathname}${url.search}${url.hash}`;
+}
 
 function isSocialSignIn(ctx: { path?: string; body?: unknown }): boolean {
   const path = ctx.path ?? '';
@@ -33,12 +64,26 @@ function isSocialSignIn(ctx: { path?: string; body?: unknown }): boolean {
  * the provider sign-in just created is revoked and its cookies dropped, and the plugin's own challenge is issued in
  * its place, so a TOTP or backup code (with the plugin's attempt cap and account lockout) completes the sign-in.
  * List it after the two-factor plugin.
+ *
+ * It also answers the callback's account-dependent refusals with one error code, so a provider account carrying
+ * someone else's unverified address cannot be used to learn whether that address has an Owlwire account.
  */
 export function socialSecondFactorGate(): BetterAuthPlugin {
   return {
     id: 'owlwire-social-second-factor',
     hooks: {
       after: [
+        {
+          // A refused callback must not tell whether an Owlwire account exists for the provider address.
+          matcher: isCallback,
+          handler: createAuthMiddleware(async (ctx) => {
+            // Only a refusal: a sign-in that created a session redirects to the client's own callbackURL.
+            const location = ctx.context.responseHeaders?.get('location');
+            if (ctx.context.newSession || !location) return;
+            const collapsed = collapsedErrorLocation(location, ctx.context.baseURL);
+            if (collapsed !== null) throw ctx.redirect(collapsed);
+          }),
+        },
         {
           matcher: isSocialSignIn,
           handler: createAuthMiddleware(async (ctx) => {
