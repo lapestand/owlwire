@@ -7,16 +7,20 @@ import { workspaceAccess } from '../../middleware/workspace-access.js';
 import { ProblemError, problem, validationProblem } from '../../problem.js';
 import type { ApiEnv } from './env.js';
 import { registerMeRoutes } from './me.js';
-import { repositoryProblem } from './problems.js';
+import { crossSiteGuard, httpProblem, repositoryProblem } from './problems.js';
 import { registerPublicRoutes } from './public.js';
 import { registerWorkspaceRoutes } from './workspaces.js';
 
-/** Fixed detail of the 400 for an unparsable JSON body; the parser's message may quote the body. */
-const MALFORMED_JSON_DETAIL = 'The request body is not valid JSON.';
+/** Where createApp mounts the router; the public allowlist below is matched against full request paths. */
+export const API_BASE_PATH = '/api';
+
+/** The only routes that answer without a session. Every other path under the router requires one. */
+export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([`${API_BASE_PATH}/auth-config`]);
 
 /**
- * The session-authenticated management API under /api. Every route except the public ones needs a session; routes
- * under /workspaces/{workspaceId} also need a live membership of that workspace (404 otherwise).
+ * The session-authenticated management API under /api. Unsafe methods pass the cross-site guard first; every route
+ * not in PUBLIC_API_PATHS then needs a session; routes under /workspaces/{workspaceId} also need a live membership
+ * of that workspace (404 otherwise).
  */
 export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   const api = new OpenAPIHono<ApiEnv>({
@@ -30,9 +34,9 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
     if (err instanceof ProblemError) return problem(c, err);
     const mapped = repositoryProblem(err);
     if (mapped) return problem(c, mapped);
-    if (err instanceof HTTPException && err.status === 400) {
-      return problem(c, new ProblemError(400, 'validation_failed', MALFORMED_JSON_DETAIL));
-    }
+    // Client errors the framework raises (malformed JSON, a body that is not JSON): fixed details, never a 500.
+    if (err instanceof HTTPException && err.status < 500)
+      return problem(c, httpProblem(err.status));
     throw err;
   });
   api.openAPIRegistry.registerComponent('securitySchemes', 'cookieAuth', {
@@ -43,9 +47,8 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
 
   const session = sessionAuth(deps.auth);
   const member = workspaceAccess(deps);
-  api.use('/me', session);
-  api.use('/workspaces', session);
-  api.use('/workspaces/*', session);
+  api.use('*', crossSiteGuard(deps.authEnv.baseURL));
+  api.use('*', (c, next) => (PUBLIC_API_PATHS.has(c.req.path) ? next() : session(c, next)));
   api.use('/workspaces/:workspaceId', member);
   api.use('/workspaces/:workspaceId/*', member);
 
