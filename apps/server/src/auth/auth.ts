@@ -1,7 +1,9 @@
+import { passkey } from '@better-auth/passkey';
 import { newId } from '@owlwire/core';
 import { authAdapter, type OwlwireDb } from '@owlwire/db';
 import { betterAuth } from 'better-auth';
 import { APIError } from 'better-auth/api';
+import { twoFactor } from 'better-auth/plugins';
 import type { Logger } from 'pino';
 import type { AuthEnv } from '../config/auth-env.js';
 import { pickLocale } from '../mail/locale.js';
@@ -9,6 +11,7 @@ import { type Mailer, MailMessageError } from '../mail/mailer.js';
 import { type MailTemplate, MailTemplateError, renderMail } from '../mail/templates.js';
 import { betterAuthLogger } from './auth-logger.js';
 import { isBootstrap } from './bootstrap-context.js';
+import { buildSocialProviders } from './social.js';
 
 export const AUTH_BASE_PATH = '/api/auth';
 export const AUTH_COOKIE_PREFIX = 'owlwire';
@@ -30,9 +33,25 @@ export const RESET_PASSWORD_TOKEN_EXPIRES_IN_SECONDS = 60 * 60;
 /** Lifetime of email verification links. */
 export const EMAIL_VERIFICATION_EXPIRES_IN_SECONDS = 60 * 60;
 
+/**
+ * Failed second-factor checks: at most this many per client address and window (seconds) on every /two-factor/
+ * endpoint, and an account lock after `lockAfter` consecutive failures from any address.
+ */
+export const TWO_FACTOR_RATE_LIMIT = { window: 10, max: 3 } as const;
+const TWO_FACTOR_LOCKOUT = { lockAfter: 10, lockSeconds: 15 * 60 } as const;
+
 /** Secure + __Secure- cookies whenever OWLWIRE_PUBLIC_URL is https. */
 export function secureCookiesFor(baseURL: string): boolean {
   return new URL(baseURL).protocol === 'https:';
+}
+
+/**
+ * WebAuthn relying party: passkeys are bound to the host of OWLWIRE_PUBLIC_URL, and registration and sign-in
+ * responses must come from that exact origin (never from the origin a client claims).
+ */
+export function passkeyRelyingParty(baseURL: string): { rpID: string; origin: string } {
+  const url = new URL(baseURL);
+  return { rpID: url.hostname, origin: url.origin };
 }
 
 /** @public Why a registration hook refused a new user. */
@@ -135,6 +154,7 @@ export function createAuth(o: CreateAuthOptions) {
   const emailEnabled = o.mailer !== null;
   const allowHttpLinks = ('nodeEnv' in o ? o.nodeEnv : process.env.NODE_ENV) !== 'production';
   const log = o.logger.child({ component: 'auth' });
+  const relyingParty = passkeyRelyingParty(o.env.baseURL);
 
   /**
    * Never throws and never waits for the mail server: the message is built and sent in the background, so a request
@@ -179,7 +199,10 @@ export function createAuth(o: CreateAuthOptions) {
       modelName: 'auth_rate_limit',
       window: AUTH_RATE_LIMIT.window,
       max: AUTH_RATE_LIMIT.max,
-      customRules: { '/sign-in/email': { ...SIGN_IN_RATE_LIMIT } },
+      customRules: {
+        '/sign-in/email': { ...SIGN_IN_RATE_LIMIT },
+        '/two-factor/*': { ...TWO_FACTOR_RATE_LIMIT },
+      },
     },
     advanced: {
       // Explicit, so the origin, callback URL and CSRF checks never depend on NODE_ENV (the library turns the
@@ -194,6 +217,16 @@ export function createAuth(o: CreateAuthOptions) {
     },
     user: {
       modelName: 'auth_user',
+      // A provider address the provider has not verified never creates a user or joins an existing one: otherwise
+      // someone could pre-register a victim's address through a provider that skips verification and keep a way
+      // into the account the victim later claims.
+      validateUserInfo: ({ user, source }) =>
+        source.method === 'oauth' && source.action !== 'sign-in' && user.emailVerified !== true
+          ? {
+              error: 'email_not_verified',
+              errorDescription: 'The provider has not verified this email address',
+            }
+          : undefined,
       additionalFields: {
         isInstanceAdmin: { type: 'boolean', required: false, defaultValue: false, input: false },
       },
@@ -204,7 +237,19 @@ export function createAuth(o: CreateAuthOptions) {
       updateAge: SESSION_UPDATE_AGE_SECONDS,
     },
     // Provider tokens are encrypted with the auth secret before they reach auth_account.
-    account: { modelName: 'auth_account', encryptOAuthTokens: true },
+    account: {
+      modelName: 'auth_account',
+      encryptOAuthTokens: true,
+      accountLinking: {
+        enabled: true,
+        // No provider is trusted blindly: a social sign-in joins an existing account only when the provider has
+        // verified the address and the local account's address is verified too (the library's default local check).
+        // Otherwise the user links the provider explicitly while signed in (/link-social), which also requires a
+        // verified provider address.
+        trustedProviders: [],
+        allowDifferentEmails: false,
+      },
+    },
     // Reset tokens and other verification identifiers are stored as hashes, so a leaked row cannot be replayed.
     verification: { modelName: 'auth_verification', storeIdentifier: 'hashed' },
     emailAndPassword: {
@@ -257,6 +302,29 @@ export function createAuth(o: CreateAuthOptions) {
           },
         }
       : {}),
+    socialProviders: buildSocialProviders(o.env),
+    plugins: [
+      twoFactor({
+        issuer: 'Owlwire',
+        schema: { twoFactor: { modelName: 'auth_two_factor' } },
+        // The library always encrypts the TOTP secret with the auth secret; backup codes are encrypted too (its
+        // default, stated so it cannot silently change). OTP codes are not offered (no sendOTP); if they ever are,
+        // they are stored hashed.
+        backupCodeOptions: { storeBackupCodes: 'encrypted' },
+        otpOptions: { storeOTP: 'hashed' },
+        accountLockout: {
+          enabled: true,
+          maxFailedAttempts: TWO_FACTOR_LOCKOUT.lockAfter,
+          durationSeconds: TWO_FACTOR_LOCKOUT.lockSeconds,
+        },
+      }),
+      passkey({
+        rpID: relyingParty.rpID,
+        rpName: 'Owlwire',
+        origin: relyingParty.origin,
+        schema: { passkey: { modelName: 'auth_passkey' } },
+      }),
+    ],
     databaseHooks: {
       user: {
         create: {
