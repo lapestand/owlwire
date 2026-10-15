@@ -31,6 +31,71 @@ tenant isolation completely. We reduce this risk by building every query with bo
 guards above. These checks are textual: a setting name passed as a bound parameter is not detected. A separate
 system database role, instead of the setting, may replace this in a later release.
 
+## Sign-in data and the auth database role
+
+The sign-in library (Better Auth) keeps its data in the `auth_*` tables. They belong to the instance, not to a
+workspace, so they have no `workspace_id` and no tenant RLS: the library reads and writes them outside any
+`withTenant` or `withSystem` scope, and a system-only policy would break sign-up. Grants protect them instead.
+
+- **Three roles.** The owner (`owlwire`) runs migrations. The application role (`owlwire_app`) runs every request,
+  job and system lookup. The auth role (`owlwire_auth`, `OWLWIRE_AUTH_DATABASE_URL`) is used only by the sign-in
+  library's adapter and by the `auth_user` system functions (`apps/server/src/system/users.ts`). `owlwire migrate`
+  creates and grants it (`ensureAuthRole` in `packages/db/src/roles.ts`) with the same checks as the application
+  role: `NOSUPERUSER`, `NOBYPASSRLS`, not a member of the owner role or of any superuser or `BYPASSRLS` role, owning
+  no relation or schema. It must also be a different role from `owlwire_app`, and neither may be a member of the
+  other, since `SET ROLE` would undo the split.
+- **What the auth role can do.** `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the seven `auth_*` tables; `INSERT` on
+  `audit_log` (the instance-level `instance.admin_granted` record), which RLS still limits to system scope; and
+  `EXECUTE` on the policy helper `owlwire_private.rls_allows`. It cannot read any tenant table.
+- **What the application role can see.** Nothing at all in `auth_session` (session tokens), `auth_account` (password
+  hashes and provider tokens), `auth_verification` (reset and email verification tokens), `auth_two_factor` (2FA
+  secrets and backup codes), `auth_passkey` and `auth_rate_limit` (client addresses): every statement gets `42501`.
+  In `auth_user` it may `SELECT` only `id`, `name`, `email` and `image` (`APP_AUTH_USER_COLUMNS`), which is what
+  member lists show. It cannot read `is_instance_admin`, `two_factor_enabled` or `email_verified`, and cannot
+  insert, update or delete users, so SQL running as the application role cannot make itself an instance admin.
+  Foreign keys from tenant tables to `auth_user` still work, because PostgreSQL runs those checks as the table owner.
+  `ensureAppRole` re-applies this on every migration run, after the blanket grant on `public`.
+- **Startup check.** `serve` refuses to start (`AuthRoleSeparationError`) when the application role has any
+  privilege on those six tables, any table-level privilege or any write privilege on `auth_user`, or `SELECT` on an
+  `auth_user` column outside the list; or when the auth connection is the application role, can bypass RLS, owns
+  the tables or lacks DML on any auth table (`checkAuthRoleSeparation`). `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns
+  these into warnings outside production, as for the RLS check below.
+
+### Sign-in library hardening
+
+- Reset and verification identifiers are stored hashed (`verification.storeIdentifier: 'hashed'`), so a leaked
+  `auth_verification` row cannot be replayed as a reset link. Provider access, refresh and id tokens are encrypted
+  with `OWLWIRE_AUTH_SECRET` before they are stored (`account.encryptOAuthTokens`). 2FA secrets and backup codes keep
+  the library's encrypted default; when the email or SMS OTP method is enabled, its codes must be stored hashed too
+  (`otpOptions.storeOTP: 'hashed'`).
+- Session tokens are the exception: the library has no option to hash them, so `auth_session.token` holds the raw
+  token. Only the auth role can read it.
+- Telemetry is off. The library's logger is routed through our pino logger (`apps/server/src/auth/auth-logger.ts`):
+  only warnings and errors are kept, URLs (which can carry tokens) and email addresses in its messages are replaced,
+  and errors go through the same serializer that drops query parameters. Its default logger printed failed queries
+  with their parameters, emails included.
+- The origin, callback URL and CSRF checks are switched on explicitly, so they do not depend on `NODE_ENV` (the
+  library turns the origin check off when `NODE_ENV=test`). Session cookies are `HttpOnly`, `SameSite=Lax`, and
+  `Secure` with the `__Secure-` prefix whenever `OWLWIRE_PUBLIC_URL` is https.
+- Emailed links are built from `OWLWIRE_PUBLIC_URL` and the bare token (percent-encoded), never copied from the
+  library's URL. They must be https in production; with an http public URL the email is not sent and a warning is
+  logged. The page the user lands on after the link must be on our own origin. A mail that cannot be built or sent
+  is logged with its kind and error class only (no link, address or message) and never fails the request.
+- Sign-in answers an unknown email and a wrong password with the same `401` body, and hashes the submitted password
+  in both cases. With email verification on, a sign-up for a taken email gets the same `200` shape as a new one, and
+  a password reset request gets the same answer whether or not the email exists.
+
+### Client address and rate limiting
+
+Sign-in attempts are rate limited per client address, with counters in `auth_rate_limit` shared by every replica.
+The library only sees a `Request`, so the HTTP mount passes the address in an internal header
+(`x-owlwire-client-ip`); a value a client sends in that header is always dropped, and the library reads no other
+header. By default the address is the TCP peer of the connection and `X-Forwarded-For` is ignored, because any client
+can send it. Only when the peer is listed in `OWLWIRE_TRUSTED_PROXIES` (addresses or CIDR ranges) is the header read:
+its hops are walked from the right, trusted proxies are skipped, and the first untrusted hop is the client; a hop that
+is not an address stops the walk. Behind an unlisted proxy, every user shares the proxy's limit (a denial of service
+risk, not a bypass); listing a range that also contains clients would let those clients pick their own address.
+
 ## Background jobs
 
 - A job enqueued with a `TenantTx` is namespaced to its workspace. Its queue name and job key become
