@@ -20,6 +20,18 @@ describe('slug', () => {
     expect(slugify('  --Kurt  Sürüsü!!-- ')).toBe('kurt-surusu');
   });
 
+  it('pins how other scripts fold (only Turkish letters are transliterated)', () => {
+    // Letters with no decomposition are dropped, not transliterated: users pick their own slug where it matters.
+    expect(slugify('Straße')).toBe('stra-e');
+    expect(slugify('København')).toBe('k-benhavn');
+    // Compatibility forms fold to ASCII (NFKD), so a full-width reserved name still lands on the reserved one.
+    expect(slugify('ａｄｍｉｎ')).toBe('admin');
+    expect(RESERVED_SLUGS.has(slugify('ａｄｍｉｎ'))).toBe(true);
+    expect(slugify('ﬁsh')).toBe('fish');
+    // Other accents are stripped to the base letter.
+    expect(slugify('Café Zoë')).toBe('cafe-zoe');
+  });
+
   it('returns an empty string for names without letters or digits', () => {
     expect(slugify('🙂 !!!')).toBe('');
   });
@@ -59,6 +71,21 @@ describe('slug invariants', () => {
     );
   });
 
+  it('slugify keeps something whenever the input has an ASCII letter or digit', () => {
+    fc.assert(
+      fc.property(
+        fc.string({ unit: 'binary', maxLength: 60 }),
+        fc.stringMatching(/^[A-Za-z0-9]$/),
+        fc.string({ unit: 'binary', maxLength: 60 }),
+        (before, anchor, after) => {
+          const out = slugify(`${before}${anchor}${after}`);
+          expect(out.length).toBeGreaterThan(0);
+          expect(out).toContain(anchor.toLowerCase());
+        },
+      ),
+    );
+  });
+
   it('generateSlug always yields a valid slug ending in the suffix', () => {
     fc.assert(
       fc.property(
@@ -68,6 +95,8 @@ describe('slug invariants', () => {
           const s = generateSlug(name, suffix);
           expect(s).toMatch(SLUG_PATTERN);
           expect(s.endsWith(`-${suffix}`)).toBe(true);
+          expect(s.length).toBeGreaterThanOrEqual(3);
+          expect(s.length).toBeLessThanOrEqual(40);
         },
       ),
     );
