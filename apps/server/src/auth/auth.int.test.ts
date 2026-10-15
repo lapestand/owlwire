@@ -618,12 +618,22 @@ describe('client address behind a trusted proxy', () => {
     // Another client behind the same proxy has its own bucket.
     expect((await viaProxy('203.0.113.51')).status).toBe(401);
     // An untrusted peer cannot borrow the limited client's bucket, nor escape its own, with the header.
-    const direct = await h.request('/api/auth/sign-in/email', {
-      body: wrong,
-      remoteAddress: '198.51.100.20',
-      headers: { 'x-forwarded-for': '203.0.113.50' },
-    });
-    expect(direct.status).toBe(401);
+    const warn = vi.spyOn(h.deps.logger, 'warn');
+    const direct = () =>
+      h.request('/api/auth/sign-in/email', {
+        body: wrong,
+        remoteAddress: '198.51.100.20',
+        headers: { 'x-forwarded-for': '203.0.113.50' },
+      });
+    expect((await direct()).status).toBe(401);
+    expect((await direct()).status).toBe(401);
+    // The operator hears about it once, without the addresses.
+    const untrusted = warn.mock.calls.filter((call) =>
+      JSON.stringify(call).includes('OWLWIRE_TRUSTED_PROXIES'),
+    );
+    expect(untrusted).toHaveLength(1);
+    expect(JSON.stringify(untrusted)).not.toMatch(/198\.51\.100\.20|203\.0\.113\.50/);
+    warn.mockRestore();
   });
 });
 

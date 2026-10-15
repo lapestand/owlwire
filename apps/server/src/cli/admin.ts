@@ -6,6 +6,7 @@ import {
   AdminInputError,
   type BootstrapInstanceAdminResult,
   bootstrapInstanceAdmin,
+  ConcurrentAdminUserError,
   normalizeAdminInput,
 } from '../system/instance-admin.js';
 import { migrateDatabase } from '../system/migrate.js';
@@ -17,6 +18,9 @@ export interface AdminCreateOptions {
 }
 
 export interface AdminCreateIo {
+  /** Whether stdin is an interactive terminal, where reading would wait for EOF and echo what is typed. */
+  stdinIsTty(): boolean;
+  /** The password from stdin, without its trailing newline (readPassword). */
   readStdin(): Promise<string>;
   out(line: string): void;
   err(line: string): void;
@@ -47,14 +51,20 @@ export function formatAdminCreateResult(email: string, r: BootstrapInstanceAdmin
 }
 
 /**
- * Exit codes: 0 done, 2 invalid input. The input is checked before any database access, so a typo never migrates
- * or connects. The password read from stdin is never printed.
+ * Exit codes: 0 done, 2 invalid input (also a terminal as stdin for --password-stdin) or an account that another
+ * sign-up created with the same email while the command ran (nothing is changed then). The input is checked before
+ * any database access, so a typo never migrates or connects. The password read from stdin is never printed.
  */
 export async function runAdminCreate(opts: AdminCreateOptions, io: AdminCreateIo): Promise<number> {
+  if (opts.passwordStdin && io.stdinIsTty()) {
+    io.err(
+      '--password-stdin reads a password from a pipe, not a terminal; pipe the password, for example: ' +
+        `printf '%s' "$PASSWORD" | owlwire admin create --email <email> --password-stdin`,
+    );
+    return 2;
+  }
   try {
-    const password = opts.passwordStdin
-      ? (await io.readStdin()).replace(TRAILING_NEWLINE, '')
-      : undefined;
+    const password = opts.passwordStdin ? await io.readStdin() : undefined;
     const input = normalizeAdminInput({
       email: opts.email,
       ...(opts.name !== undefined ? { name: opts.name } : {}),
@@ -64,10 +74,16 @@ export async function runAdminCreate(opts: AdminCreateOptions, io: AdminCreateIo
     if (result.passwordIgnored) {
       io.err(`Warning: ${input.email} already exists; the password from stdin was ignored.`);
     }
+    if (!result.created && !result.emailVerified) {
+      io.err(
+        `Warning: ${input.email} was an existing account with an unverified email, so nothing proves that the ` +
+          'owner of that address created it. Check that the account is yours.',
+      );
+    }
     io.out(formatAdminCreateResult(input.email, result));
     return 0;
   } catch (err) {
-    if (err instanceof AdminInputError) {
+    if (err instanceof AdminInputError || err instanceof ConcurrentAdminUserError) {
       io.err(err.message);
       return 2;
     }
@@ -93,6 +109,7 @@ export function registerAdminCommands(
     )
     .action(async (opts: AdminCreateOptions) => {
       process.exitCode = await runAdminCreate(opts, {
+        stdinIsTty: () => process.stdin.isTTY === true,
         readStdin: () => readPassword(process.stdin),
         out: (line) => void process.stdout.write(`${line}\n`),
         err: (line) => void process.stderr.write(`${line}\n`),

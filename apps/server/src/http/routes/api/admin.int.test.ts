@@ -13,10 +13,15 @@ const PATH = '/api/admin/settings/registration';
 describe('management api: admin settings', () => {
   let h: AuthHarness;
   let adminCookie: string;
+  let adminId: string;
   beforeAll(async () => {
     h = await createAuthHarness({ registration: 'open' });
     const email = uniqueEmail('admin');
-    await bootstrapInstanceAdmin(h.deps, { email, name: 'Admin', password: TEST_PASSWORD });
+    ({ userId: adminId } = await bootstrapInstanceAdmin(h.deps, {
+      email,
+      name: 'Admin',
+      password: TEST_PASSWORD,
+    }));
     adminCookie = await h.signIn(email);
   });
   afterAll(async () => {
@@ -43,6 +48,21 @@ describe('management api: admin settings', () => {
     });
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({ mode: 'closed', source: 'settings' });
+    // The change is on the instance audit trail, with the admin as actor and the key but not the value.
+    const audit = await h.harness.ownerPool.query<{
+      actor_user_id: string | null;
+      target_id: string;
+      data: unknown;
+    }>(
+      `select actor_user_id, target_id, data from audit_log
+       where workspace_id is null and action = 'settings.updated' and actor_user_id = $1`,
+      [adminId],
+    );
+    expect(audit.rows).toContainEqual({
+      actor_user_id: adminId,
+      target_id: 'registration',
+      data: { keys: ['registration'] },
+    });
     // Sign-up answers a refusal with the generic 200 and creates no user.
     const late = uniqueEmail('late');
     expect((await h.signUp(late)).status).toBe(200);
@@ -56,6 +76,18 @@ describe('management api: admin settings', () => {
       cookie: adminCookie,
     });
     expect(reopened.status).toBe(200);
+  });
+
+  it('does not let a user make themselves an instance admin through update-user', async () => {
+    const u = await h.createUser();
+    const res = await h.request('/api/auth/update-user', {
+      method: 'POST',
+      body: { isInstanceAdmin: true },
+      cookie: u.cookie,
+    });
+    expect(res.status).toBe(400);
+    expect((await findUserByEmail(h.deps, u.email))?.isInstanceAdmin).toBe(false);
+    expect((await h.request(PATH, { cookie: u.cookie })).status).toBe(403);
   });
 
   it('validates the mode', async () => {

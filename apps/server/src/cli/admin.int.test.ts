@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { getRegistrationSetting } from '../system/registration.js';
 import { listWorkspacesForUser } from '../system/user-workspaces.js';
 import { findUserByEmail } from '../system/users.js';
+import { uniqueEmail } from '../test/auth-harness.js';
 import { TEST_BASE_URL } from '../test/config.js';
 import { createHarness, type Harness } from '../test/harness.js';
 import { registerAdminCommands } from './admin.js';
@@ -59,36 +60,51 @@ describe('owlwire admin create (default hooks, closed default)', () => {
 
   it('creates the first admin in closed mode and prints the generated password once', async () => {
     expect(await getRegistrationSetting(h.deps)).toEqual({ mode: 'closed', source: 'config' });
-    const { out } = await run(['--email', 'Root@Example.test']);
+    const typed = uniqueEmail('Root');
+    const email = typed.toLowerCase();
+    const { out } = await run(['--email', typed]);
     expect(process.exitCode ?? 0).toBe(0);
-    expect(out).toContain('Instance admin root@example.test created');
+    expect(out).toContain(`Instance admin ${email} created`);
     const password = /Generated password \(shown once\): (\S+)/.exec(out)?.[1];
     expect(password).toBeDefined();
-    const user = await findUserByEmail(h.deps, 'root@example.test');
-    expect(user).toMatchObject({ isInstanceAdmin: true, emailVerified: true, name: 'root' });
+    const user = await findUserByEmail(h.deps, email);
+    expect(user).toMatchObject({
+      isInstanceAdmin: true,
+      emailVerified: true,
+      name: email.split('@')[0],
+    });
     const personal = await listWorkspacesForUser(h.deps, user?.id ?? '');
     expect(personal).toMatchObject([{ kind: 'personal', role: 'owner' }]);
-    expect((await signIn('root@example.test', password ?? '')).status).toBe(200);
+    expect((await signIn(email, password ?? '')).status).toBe(200);
     // The closed default still refuses everybody else.
     expect(await getRegistrationSetting(h.deps)).toEqual({ mode: 'closed', source: 'config' });
   });
 
   it('reads the password from stdin and promotes an existing user', async () => {
+    const email = uniqueEmail('second');
     const { out } = await run(
-      ['--email', 'second@example.test', '--name', 'Second', '--password-stdin'],
+      ['--email', email, '--name', 'Second', '--password-stdin'],
       'a-very-long-password\n',
     );
     expect(process.exitCode ?? 0).toBe(0);
     expect(out).not.toContain('password');
-    expect((await signIn('second@example.test', 'a-very-long-password')).status).toBe(200);
+    expect((await signIn(email, 'a-very-long-password')).status).toBe(200);
 
     const again = await run(
-      ['--email', 'SECOND@example.test', '--password-stdin'],
+      ['--email', email.toUpperCase(), '--password-stdin'],
       'ignored-password\n',
     );
-    expect(again.out).toContain('Existing user second@example.test is now an instance admin.');
+    expect(again.out).toContain(`Existing user ${email} is now an instance admin.`);
     expect(again.err).toContain('password from stdin was ignored');
-    expect((await signIn('second@example.test', 'a-very-long-password')).status).toBe(200);
+    expect((await signIn(email, 'a-very-long-password')).status).toBe(200);
+  });
+
+  it('strips only one trailing newline from the stdin password', async () => {
+    const email = uniqueEmail('newline');
+    await run(['--email', email, '--password-stdin'], 'ends-with-newline\n\n');
+    expect(process.exitCode ?? 0).toBe(0);
+    expect((await signIn(email, 'ends-with-newline')).status).toBe(401);
+    expect((await signIn(email, 'ends-with-newline\n')).status).toBe(200);
   });
 
   it('exits 2 on an invalid email', async () => {
