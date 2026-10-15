@@ -16,6 +16,7 @@ import { notFound, ProblemError } from '../errors.js';
 import { type MailLocale, pickLocale } from '../mail/locale.js';
 import { MailMessageError } from '../mail/mailer.js';
 import { MailTemplateError, renderMail } from '../mail/templates.js';
+import { getRegistrationMode } from '../system/registration.js';
 import { findUserByEmail } from '../system/users.js';
 import type { WorkspaceContext } from './context.js';
 import { INVITATION_TTL_MS, newInvitationToken } from './invitation-token.js';
@@ -59,13 +60,13 @@ function mailFailure(err: unknown): Record<string, unknown> {
  * invitations (409 personal_workspace). Under the workspace lock (see lockForActor) the caller must still be an owner
  * or admin (403 otherwise, 404 when no longer a member); an address that already belongs to a member is 409
  * already_member; a pending invitation for the same address is replaced (invitation.revoked, reason 'replaced') in the
- * same transaction as the new one (invitation.created).
+ * same transaction as the new one (invitation.created). While registration is closed, an address with no account is
+ * 409 registration_closed, since its owner could never sign up to accept.
  *
  * The email is sent after the commit and awaited, so the answer can say whether it went out: `emailSent` is false
  * without SMTP, for a link that may not be emailed (http public URL in production) and when rendering or sending
- * fails. The invitation stays either way, and `acceptUrl` lets the inviter pass the link on themselves. The address
- * lookup and the email do not depend on whether the address has an account, so timing tells the inviter nothing
- * the 409 would not.
+ * fails. The invitation stays either way, and `acceptUrl` lets the inviter pass the link on themselves. Apart from
+ * the closed-registration refusal, the answer and the email do not depend on whether the address has an account.
  */
 export async function inviteMember(
   deps: Pick<Deps, 'db' | 'authDb' | 'clock' | 'mailer' | 'logger' | 'authEnv' | 'config'>,
@@ -78,6 +79,11 @@ export async function inviteMember(
   if (ws.kind === 'personal') throw new ProblemError(409, 'conflict', 'personal_workspace');
   const email = input.email.trim().toLowerCase();
   const existingUser = await findUserByEmail(deps, email);
+  // With registration closed nobody can sign up, so an invitation to an address without an account could never be
+  // accepted: refuse it rather than store and email a dead link.
+  if (!existingUser && (await getRegistrationMode(deps)) === 'closed') {
+    throw new ProblemError(409, 'conflict', 'registration_closed');
+  }
   const { token, tokenHash } = newInvitationToken();
   const auditActor = userActor(actor.id);
 
