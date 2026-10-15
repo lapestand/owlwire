@@ -8,6 +8,7 @@ import { type ClientIpResolver, createClientIpResolver } from './client-ip.js';
 import { requestId } from './middleware/request-id.js';
 import { problem } from './problem.js';
 import { API_BASE_PATH, createApiRouter } from './routes/api/index.js';
+import { rateLimitedProblem } from './routes/api/problems.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
 import { v1Routes } from './routes/v1/index.js';
 import { staticHandler } from './static.js';
@@ -62,9 +63,19 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.notFound((c) => problem(c, notFound()));
 
   app.route('/', healthRoutes(deps.checkReady ?? dbReadiness(deps.db)));
-  app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, (c) =>
-    deps.auth.handler(withClientIp(c, resolveClientIp)),
-  );
+  app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, async (c) => {
+    const res = await deps.auth.handler(withClientIp(c, resolveClientIp));
+    // The library's rate limiter answers 429 with its own body and only X-Retry-After. Answer it as every other
+    // rate limit: Problem Details (rate_limited) with Retry-After; X-Retry-After stays, and the library's clients parse
+    // any JSON body. Its other 429 (the two-factor account lockout) has no X-Retry-After and keeps its own code,
+    // which the client needs to tell a locked account apart.
+    const libraryRetryAfter = res.status === 429 ? res.headers.get('x-retry-after') : null;
+    if (libraryRetryAfter === null) return res;
+    return problem(
+      c,
+      rateLimitedProblem(libraryRetryAfter, { 'X-Retry-After': libraryRetryAfter }),
+    );
+  });
   app.route(API_BASE_PATH, createApiRouter(deps));
   app.route('/v1', v1Routes({ db: deps.db }));
 
