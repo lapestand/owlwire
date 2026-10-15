@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { systemClock } from '@owlwire/core';
+import { generateToken } from '@owlwire/crypto';
 import {
   AuditDataError,
   InvalidScopeError,
@@ -11,10 +12,27 @@ import {
   RepoNotFoundError,
 } from '@owlwire/db';
 import { HTTPException } from 'hono/http-exception';
-import { describe, expect, it } from 'vitest';
-import { INVALID_INPUT_DETAIL } from '../errors.js';
+import { describe, expect, it, vi } from 'vitest';
+import { AUDIT_DATA_DETAIL, INVALID_INPUT_DETAIL, NOT_FOUND_DETAIL } from '../errors.js';
+import { ingestEvent } from '../events/ingest.js';
 import { createLogger } from '../logger.js';
-import { type AppDeps, AUDIT_DATA_DETAIL, createApp, NOT_FOUND_DETAIL } from './app.js';
+import {
+  authenticateInstallationToken,
+  type InstallationAuthResult,
+} from '../system/installation-auth.js';
+import { type AppDeps, createApp } from './app.js';
+
+// The /v1 router runs for real; only the installation lookup and the event write below it are stubbed, so a
+// repository error reaches the app's error handler the way a real one would.
+vi.mock('../system/installation-auth.js', () => ({ authenticateInstallationToken: vi.fn() }));
+vi.mock('../events/ingest.js', () => ({ ingestEvent: vi.fn() }));
+
+const INSTALLATION = {
+  id: '01900000-0000-7000-8000-000000000001',
+  appId: '01900000-0000-7000-8000-000000000002',
+  workspaceId: '01900000-0000-7000-8000-000000000003',
+  grantedTypes: null,
+};
 
 const logger = createLogger('silent');
 
@@ -91,47 +109,53 @@ describe('errors', () => {
     expect(JSON.parse(text).code).toBe('internal');
   });
 
-  it('maps repository input and conflict errors to 422 validation_failed and 409 conflict', async () => {
+  it('answers repository input and conflict errors on /v1 with fixed details', async () => {
     const app = makeApp();
-    app.get('/input', () => {
-      throw new RepoInputError('event', 'idempotencyKey must be a non-empty string');
-    });
-    app.get('/conflict', () => {
-      throw new RepoConflictError('workspace', 'workspaces_slug_unique');
-    });
-    const input = await app.request('/input');
-    expect(input.status).toBe(422);
-    expect(input.headers.get('content-type')).toContain('application/problem+json');
-    expect(await input.json()).toMatchObject({ code: 'validation_failed', status: 422 });
-    const conflict = await app.request('/conflict');
-    expect(conflict.status).toBe(409);
-    expect(await conflict.json()).toMatchObject({ code: 'conflict', status: 409 });
-  });
-
-  it('answers repository input and conflict errors on /v1 with the fixed details of /api', async () => {
-    const app = makeApp();
-    app.post('/v1/events/input', () => {
-      throw new RepoInputError('event', 'idempotencyKey must be a non-empty string');
-    });
-    app.post('/v1/events/conflict', () => {
-      throw new RepoConflictError('event', 'events_idempotency_unique');
-    });
-    const input = await app.request('/v1/events/input', { method: 'POST' });
-    expect(input.status).toBe(422);
-    const inputText = await input.text();
-    expect(inputText).not.toContain('idempotencyKey');
-    expect(JSON.parse(inputText)).toMatchObject({
-      code: 'validation_failed',
-      detail: INVALID_INPUT_DETAIL,
-    });
-    const conflict = await app.request('/v1/events/conflict', { method: 'POST' });
-    expect(conflict.status).toBe(409);
-    const conflictText = await conflict.text();
-    expect(conflictText).not.toContain('events_idempotency_unique');
-    expect(conflictText).not.toContain('event');
-    const body = JSON.parse(conflictText);
-    expect(body).toMatchObject({ code: 'conflict', status: 409 });
-    expect(body.detail).toBeUndefined();
+    vi.mocked(authenticateInstallationToken).mockResolvedValue({
+      ok: true,
+      installation: INSTALLATION,
+    } as InstallationAuthResult);
+    vi.mocked(ingestEvent)
+      .mockRejectedValueOnce(
+        new RepoInputError('event', 'idempotencyKey must be a non-empty string'),
+      )
+      .mockRejectedValueOnce(
+        new RepoConflictError('event', 'events_installation_id_idempotency_key_unique'),
+      );
+    const send = () =>
+      app.request('/v1/events', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${generateToken('inst')}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ type: 'generic', body: 'hello' }),
+      });
+    try {
+      const input = await send();
+      expect(input.status).toBe(422);
+      expect(input.headers.get('content-type')).toContain('application/problem+json');
+      expect(await input.json()).toEqual({
+        type: 'https://owlwire.dev/errors/validation_failed',
+        title: 'Validation Failed',
+        status: 422,
+        code: 'validation_failed',
+        detail: INVALID_INPUT_DETAIL,
+      });
+      const conflict = await send();
+      expect(conflict.status).toBe(409);
+      expect(conflict.headers.get('content-type')).toContain('application/problem+json');
+      expect(await conflict.json()).toEqual({
+        type: 'https://owlwire.dev/errors/conflict',
+        title: 'Conflict',
+        status: 409,
+        code: 'conflict',
+      });
+      expect(ingestEvent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.mocked(authenticateInstallationToken).mockReset();
+      vi.mocked(ingestEvent).mockReset();
+    }
   });
 
   it('maps audit guard errors to 422 validation_failed without echoing input keys', async () => {
