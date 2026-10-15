@@ -481,7 +481,15 @@ describe('better auth hardening', () => {
     for (let i = 0; i < SIGN_IN_RATE_LIMIT.max; i++) {
       expect((await fromIp('203.0.113.7')).status).toBe(401);
     }
-    expect((await fromIp('203.0.113.7')).status).toBe(429);
+    const limited = await fromIp('203.0.113.7');
+    expect(limited.status).toBe(429);
+    // Problem Details with Retry-After, as on the rest of the API; the library's own header stays for its clients.
+    const retryAfter = limited.headers.get('retry-after') ?? '';
+    expect(retryAfter).toMatch(/^\d+$/);
+    expect(Number(retryAfter)).toBeGreaterThan(0);
+    expect(limited.headers.get('x-retry-after')).toBe(retryAfter);
+    expect(limited.headers.get('content-type')).toContain('application/problem+json');
+    expect(await limited.json()).toMatchObject({ status: 429, code: 'rate_limited' });
     // A client-sent internal header or forwarded header does not move it into another bucket.
     expect((await fromIp('203.0.113.7', { [AUTH_CLIENT_IP_HEADER]: '198.51.100.77' })).status).toBe(
       429,

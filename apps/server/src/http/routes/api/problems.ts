@@ -60,6 +60,17 @@ function retryAfter(upstream: string | null | undefined): string {
   return String(DEFAULT_RETRY_AFTER_SECONDS);
 }
 
+/** 429 rate_limited with Retry-After: the upstream value when it is usable, else the default. */
+export function rateLimitedProblem(
+  upstreamRetryAfter?: string | null,
+  headers: Record<string, string> = {},
+): ProblemError {
+  return new ProblemError(429, 'rate_limited', undefined, {
+    ...headers,
+    'Retry-After': retryAfter(upstreamRetryAfter),
+  });
+}
+
 /**
  * Problem for a 4xx the framework raised (HTTPException). Status is kept, the detail is fixed. A 429 always carries
  * Retry-After: the one from the error's own response when it has one, else the default.
@@ -80,9 +91,7 @@ export function httpProblem(status: number, upstreamRetryAfter?: string | null):
     case 415:
       return new ProblemError(415, 'validation_failed', UNSUPPORTED_MEDIA_TYPE_DETAIL);
     case 429:
-      return new ProblemError(429, 'rate_limited', undefined, {
-        'Retry-After': retryAfter(upstreamRetryAfter),
-      });
+      return rateLimitedProblem(upstreamRetryAfter);
     default:
       return new ProblemError(s, 'validation_failed');
   }
