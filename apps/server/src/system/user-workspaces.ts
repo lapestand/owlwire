@@ -6,6 +6,7 @@ import {
   RepoConflictError,
   tenantScope,
   toWorkspaceSummary,
+  WORKSPACE_SLUG_UNIQUE,
   withTenant,
 } from '@owlwire/db';
 import { listMembershipsForUser, SYSTEM, withSystem } from '@owlwire/db/system';
@@ -29,7 +30,7 @@ export async function listWorkspacesForUser(
  * Creates a community workspace (with its data key and workspace.created) and makes `userId` its owner
  * (member.added), in one transaction. `input.slug` must already be a valid user-chosen slug; without one a slug is
  * generated from the name. A taken slug the user picked, or repeated collisions of generated ones, answer
- * 409 slug_taken.
+ * 409 slug_taken. Only the slug constraint is retried or mapped; any other conflict goes on unchanged.
  */
 export async function createCommunityWorkspace(
   deps: Pick<BaseDeps, 'db'>,
@@ -47,7 +48,8 @@ export async function createCommunityWorkspace(
         return { ...toWorkspaceSummary(ws), role: 'owner' as const };
       });
     } catch (err) {
-      if (!(err instanceof RepoConflictError)) throw err;
+      if (!(err instanceof RepoConflictError) || err.constraint !== WORKSPACE_SLUG_UNIQUE)
+        throw err;
     }
   }
   throw new ProblemError(409, 'conflict', 'slug_taken');

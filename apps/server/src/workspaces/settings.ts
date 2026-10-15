@@ -3,6 +3,7 @@ import {
   softDeleteWorkspace,
   tenantScope,
   updateWorkspace,
+  WORKSPACE_SLUG_UNIQUE,
   withTenant,
 } from '@owlwire/db';
 import type { BaseDeps } from '../base-deps.js';
@@ -33,7 +34,9 @@ export async function updateWorkspaceSettings(
       return { ...updated, role: ws.role };
     });
   } catch (err) {
-    if (err instanceof RepoConflictError) throw new ProblemError(409, 'conflict', 'slug_taken');
+    if (err instanceof RepoConflictError && err.constraint === WORKSPACE_SLUG_UNIQUE) {
+      throw new ProblemError(409, 'conflict', 'slug_taken');
+    }
     throw err;
   }
 }

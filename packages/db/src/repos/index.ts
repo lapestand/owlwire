@@ -132,6 +132,7 @@ export {
   softDeleteWorkspace,
   toWorkspaceSummary,
   updateWorkspace,
+  WORKSPACE_SLUG_UNIQUE,
   type WorkspaceRow,
   type WorkspaceSummary,
 } from './workspaces.js';

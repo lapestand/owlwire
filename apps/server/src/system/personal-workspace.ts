@@ -5,12 +5,11 @@ import {
   createWorkspace,
   RepoConflictError,
   tenantScope,
+  WORKSPACE_SLUG_UNIQUE,
   withTenant,
 } from '@owlwire/db';
 import { findPersonalWorkspaceByOwner, SYSTEM, withSystem } from '@owlwire/db/system';
 import type { BaseDeps } from '../base-deps.js';
-
-const SLUG_UNIQUE = 'workspaces_slug_unique';
 
 /** The user's name within the API's workspace name limit (same measure), or 'Personal' when blank. */
 function personalName(name: string): string {
@@ -64,7 +63,7 @@ export async function ensurePersonalWorkspace(
     if (!(err instanceof RepoConflictError)) throw err;
     const winner = await findLive(deps, user.id);
     if (winner) return winner;
-    if (err.constraint !== SLUG_UNIQUE) throw err;
+    if (err.constraint !== WORKSPACE_SLUG_UNIQUE) throw err;
     slugTaken = true;
   }
   const id = newId();

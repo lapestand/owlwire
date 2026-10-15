@@ -11,6 +11,12 @@ export type WorkspaceRow = typeof workspaces.$inferSelect;
 
 const OWNER_FK = 'workspaces_owner_user_id_auth_user_id_fk';
 
+/**
+ * `RepoConflictError.constraint` when a workspace slug is already taken. Slugs stay taken after a soft delete, so a
+ * deleted workspace's slug also conflicts.
+ */
+export const WORKSPACE_SLUG_UNIQUE = 'workspaces_slug_unique';
+
 export interface CreateWorkspaceInput {
   name: string;
   slug: string;
