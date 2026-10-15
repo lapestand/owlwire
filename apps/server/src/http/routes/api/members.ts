@@ -18,7 +18,7 @@ import {
   transferOwnership,
 } from '../../../workspaces/members.js';
 import type { ApiEnv } from './env.js';
-import { json, problems, SECURITY, TAGS } from './problems.js';
+import { json, problems, problemWith, SECURITY, TAGS } from './problems.js';
 
 /** Owners and admins see every member's email; plain members see id, name, image and role only. */
 function toMemberDto(m: MemberListItem, viewerRole: WorkspaceRole): MemberDto {
@@ -66,7 +66,8 @@ export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
       },
       responses: {
         200: json(MemberSchema, 'Updated member'),
-        ...problems(400, 401, 403, 404, 409, 422),
+        ...problems(400, 401, 403, 404, 422),
+        ...problemWith(409, 'last_owner', 'personal_workspace'),
       },
     }),
     async (c) => {
@@ -88,7 +89,8 @@ export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
       request: { params: MemberParams },
       responses: {
         204: { description: 'Removed, or left when the member is the caller' },
-        ...problems(401, 403, 404, 409, 422),
+        ...problems(401, 403, 404, 422),
+        ...problemWith(409, 'last_owner', 'personal_workspace'),
       },
     }),
     async (c) => {
@@ -121,7 +123,9 @@ export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
       },
       responses: {
         204: { description: 'Ownership transferred; the previous owner is now an admin' },
-        ...problems(400, 401, 403, 404, 409, 422),
+        ...problems(400, 401, 403, 404),
+        ...problemWith(409, 'already_owner', 'personal_workspace'),
+        ...problemWith(422, 'target_is_self'),
       },
     }),
     async (c) => {

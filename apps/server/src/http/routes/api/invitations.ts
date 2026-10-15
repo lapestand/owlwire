@@ -153,7 +153,8 @@ export function registerInvitationRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): 
       },
       responses: {
         200: json(AcceptedInvitationSchema, 'Invitation accepted'),
-        ...problems(400, 401, 403, 404, 422),
+        ...problems(400, 401, 404, 422),
+        ...problemWith(403, 'email_mismatch', 'email_not_verified'),
         ...problemWith(409, 'personal_workspace'),
       },
     }),
