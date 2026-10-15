@@ -166,9 +166,9 @@ startup warning. A deployment that terminates TLS on the same host without a pro
 The web UI's API is authenticated with the session cookie. Every path under `/api` requires a session except an
 explicit allowlist of public routes (today only `GET /api/auth-config`), so a route added later is protected unless
 it is deliberately made public; a test walks every registered route and expects `401` without a session. A path that
-no route answers gets `404` before the session check, so a removed or mistyped endpoint reads as gone; route names are
-already public in the API document, and a path the check misses is refused rather than served without a session. The sign-in
-routes under `/api/auth/*` are served by the sign-in library and are not part of this router.
+no route answers gets `404` before the session check, so a removed or mistyped endpoint reads as gone; the route list
+is public in the open-source repository, and a path the check misses is refused rather than served without a session.
+The sign-in routes under `/api/auth/*` are served by the sign-in library and are not part of this router.
 
 Cross-site request forgery is refused in layers:
 
@@ -193,7 +193,8 @@ reads the caller's membership again under that lock. The lock is `FOR NO KEY UPD
 does not block inserts that only reference the workspace (audit entries, new memberships). Such writes run one after
 another per workspace, and each decides on the roles the previous one left: a caller demoted meanwhile gets `403`, one
 removed meanwhile gets `404`. The last owner of a workspace cannot be demoted or removed (`409`, detail `last_owner`);
-the data layer enforces this a second time under its own row lock.
+the data layer enforces this a second time under its own row lock. An admin may demote another admin (or themselves) and
+then remove them; only an owner can restore the role.
 
 Any member can read the member list: user id, name, image, role and join date. Only owners and admins also see each
 member's email; nothing else from the user record is exposed. The workspace's audit log is readable by owners and
