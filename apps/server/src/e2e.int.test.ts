@@ -1,8 +1,6 @@
-import type { DevDeliveryList } from '@owlwire/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { seedDevWorkspace } from './system/dev-seed.js';
 import { type RunningServer, startServer } from './system/serve.js';
-import { TEST_DEV_ADMIN_TOKEN } from './test/config.js';
+import { seedDeliveryWorkspace } from './test/fixtures.js';
 import { createHarness, type Harness } from './test/harness.js';
 import { waitFor } from './test/wait.js';
 
@@ -40,7 +38,7 @@ describe('walking skeleton', () => {
   });
 
   it('delivers a hook through route_event and send_delivery to the fake adapter', async () => {
-    const seed = await seedDevWorkspace(h.deps.db, {
+    const seed = await seedDeliveryWorkspace(h.deps.db, {
       platform: 'webhook',
       chatId: 'smoke',
     });
@@ -57,21 +55,18 @@ describe('walking skeleton', () => {
     });
     expect(h.fake.sent.at(-1)?.rendered.text).toBe('Gate opened: 34 ABC 123');
 
-    const list = await fetch(`${base}/api/dev/deliveries`, {
-      headers: { authorization: `Bearer ${TEST_DEV_ADMIN_TOKEN}` },
-    });
-    const body = (await list.json()) as DevDeliveryList;
-    expect(body.deliveries[0]).toMatchObject({
-      eventId,
-      status: 'delivered',
-      eventType: 'generic',
-      platform: 'webhook',
-      attempts: 1,
-    });
+    expect(
+      (
+        await h.ownerPool.query<{ type: string }>('select type from events where id = $1', [
+          eventId,
+        ])
+      ).rows[0],
+    ).toEqual({ type: 'generic' });
+    expect(await deliveryOf(eventId)).toEqual({ status: 'delivered', attempts: 1 });
   });
 
   it('retries a rate limited send through the real runner and records two attempts', async () => {
-    const seed = await seedDevWorkspace(h.deps.db, {
+    const seed = await seedDeliveryWorkspace(h.deps.db, {
       platform: 'webhook',
       chatId: 'retry',
     });

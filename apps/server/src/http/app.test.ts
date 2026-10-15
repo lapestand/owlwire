@@ -23,7 +23,7 @@ function makeApp(over: Partial<AppDeps> = {}) {
     db: {} as OwlwireDb,
     clock: systemClock,
     logger,
-    config: { devAdminToken: null, trustedProxies: [] },
+    config: { trustedProxies: [] },
     authEnv: { baseURL: 'http://localhost:8080' },
     webDir: null,
     checkReady: async () => true,

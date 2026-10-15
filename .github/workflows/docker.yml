@@ -103,7 +103,7 @@ jobs:
             key=${line%%=*}
             value=${line#*=}
             case "$key" in
-              OWLWIRE_DB_OWNER_PASSWORD | OWLWIRE_DB_APP_PASSWORD | OWLWIRE_DB_AUTH_PASSWORD | OWLWIRE_KEK | OWLWIRE_KEK_PREVIOUS | OWLWIRE_AUTH_SECRET | OWLWIRE_DEV_ADMIN_TOKEN | OWLWIRE_TELEGRAM_BOT_TOKEN)
+              OWLWIRE_DB_OWNER_PASSWORD | OWLWIRE_DB_APP_PASSWORD | OWLWIRE_DB_AUTH_PASSWORD | OWLWIRE_KEK | OWLWIRE_KEK_PREVIOUS | OWLWIRE_AUTH_SECRET | OWLWIRE_TELEGRAM_BOT_TOKEN)
                 if [ -n "$value" ]; then
                   logs=${logs//"$value"/***}
                 fi

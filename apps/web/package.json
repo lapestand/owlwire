@@ -10,7 +10,6 @@
     "test": "vitest run --config ../../vitest.config.ts --project unit --passWithNoTests"
   },
   "dependencies": {
-    "@owlwire/contracts": "workspace:*",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

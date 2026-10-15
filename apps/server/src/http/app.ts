@@ -14,7 +14,6 @@ import { type ClientIpResolver, createClientIpResolver } from './client-ip.js';
 import { requestId } from './middleware/request-id.js';
 import { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL, ProblemError, problem } from './problem.js';
 import { API_BASE_PATH, createApiRouter } from './routes/api/index.js';
-import { devRoutes } from './routes/dev.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
 import { v1Routes } from './routes/v1/index.js';
 import { staticHandler } from './static.js';
@@ -80,8 +79,6 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, (c) =>
     deps.auth.handler(withClientIp(c, resolveClientIp)),
   );
-  // Before the management API: its session middleware covers every other path under /api.
-  app.route('/api/dev', devRoutes({ db: deps.db, config: deps.config }));
   app.route(API_BASE_PATH, createApiRouter(deps));
   app.route('/v1', v1Routes({ db: deps.db }));
 

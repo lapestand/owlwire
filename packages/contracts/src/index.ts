@@ -50,24 +50,6 @@ export const DELIVERY_STATUSES = [
 export const DeliveryStatus = z.enum(DELIVERY_STATUSES);
 export type DeliveryStatus = z.infer<typeof DeliveryStatus>;
 
-export const DevDelivery = z.object({
-  id: z.string(),
-  eventId: z.string(),
-  eventType: z.string(),
-  eventTitle: z.string().nullable(),
-  destinationName: z.string(),
-  platform: z.string(),
-  status: DeliveryStatus,
-  attempts: z.number().int(),
-  lastError: z.string().nullable(),
-  createdAt: z.string(),
-  deliveredAt: z.string().nullable(),
-});
-export type DevDelivery = z.infer<typeof DevDelivery>;
-
-export const DevDeliveryList = z.object({ deliveries: z.array(DevDelivery) });
-export type DevDeliveryList = z.infer<typeof DevDeliveryList>;
-
 export const PROBLEM_CODES = [
   'unauthorized',
   'forbidden',
