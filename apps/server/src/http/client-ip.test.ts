@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createClientIpResolver, parseTrustedProxies, TrustedProxyError } from './client-ip.js';
 
 describe('parseTrustedProxies', () => {
@@ -12,19 +12,37 @@ describe('parseTrustedProxies', () => {
     ]);
   });
 
-  it.each(['proxy.example', '10.0.0.0/33', '10.0.0.0/8/1', 'fd00::/129', '10.0.0.0/x'])(
-    'rejects %s without echoing it',
-    (bad) => {
-      const run = () => parseTrustedProxies(`10.0.0.1, ${bad}`);
-      expect(run).toThrow(TrustedProxyError);
-      expect(run).toThrow('entry 2');
-      try {
-        run();
-      } catch (err) {
-        expect((err as Error).message).not.toContain(bad);
-      }
-    },
-  );
+  it('turns an IPv4-mapped range into its IPv4 range', () => {
+    expect(parseTrustedProxies('::ffff:10.0.0.0/104, ::FFFF:192.0.2.1')).toEqual([
+      '10.0.0.0/8',
+      '192.0.2.1',
+    ]);
+    const resolve = createClientIpResolver(parseTrustedProxies('::ffff:10.0.0.0/104'));
+    expect(resolve('10.0.0.2', '198.51.100.1')).toBe('198.51.100.1');
+  });
+
+  it.each([
+    'proxy.example',
+    '10.0.0.0/33',
+    '10.0.0.0/8/1',
+    'fd00::/129',
+    '10.0.0.0/x',
+    '0.0.0.0/0',
+    '::/0',
+    '10.0.0.0/00',
+    '::ffff:10.0.0.0/95',
+    '::ffff:10.0.0.0/96',
+    '::ffff:10.0.0.0/129',
+  ])('rejects %s without echoing it', (bad) => {
+    const run = () => parseTrustedProxies(`10.0.0.1, ${bad}`);
+    expect(run).toThrow(TrustedProxyError);
+    expect(run).toThrow('entry 2');
+    try {
+      run();
+    } catch (err) {
+      expect((err as Error).message).not.toContain(bad);
+    }
+  });
 });
 
 describe('createClientIpResolver', () => {
@@ -53,6 +71,34 @@ describe('createClientIpResolver', () => {
     const resolve = createClientIpResolver(['10.0.0.0/8']);
     expect(resolve('10.0.0.2', 'not-an-ip, 10.0.0.3')).toBe('10.0.0.3');
     expect(resolve('10.0.0.2', '198.51.100.1, garbage')).toBe('10.0.0.2');
+  });
+
+  it('reads hops that carry a port', () => {
+    const resolve = createClientIpResolver(['10.0.0.0/8', 'fd00::/8']);
+    expect(resolve('10.0.0.2', '203.0.113.5:4711')).toBe('203.0.113.5');
+    expect(resolve('10.0.0.2', '[2001:db8::1]:4711')).toBe('2001:db8::1');
+    expect(resolve('10.0.0.2', '[2001:db8::1]')).toBe('2001:db8::1');
+    expect(resolve('10.0.0.2', '198.51.100.1, 10.0.0.3:80, [fd00::1]:443')).toBe('198.51.100.1');
+    // A port alone, an unbracketed IPv6 with a port-like tail, or a bad port is still not an address.
+    expect(resolve('10.0.0.2', '198.51.100.1, 10.0.0.3:99999')).toBe('10.0.0.2');
+    expect(resolve('10.0.0.2', '198.51.100.1, [10.0.0.3]:80')).toBe('10.0.0.2');
+    expect(resolve('10.0.0.2', '198.51.100.1, :4711')).toBe('10.0.0.2');
+  });
+
+  it('reports X-Forwarded-For from an untrusted peer once', () => {
+    const onUntrustedForwarded = vi.fn();
+    const resolve = createClientIpResolver(['10.0.0.0/8'], { onUntrustedForwarded });
+    expect(resolve('203.0.113.9', null)).toBe('203.0.113.9');
+    expect(resolve('10.0.0.2', '198.51.100.1')).toBe('198.51.100.1');
+    expect(onUntrustedForwarded).not.toHaveBeenCalled();
+    expect(resolve('203.0.113.9', '198.51.100.1')).toBe('203.0.113.9');
+    expect(resolve('203.0.113.8', '198.51.100.2')).toBe('203.0.113.8');
+    expect(onUntrustedForwarded).toHaveBeenCalledTimes(1);
+    expect(onUntrustedForwarded).toHaveBeenCalledWith();
+
+    const none = vi.fn();
+    createClientIpResolver([], { onUntrustedForwarded: none })('203.0.113.9', '198.51.100.1');
+    expect(none).toHaveBeenCalledTimes(1);
   });
 
   it('answers the leftmost hop when every hop is a trusted proxy', () => {
