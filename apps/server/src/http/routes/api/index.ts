@@ -10,6 +10,7 @@ import { ProblemError, problem, validationProblem } from '../../problem.js';
 import { registerAdminRoutes } from './admin.js';
 import { registerAuditRoutes } from './audit.js';
 import type { ApiEnv } from './env.js';
+import { registerInvitationRoutes } from './invitations.js';
 import { registerMeRoutes } from './me.js';
 import { registerMemberRoutes } from './members.js';
 import { crossSiteGuard, httpProblem, repositoryProblem } from './problems.js';
@@ -19,8 +20,14 @@ import { registerWorkspaceRoutes } from './workspaces.js';
 /** Where createApp mounts the router; the public allowlist below is matched against full request paths. */
 export const API_BASE_PATH = '/api';
 
-/** The only routes that answer without a session. Every other path under the router requires one. */
-export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([`${API_BASE_PATH}/auth-config`]);
+/**
+ * The only routes that answer without a session. Every other path under the router requires one. The invitation
+ * preview is public because the invitee may not have an account yet; the token in the body is its credential.
+ */
+export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
+  `${API_BASE_PATH}/auth-config`,
+  `${API_BASE_PATH}/invitations/lookup`,
+]);
 
 /**
  * Whether a route registered on `api` (middleware aside) answers this method and full request path. Built once, after
@@ -83,6 +90,7 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   registerWorkspaceRoutes(api, deps);
   registerMemberRoutes(api, deps);
   registerAuditRoutes(api, deps);
+  registerInvitationRoutes(api, deps);
   registerAdminRoutes(api, deps);
   return api;
 }

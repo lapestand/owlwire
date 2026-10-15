@@ -467,6 +467,11 @@ describe('management api: request hardening', () => {
     const paths = Object.entries(doc.paths ?? {});
     expect(paths.length).toBeGreaterThan(0);
     const documented = paths.map(([path]) => `${API_BASE_PATH}${path}`);
+    // Making a route public is a deliberate decision: each entry is listed here explicitly.
+    expect([...PUBLIC_API_PATHS].sort()).toEqual([
+      `${API_BASE_PATH}/auth-config`,
+      `${API_BASE_PATH}/invitations/lookup`,
+    ]);
     for (const pub of PUBLIC_API_PATHS) expect(documented).toContain(pub);
     const someId = '00000000-0000-7000-8000-000000000001';
     for (const [path, item] of paths) {
