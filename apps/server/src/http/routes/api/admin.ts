@@ -2,6 +2,7 @@ import { createRoute, type OpenAPIHono } from '@hono/zod-openapi';
 import { RegistrationSettingSchema, UpdateRegistrationSettingInput } from '@owlwire/contracts';
 import type { Deps } from '../../../deps.js';
 import { getRegistrationSetting, setRegistrationMode } from '../../../system/registration.js';
+import { userActor } from '../../../workspaces/context.js';
 import type { ApiEnv } from './env.js';
 import { json, problems, SECURITY, TAGS } from './problems.js';
 
@@ -41,7 +42,7 @@ export function registerAdminRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void 
     async (c) => {
       const { mode } = c.req.valid('json');
       // Writes the instance-level settings.updated audit entry in the same transaction.
-      await setRegistrationMode(deps, mode, { kind: 'user', userId: c.get('user').id });
+      await setRegistrationMode(deps, mode, userActor(c.get('user').id));
       return c.json({ mode, source: 'settings' as const }, 200);
     },
   );

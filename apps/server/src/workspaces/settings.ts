@@ -8,7 +8,7 @@ import {
 } from '@owlwire/db';
 import type { BaseDeps } from '../base-deps.js';
 import { notFound, ProblemError } from '../errors.js';
-import type { WorkspaceContext } from './context.js';
+import { userActor, type WorkspaceContext } from './context.js';
 import { lockForActor } from './write-lock.js';
 
 /**
@@ -29,7 +29,7 @@ export async function updateWorkspaceSettings(
   try {
     return await withTenant(deps.db, tenantScope(ws.id), async (t) => {
       const { role } = await lockForActor(t, actorUserId, 'admin');
-      const updated = await updateWorkspace(t, patch, { kind: 'user', userId: actorUserId });
+      const updated = await updateWorkspace(t, patch, userActor(actorUserId));
       if (!updated) throw notFound();
       return { ...updated, role };
     });
@@ -54,6 +54,6 @@ export async function deleteWorkspace(
   if (ws.kind === 'personal') throw new ProblemError(409, 'conflict', 'personal_workspace');
   await withTenant(deps.db, tenantScope(ws.id), async (t) => {
     await lockForActor(t, actorUserId, 'owner');
-    if (!(await softDeleteWorkspace(t, { kind: 'user', userId: actorUserId }))) throw notFound();
+    if (!(await softDeleteWorkspace(t, userActor(actorUserId)))) throw notFound();
   });
 }

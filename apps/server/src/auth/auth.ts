@@ -6,9 +6,10 @@ import { APIError } from 'better-auth/api';
 import { twoFactor } from 'better-auth/plugins';
 import type { Logger } from 'pino';
 import type { AuthEnv } from '../config/auth-env.js';
+import { canEmailLinks, InsecureLinkError, mailFailure } from '../mail/links.js';
 import { pickLocale } from '../mail/locale.js';
-import { type Mailer, MailMessageError } from '../mail/mailer.js';
-import { type MailTemplate, MailTemplateError, renderMail } from '../mail/templates.js';
+import type { Mailer } from '../mail/mailer.js';
+import { type MailTemplate, renderMail } from '../mail/templates.js';
 import { betterAuthLogger } from './auth-logger.js';
 import { isBootstrap } from './bootstrap-context.js';
 import { passkeyOptions, passkeyUserVerificationRequest } from './passkey.js';
@@ -97,14 +98,6 @@ export interface CreateAuthOptions {
 
 type LinkKind = 'verify_email' | 'reset_password';
 
-/** The emailed link was not built: the public URL is http in production. Carries no URL or token. */
-class AuthLinkError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AuthLinkError';
-  }
-}
-
 /**
  * Builds the emailed link from our own public URL and the bare token, never from the library's URL string: the token
  * is percent-encoded, the scheme must be https (http only outside production), and the callback the user lands on
@@ -118,10 +111,10 @@ function buildAuthLink(
   token: string,
   libraryUrl: string,
 ): string {
-  const base = new URL(baseURL);
-  if (base.protocol !== 'https:' && !(allowHttp && base.protocol === 'http:')) {
-    throw new AuthLinkError('OWLWIRE_PUBLIC_URL must be https for emailed links in production');
+  if (!canEmailLinks(baseURL, allowHttp)) {
+    throw new InsecureLinkError('OWLWIRE_PUBLIC_URL must be https for emailed links in production');
   }
+  const base = new URL(baseURL);
   let requested: string | null = null;
   try {
     requested = new URL(libraryUrl).searchParams.get('callbackURL');
@@ -148,18 +141,6 @@ function buildAuthLink(
   return link.href;
 }
 
-/** Log fields for a failed auth email: the kind and the error's class and code, never the link, address or message. */
-function mailFailure(kind: string, err: unknown): Record<string, unknown> {
-  const reason =
-    err instanceof MailTemplateError ||
-    err instanceof MailMessageError ||
-    err instanceof AuthLinkError
-      ? err.name
-      : 'transport';
-  const code = (err as { code?: unknown } | null)?.code;
-  return { kind, reason, ...(typeof code === 'string' ? { code } : {}) };
-}
-
 export function createAuth(o: CreateAuthOptions) {
   const emailEnabled = o.mailer !== null;
   const allowHttpLinks = o.allowHttpLinks;
@@ -184,7 +165,7 @@ export function createAuth(o: CreateAuthOptions) {
         const template = build();
         await mailer.send({ to, ...renderMail(pickLocale(acceptLanguage), template) });
       } catch (err) {
-        log.warn(mailFailure(kind, err), 'auth email not sent');
+        log.warn({ kind, ...mailFailure(err) }, 'auth email not sent');
       }
     };
     void send();
