@@ -65,7 +65,7 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
     if (mapped) return problem(c, mapped);
     // Client errors the framework raises (malformed JSON, a body that is not JSON): fixed details, never a 500.
     if (err instanceof HTTPException && err.status < 500)
-      return problem(c, httpProblem(err.status));
+      return problem(c, httpProblem(err.status, err.res?.headers.get('retry-after')));
     throw err;
   });
   api.openAPIRegistry.registerComponent('securitySchemes', 'cookieAuth', {
