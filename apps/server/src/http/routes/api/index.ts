@@ -1,5 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
+import { TrieRouter } from 'hono/router/trie-router';
 import { AUTH_COOKIE_PREFIX } from '../../../auth/auth.js';
 import type { Deps } from '../../../deps.js';
 import { requireInstanceAdmin } from '../../middleware/instance-admin.js';
@@ -20,8 +21,22 @@ export const API_BASE_PATH = '/api';
 export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([`${API_BASE_PATH}/auth-config`]);
 
 /**
+ * Whether a route registered on `api` (middleware aside) answers this method and full request path. Built once, after
+ * every route is registered.
+ */
+function routeMatcher(api: OpenAPIHono<ApiEnv>): (method: string, path: string) => boolean {
+  const router = new TrieRouter<true>();
+  for (const route of api.routes) {
+    if (route.method !== 'ALL') router.add(route.method, `${API_BASE_PATH}${route.path}`, true);
+  }
+  return (method, path) => router.match(method === 'HEAD' ? 'GET' : method, path)[0].length > 0;
+}
+
+/**
  * The session-authenticated management API under /api. Unsafe methods pass the cross-site guard first; every route
- * not in PUBLIC_API_PATHS then needs a session; routes under /workspaces/{workspaceId} also need a live membership
+ * not in PUBLIC_API_PATHS then needs a session; a path no route answers is a 404 before the session check, so a
+ * removed or mistyped endpoint reads as gone, not as "sign in first" (route names are public in the API document,
+ * so this tells nobody anything new; a path the matcher misses is refused, never let through without a session); routes under /workspaces/{workspaceId} also need a live membership
  * of that workspace (404 otherwise).
  */
 export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
@@ -50,7 +65,13 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   const session = sessionAuth(deps.auth);
   const member = workspaceAccess(deps);
   api.use('*', crossSiteGuard(deps.authEnv.baseURL));
-  api.use('*', (c, next) => (PUBLIC_API_PATHS.has(c.req.path) ? next() : session(c, next)));
+  let hasRoute: ((method: string, path: string) => boolean) | undefined;
+  api.use('*', (c, next) => {
+    if (PUBLIC_API_PATHS.has(c.req.path)) return next();
+    hasRoute ??= routeMatcher(api);
+    if (!hasRoute(c.req.method, c.req.path)) throw new ProblemError(404, 'not_found');
+    return session(c, next);
+  });
   api.use('/workspaces/:workspaceId', member);
   api.use('/workspaces/:workspaceId/*', member);
   api.use('/admin/*', requireInstanceAdmin());

@@ -4,8 +4,6 @@ import { parseKek } from '@owlwire/crypto';
 import { type AuthEnv, loadAuthEnv } from '../config/auth-env.js';
 import type { ServerConfig } from '../config/load.js';
 
-export const TEST_DEV_ADMIN_TOKEN = 'dev-admin-token-for-tests-0001';
-
 export const TEST_BASE_URL = 'http://localhost:8080';
 export const TEST_AUTH_SECRET = 'test-auth-secret-'.padEnd(48, 'x');
 
@@ -41,8 +39,6 @@ export function testConfig(
     configPath: '/nonexistent/owlwire.yaml',
     logLevel: 'silent',
     telegramBotToken: null,
-    devAdminToken: TEST_DEV_ADMIN_TOKEN,
-    devFakeAdapter: false,
     edition: parseEditionConfig(undefined),
     trustedProxies: [],
     authEnv: testAuthEnv(),

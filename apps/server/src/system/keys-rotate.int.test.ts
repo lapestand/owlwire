@@ -18,7 +18,7 @@ import { migrateAll } from '@owlwire/db/migrate';
 import { startTestDatabase, type TestDatabase } from '@owlwire/testing';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { seedDevWorkspace } from './dev-seed.js';
+import { seedDeliveryWorkspace } from '../test/fixtures.js';
 import { runKeysRotate } from './keys-rotate.js';
 
 let tdb: TestDatabase;
@@ -57,9 +57,10 @@ async function versions(): Promise<Record<number, number>> {
   return Object.fromEntries(rows.map((r) => [r.v, r.n]));
 }
 
-/** A fresh workspace (with its DEK wrapped by `kek`, and a dev-seed connection); returns its id. */
+/** A fresh workspace (with its DEK wrapped by `kek`, and a seeded telegram connection); returns its id. */
 async function seedWorkspace(kek: Kek): Promise<string> {
-  return (await seedDevWorkspace(open(createKeyring(kek)), { platform: 'telegram' })).workspaceId;
+  return (await seedDeliveryWorkspace(open(createKeyring(kek)), { platform: 'telegram' }))
+    .workspaceId;
 }
 
 async function insertLegacySecret(workspaceId: string, kek: Kek, config: object): Promise<string> {

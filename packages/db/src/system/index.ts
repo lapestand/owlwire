@@ -8,7 +8,6 @@ export {
   grantInstanceAdmin,
   markEmailVerified,
 } from './auth-users.js';
-export { type DevDeliveryRow, listDevDeliveries } from './dev-deliveries.js';
 export {
   findInvitationByTokenHash,
   hasPendingInvitationForEmail,

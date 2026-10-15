@@ -11,11 +11,9 @@ import {
 import {
   createApp,
   createInstallation,
-  getConnection,
   insertEvent,
   type OwlwireDb,
   openDatabase,
-  readConnectionConfig,
   revokeInstallation,
   SYSTEM_ACTOR,
   tenantScope,
@@ -30,7 +28,7 @@ import {
 import { startTestDatabase, type TestDatabase } from '@owlwire/testing';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { formatSeedResult, seedDevWorkspace } from './dev-seed.js';
+import { seedDeliveryWorkspace } from '../test/fixtures.js';
 import { authenticateInstallationToken } from './installation-auth.js';
 import { upgradeLegacySecrets } from './legacy-secrets.js';
 import { migrateDatabase } from './migrate.js';
@@ -152,14 +150,14 @@ describe('startup checks', () => {
   });
 
   it('refuse to start when a stored KEK version is missing from the keyring', async () => {
-    await seedDevWorkspace(db, { platform: 'telegram' });
+    await seedDeliveryWorkspace(db, { platform: 'telegram' });
     await expect(
       runStartupChecks(open(tdb.appUrl, createKeyring(generateKek(9))), authDb),
     ).rejects.toBeInstanceOf(KeyringCoverageError);
   });
 
   it('refuse to start when a stored KEK version is configured with the wrong key material', async () => {
-    await seedDevWorkspace(db, { platform: 'telegram' });
+    await seedDeliveryWorkspace(db, { platform: 'telegram' });
     const wrong = createKeyring(generateKek(1)); // same version 1, different key
     const err = await runStartupChecks(open(tdb.appUrl, wrong), authDb).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(KeyringCoverageError);
@@ -171,7 +169,7 @@ describe('startup checks', () => {
 
 describe('legacy secret coverage at startup', () => {
   it('refuses to start when a kek_v0 secret is sealed with a KEK version missing from the keyring', async () => {
-    const { workspaceId } = await seedDevWorkspace(db, { platform: 'telegram' });
+    const { workspaceId } = await seedDeliveryWorkspace(db, { platform: 'telegram' });
     const kek9 = generateKek(9);
     const ids = [randomUUID(), randomUUID()];
     const sealed = [
@@ -231,50 +229,9 @@ describe('migrateDatabase', () => {
   });
 });
 
-describe('seedDevWorkspace', () => {
-  it('creates an own bot connection with an encrypted token when --bot-token is given', async () => {
-    const r = await seedDevWorkspace(db, {
-      platform: 'telegram',
-      botToken: '123:abc',
-      chatId: '-1001',
-      name: 'Dev',
-    });
-    await withTenant(db, tenantScope(r.workspaceId), async (t) => {
-      expect((await getConnection(t, r.connectionId))?.kind).toBe('own_bot');
-      expect(await readConnectionConfig(t, r.connectionId, { purpose: 'send' })).toEqual({
-        botToken: '123:abc',
-      });
-    });
-    const { rows } = await owner.query<{ scheme: string }>(
-      'select config_enc_scheme as scheme from connections where id = $1',
-      [r.connectionId],
-    );
-    expect(rows[0]?.scheme).toBe('dek_v1');
-    expect(r.destinationId).not.toBeNull();
-    expect(formatSeedResult(r, { port: 8080, platform: 'telegram' })).toContain(r.token);
-  });
-
-  it('uses the shared bot (no config) without a token and the fake webhook adapter for webhook', async () => {
-    const shared = await seedDevWorkspace(db, { platform: 'telegram' });
-    const hook = await seedDevWorkspace(db, { platform: 'webhook', chatId: 'fake-destination' });
-    await withTenant(db, tenantScope(shared.workspaceId), async (t) => {
-      expect((await getConnection(t, shared.connectionId))?.kind).toBe('shared_bot');
-      expect(await readConnectionConfig(t, shared.connectionId, { purpose: 'send' })).toBeNull();
-    });
-    expect(shared.destinationId).toBeNull();
-    await withTenant(db, tenantScope(hook.workspaceId), async (t) => {
-      expect(await getConnection(t, hook.connectionId)).toMatchObject({
-        platform: 'webhook',
-        kind: 'webhook',
-        status: 'active',
-      });
-    });
-  });
-});
-
 describe('installation auth and tenant resolution', () => {
   it('authenticates a token to its workspace, rejects unknown and revoked tokens', async () => {
-    const seeded = await seedDevWorkspace(db, { platform: 'telegram' });
+    const seeded = await seedDeliveryWorkspace(db, { platform: 'telegram' });
     const ok = await authenticateInstallationToken(db, seeded.token);
     expect(ok.ok && ok.installation.workspaceId).toBe(seeded.workspaceId);
     expect(await authenticateInstallationToken(db, generateToken('inst'))).toEqual({
@@ -307,7 +264,7 @@ describe('installation auth and tenant resolution', () => {
   });
 
   it('resolves the tenant of an event id', async () => {
-    const seeded = await seedDevWorkspace(db, { platform: 'telegram' });
+    const seeded = await seedDeliveryWorkspace(db, { platform: 'telegram' });
     const { eventId } = await withTenant(db, tenantScope(seeded.workspaceId), (t) =>
       insertEvent(t, {
         installationId: seeded.installationId,

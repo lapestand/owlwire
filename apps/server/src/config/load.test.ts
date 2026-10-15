@@ -21,9 +21,9 @@ describe('loadConfig', () => {
       configPath: '/etc/owlwire/owlwire.yaml',
       logLevel: 'info',
       telegramBotToken: null,
-      devAdminToken: null,
-      devFakeAdapter: false,
     });
+    expect(c).not.toHaveProperty('devAdminToken');
+    expect(c).not.toHaveProperty('devFakeAdapter');
     expect(c.kek.current.version).toBe(1);
     expect(c.kek.previous).toBeNull();
     expect(c.edition.profile).toBe('personal');
@@ -91,8 +91,6 @@ describe('loadConfig', () => {
         OWLWIRE_PUBLIC_URL: 'https://owl.example.com',
         OWLWIRE_LOG_LEVEL: 'debug',
         OWLWIRE_TELEGRAM_BOT_TOKEN: '1:shared',
-        OWLWIRE_DEV_ADMIN_TOKEN: 'd'.repeat(24),
-        OWLWIRE_DEV_FAKE_ADAPTER: '1',
       },
       noFile,
     );
@@ -102,9 +100,17 @@ describe('loadConfig', () => {
       publicUrl: 'https://owl.example.com',
       logLevel: 'debug',
       telegramBotToken: '1:shared',
-      devAdminToken: 'd'.repeat(24),
-      devFakeAdapter: true,
     });
+  });
+
+  it('ignores the removed development variables, whatever their value', () => {
+    const c = loadConfig(
+      { ...base, OWLWIRE_DEV_ADMIN_TOKEN: 'short', OWLWIRE_DEV_FAKE_ADAPTER: 'yes' },
+      noFile,
+    );
+    expect(c).not.toHaveProperty('devAdminToken');
+    expect(c).not.toHaveProperty('devFakeAdapter');
+    expect(JSON.stringify(c)).not.toContain('OWLWIRE_DEV');
   });
 
   it('rejects invalid values', () => {
@@ -114,9 +120,6 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, OWLWIRE_PORT: '0' }, noFile)).toThrow(/OWLWIRE_PORT/);
     expect(() => loadConfig({ ...base, OWLWIRE_DATABASE_URL: 'mysql://x' }, noFile)).toThrow(
       /OWLWIRE_DATABASE_URL/,
-    );
-    expect(() => loadConfig({ ...base, OWLWIRE_DEV_ADMIN_TOKEN: 'short' }, noFile)).toThrow(
-      /OWLWIRE_DEV_ADMIN_TOKEN/,
     );
   });
 

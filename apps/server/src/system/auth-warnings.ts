@@ -5,7 +5,8 @@ import { countInstanceAdmins } from './users.js';
 
 /**
  * Sign-in setup problems worth an operator's attention, logged once when `serve` starts. None of them stops the
- * server. `env` is the process environment (NODE_ENV). Messages name settings, never their values.
+ * server. `env` is the process environment (NODE_ENV, and the removed development variables that may linger in
+ * an old .env). Messages name settings, never their values.
  */
 export async function collectAuthStartupWarnings(
   deps: Pick<Deps, 'db' | 'authDb' | 'config' | 'mailer' | 'authEnv'>,
@@ -39,6 +40,15 @@ export async function collectAuthStartupWarnings(
       'OWLWIRE_PUBLIC_URL is https but OWLWIRE_TRUSTED_PROXIES is empty: if a reverse proxy forwards requests, ' +
         'every client shares the proxy address for sign-in rate limiting. List the proxy address or range.',
     );
+  }
+  // Removed together with the development endpoints; the server no longer reads them.
+  if (env.OWLWIRE_DEV_ADMIN_TOKEN) {
+    warnings.push(
+      'OWLWIRE_DEV_ADMIN_TOKEN is no longer used and grants nothing; remove it from your environment.',
+    );
+  }
+  if (env.OWLWIRE_DEV_FAKE_ADAPTER) {
+    warnings.push('OWLWIRE_DEV_FAKE_ADAPTER is no longer used; remove it from your environment.');
   }
   if ((await countInstanceAdmins(deps)) === 0) {
     const mode = await getRegistrationMode(deps);
