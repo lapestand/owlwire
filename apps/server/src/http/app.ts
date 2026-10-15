@@ -15,8 +15,6 @@ import type { AppEnv } from './types.js';
 
 export type AppDeps = Deps & { webDir: string | null; checkReady?: () => Promise<boolean> };
 
-export { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL } from '../errors.js';
-
 /**
  * The request handed to the auth library: a copy whose AUTH_CLIENT_IP_HEADER is the resolved client address. A value
  * the client sent in that header is always dropped. Without a socket (app.request() in tests that pass none) the
