@@ -41,6 +41,17 @@
    email and prints a generated password once (or reads one with `--password-stdin`), or promotes an existing user.
    `serve` logs a warning on every start while no admin exists.
 
+6. **The development surface is gone.** `OWLWIRE_DEV_ADMIN_TOKEN`, `OWLWIRE_DEV_FAKE_ADAPTER`, the `/api/dev/*`
+   endpoints, the `dev:seed` command and the dev panel of the web UI are removed:
+
+   - `/api/dev/*` answers `404`, and the old token grants nothing. Sign in as an instance admin instead (item 5,
+     `owlwire admin create`) and use the management API under `/api`.
+   - The server no longer registers the logging fake adapter for the `webhook` platform. Existing `webhook`
+     connections created with it stop delivering (their deliveries fail with no adapter for the platform).
+   - The web UI shows a placeholder page until the management interface ships.
+   - Remove both variables from `.env`. While either is still set, `serve` logs a warning on every start; its value is
+     ignored.
+
 ## To 0.35 (two database roles, row level security)
 
 1. **New required variable `OWLWIRE_DB_APP_PASSWORD`.** The server now connects as the application role `owlwire_app`,
@@ -58,8 +69,9 @@
 2. **Upgrade every Owlwire process before writing new connections.** Migration `0006` changes the default of
    `connections.config_enc_scheme` from `kek_v0` to `dek_v1`. Existing rows keep `kek_v0`, and the server re-encrypts
    them with workspace keys when it starts. During a rolling upgrade (for example separate `--role api` and
-   `--role worker` processes), an older process that still inserts connections (only `dev:seed` does) would write
-   rows that the new code cannot decrypt. Stop or upgrade all old processes first, then run `dev:seed`.
+   `--role worker` processes), an older process that still inserts connections (only the development seed command of
+   that release does) would write rows that the new code cannot decrypt. Stop or upgrade all old processes first, then
+   seed again.
 
 3. **`OWLWIRE_ALLOW_INSECURE_DB_ROLE` (local development only).** `serve` refuses to start when its database
    connection can bypass row level security: a superuser, `BYPASSRLS`, or the table owner. The usual cause is that
