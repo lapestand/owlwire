@@ -713,10 +713,23 @@ describe('invitations', () => {
 });
 
 describe('auth users', () => {
+  // auth_user flags and writes are reachable only through the auth role.
+  const asAuthRole = <T>(fn: (s: SystemTx) => Promise<T>) => withSystem(env.authDb, SYSTEM, fn);
+
+  it('keeps the auth_user system functions away from the application role', async () => {
+    const id = await user(`app-${newId()}@x.test`);
+    await expect(inSystem((s) => findAuthUserById(s, id))).rejects.toMatchObject({
+      cause: { code: '42501' },
+    });
+    await expect(inSystem((s) => markEmailVerified(s, id))).rejects.toMatchObject({
+      cause: { code: '42501' },
+    });
+  });
+
   it('finds users case-insensitively and grants the instance admin flag once', async () => {
     const email = `admin-${newId()}@x.test`;
     const id = await user(email);
-    await inSystem(async (s) => {
+    await asAuthRole(async (s) => {
       expect((await findAuthUserByEmail(s, ` ${email.toUpperCase()} `))?.id).toBe(id);
       const before = await countInstanceAdmins(s);
       expect(await grantInstanceAdmin(s, id, SYSTEM_ACTOR)).toBe(true);
@@ -741,7 +754,7 @@ describe('auth users', () => {
   });
 
   it('answers malformed and unknown user ids without SQL errors', async () => {
-    await inSystem(async (s) => {
+    await asAuthRole(async (s) => {
       expect(await findAuthUserById(s, MALFORMED)).toBeNull();
       expect(await findAuthUserById(s, newId())).toBeNull();
       expect(await findAuthUserByEmail(s, `nobody-${newId()}@x.test`)).toBeNull();

@@ -24,7 +24,9 @@ export const authSchema = {
 
 /**
  * Better Auth reaches the auth_* tables through the opaque handle; Drizzle never leaves the package. Those
- * tables are instance-level and have no tenant RLS, so the adapter works outside withTenant and withSystem.
+ * tables are instance-level and have no tenant RLS, so the adapter works outside withTenant and withSystem. Pass the
+ * auth role's handle (owlwire_auth): the application role cannot read the session, account, verification,
+ * two-factor, passkey or rate-limit tables, and sees only a few auth_user columns.
  */
 export function authAdapter(db: OwlwireDb): ReturnType<typeof drizzleAdapter> {
   return drizzleAdapter(dbInternals(db).drizzle, { provider: 'pg', schema: authSchema });

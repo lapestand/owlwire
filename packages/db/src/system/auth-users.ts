@@ -5,6 +5,12 @@ import { now, q } from '../repos/context.js';
 import { authUser } from '../schema/index.js';
 import type { SystemTx } from '../scope.js';
 
+/*
+ * These functions read flags the application role cannot see (is_instance_admin, two_factor_enabled) and write
+ * auth_user, which only the auth role may: call them with a SystemTx opened on the auth role's handle
+ * (withSystem(authDb, SYSTEM, ...)). grantInstanceAdmin's audit row is the one non-auth write that role is granted.
+ */
+
 export interface AuthUserRow {
   id: string;
   email: string;

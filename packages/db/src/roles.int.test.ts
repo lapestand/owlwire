@@ -171,10 +171,10 @@ describe('app role', () => {
   });
 
   it('is idempotent and serialised by the advisory lock when migrateAll runs concurrently', async () => {
-    const opts = { ownerUrl: tdb.ownerUrl, appUrl: tdb.appUrl };
+    const opts = { ownerUrl: tdb.ownerUrl, appUrl: tdb.appUrl, authUrl: tdb.authUrl };
     await expect(Promise.all([migrateAll(opts), migrateAll(opts)])).resolves.toEqual([
-      { appRole: 'separate' },
-      { appRole: 'separate' },
+      { appRole: 'separate', authRole: 'separate' },
+      { appRole: 'separate', authRole: 'separate' },
     ]);
   });
 

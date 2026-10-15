@@ -30,7 +30,9 @@ export {
 export { findPersonalWorkspaceByOwner, listMembershipsForUser } from './memberships.js';
 export { getInstanceSetting, InvalidSettingValueError, setInstanceSetting } from './settings.js';
 export {
+  AuthRoleSeparationError,
   assertKeyringCoversKeys,
+  checkAuthRoleSeparation,
   checkRlsEnforcement,
   isOpenedWithKeyring,
   KeyringCoverageError,

@@ -1,5 +1,6 @@
 import { DecryptError, type Keyring, unwrapWorkspaceDek } from '@owlwire/crypto';
 import { asc, sql } from 'drizzle-orm';
+import { APP_AUTH_USER_COLUMNS, AUTH_SECRET_TABLES, AUTH_TABLES } from '../auth-tables.js';
 import { dbInternals, type OwlwireDb } from '../handle.js';
 import { q } from '../repos/context.js';
 import { type RlsSubjectFlags, rlsBypassReasons, rlsSubjectQuery } from '../rls-subject.js';
@@ -80,6 +81,109 @@ export async function checkRlsEnforcement(
     : ['application role not found in pg_roles'];
   for (const table of result.unprotected) reasons.push(`RLS is not enabled on ${table}`);
   return { enforced: reasons.length === 0, reasons };
+}
+
+export class AuthRoleSeparationError extends Error {
+  constructor(readonly reasons: string[]) {
+    super(
+      `the auth tables are not separated from the application database role: ${reasons.join('; ')}. ` +
+        'Set OWLWIRE_AUTH_DATABASE_URL to the dedicated auth role (owlwire_auth) and run `owlwire migrate`, which ' +
+        'creates the role and sets the grants of both roles.',
+    );
+    this.name = 'AuthRoleSeparationError';
+  }
+}
+
+interface AppAuthAccess {
+  role: string;
+  secretTables: string[];
+  userTableWide: boolean;
+  userColumnWrite: boolean;
+  userColumns: string[];
+}
+
+interface AuthRoleAccess {
+  role: string;
+  missing: string[];
+}
+
+/**
+ * Whether the auth tables are reachable only through the auth role. On the application connection (`appDb`): no
+ * privilege at all on AUTH_SECRET_TABLES, no table-level privilege and no INSERT/UPDATE/REFERENCES on auth_user,
+ * and SELECT on no auth_user column outside APP_AUTH_USER_COLUMNS. On the auth connection (`authDb`): a different
+ * role than the application's, subject to row level security exactly like the application role (no superuser,
+ * BYPASSRLS, owner membership or ownership), with SELECT, INSERT, UPDATE and DELETE on every auth table.
+ */
+export async function checkAuthRoleSeparation(
+  scope: SystemScope,
+  appDb: OwlwireDb,
+  authDb: OwlwireDb,
+): Promise<{ separated: boolean; reasons: string[] }> {
+  const secret = sql`${sql.param([...AUTH_SECRET_TABLES])}::text[]`;
+  const allowed = sql`${sql.param([...APP_AUTH_USER_COLUMNS])}::text[]`;
+  const app = await withSystem(appDb, scope, async (s): Promise<AppAuthAccess | null> => {
+    const present = await q(s).execute(
+      sql`select to_regclass('public.auth_user') is not null as "present"`,
+    );
+    if (!(present.rows[0] as { present: boolean } | undefined)?.present) return null;
+    const res = await q(s).execute(sql`
+      select
+        current_user::text as "role",
+        coalesce((
+          select array_agg(t.name order by t.name) from unnest(${secret}) as t(name)
+          where to_regclass('public.' || quote_ident(t.name)) is not null
+            and has_table_privilege(current_user, ('public.' || quote_ident(t.name))::regclass,
+              'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+        ), '{}') as "secretTables",
+        has_table_privilege(current_user, 'public.auth_user'::regclass,
+          'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') as "userTableWide",
+        has_any_column_privilege(current_user, 'public.auth_user'::regclass, 'INSERT, UPDATE, REFERENCES')
+          as "userColumnWrite",
+        coalesce((
+          select array_agg(a.attname::text order by a.attnum) from pg_attribute a
+          where a.attrelid = 'public.auth_user'::regclass and a.attnum > 0 and not a.attisdropped
+            and a.attname <> all(${allowed})
+            and has_column_privilege(current_user, a.attrelid, a.attnum, 'SELECT')
+        ), '{}') as "userColumns"`);
+    return res.rows[0] as unknown as AppAuthAccess;
+  });
+  if (!app) return { separated: false, reasons: ['auth tables not found; run migrations'] };
+
+  const tables = sql`${sql.param([...AUTH_TABLES])}::text[]`;
+  const auth = await withSystem(authDb, scope, async (s) => {
+    const subject = await q(s).execute(rlsSubjectQuery(null));
+    const access = await q(s).execute(sql`
+      select current_user::text as "role", coalesce((
+        select array_agg(t.name order by t.name) from unnest(${tables}) as t(name)
+        where to_regclass('public.' || quote_ident(t.name)) is null
+          or not (
+            has_table_privilege(current_user, ('public.' || quote_ident(t.name))::regclass, 'SELECT')
+            and has_table_privilege(current_user, ('public.' || quote_ident(t.name))::regclass, 'INSERT')
+            and has_table_privilege(current_user, ('public.' || quote_ident(t.name))::regclass, 'UPDATE')
+            and has_table_privilege(current_user, ('public.' || quote_ident(t.name))::regclass, 'DELETE')
+          )
+      ), '{}') as "missing"`);
+    return {
+      flags: subject.rows[0] as RlsSubjectFlags | undefined,
+      access: access.rows[0] as unknown as AuthRoleAccess,
+    };
+  });
+
+  const reasons: string[] = [];
+  if (auth.access.role === app.role) {
+    reasons.push(`the auth connection uses the application role ${app.role}`);
+  }
+  for (const table of app.secretTables) reasons.push(`application role can access ${table}`);
+  if (app.userTableWide) reasons.push('application role has table-wide privileges on auth_user');
+  if (app.userColumnWrite) reasons.push('application role can write auth_user columns');
+  for (const column of app.userColumns)
+    reasons.push(`application role can read auth_user.${column}`);
+  if (auth.flags) reasons.push(...rlsBypassReasons(auth.flags, 'auth role'));
+  else reasons.push('auth role not found in pg_roles');
+  for (const table of auth.access.missing) {
+    reasons.push(`auth role lacks SELECT, INSERT, UPDATE or DELETE on ${table}`);
+  }
+  return { separated: reasons.length === 0, reasons };
 }
 
 /**

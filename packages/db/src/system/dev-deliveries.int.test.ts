@@ -10,8 +10,8 @@ let b: SeededTenant;
 
 beforeAll(async () => {
   env = await setupDbTestEnv();
-  a = await seedTenant(env.db, 'dev-a');
-  b = await seedTenant(env.db, 'dev-b');
+  a = await seedTenant(env.db, env.authDb, 'dev-a');
+  b = await seedTenant(env.db, env.authDb, 'dev-b');
 }, 180_000);
 
 afterAll(async () => {

@@ -54,22 +54,25 @@ export function rlsSubjectQuery(role: string | null): SQL {
     where r.rolname = ${subject}`;
 }
 
-/** Startup wording of the flags; membership-derived reasons are skipped for a superuser (it is a member of every role). */
-export function rlsBypassReasons(flags: RlsSubjectFlags): string[] {
+/**
+ * Startup wording of the flags; membership-derived reasons are skipped for a superuser (it is a member of every role).
+ * `subject` names the role in the reasons ("application role", "auth role").
+ */
+export function rlsBypassReasons(flags: RlsSubjectFlags, subject = 'application role'): string[] {
   const reasons: string[] = [];
-  if (flags.isSuper) reasons.push('application role is SUPERUSER');
-  if (flags.bypassRls) reasons.push('application role has BYPASSRLS');
-  if (flags.ownsRelationDirectly) reasons.push('application role owns the tables');
+  if (flags.isSuper) reasons.push(`${subject} is SUPERUSER`);
+  if (flags.bypassRls) reasons.push(`${subject} has BYPASSRLS`);
+  if (flags.ownsRelationDirectly) reasons.push(`${subject} owns the tables`);
   if (flags.isSuper) return reasons;
-  if (flags.ownerMember) reasons.push('application role is a member of the table owner role');
+  if (flags.ownerMember) reasons.push(`${subject} is a member of the table owner role`);
   if (flags.privilegedMember) {
-    reasons.push('application role is a member of a SUPERUSER or BYPASSRLS role');
+    reasons.push(`${subject} is a member of a SUPERUSER or BYPASSRLS role`);
   }
   if (flags.ownsRelation && !flags.ownsRelationDirectly) {
-    reasons.push('application role is a member of a role that owns the tables');
+    reasons.push(`${subject} is a member of a role that owns the tables`);
   }
   if (flags.ownsSchema) {
-    reasons.push(`application role owns a schema among ${APP_SCHEMAS.join(', ')}`);
+    reasons.push(`${subject} owns a schema among ${APP_SCHEMAS.join(', ')}`);
   }
   return reasons;
 }
