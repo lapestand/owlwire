@@ -1,7 +1,7 @@
 import { type ServerType, serve } from '@hono/node-server';
 import type { Logger } from 'pino';
 import type { Role, ServerConfig } from '../config/load.js';
-import { createDeps, type Deps } from '../deps.js';
+import { closeDeps, createDeps, type Deps } from '../deps.js';
 import { createApp } from '../http/app.js';
 import { startWorker } from '../worker/runner.js';
 import { upgradeLegacySecrets } from './legacy-secrets.js';
@@ -37,13 +37,7 @@ export async function startServer(
   let worker: Promise<void> | null = null;
 
   if (role === 'all' || role === 'api') {
-    const app = createApp({
-      db: deps.db,
-      clock: deps.clock,
-      logger: deps.logger,
-      config: deps.config,
-      webDir: opts.webDir,
-    });
+    const app = createApp({ ...deps, webDir: opts.webDir });
     const started = await new Promise<{ server: ServerType; port: number }>((resolve, reject) => {
       const server = serve({ fetch: app.fetch, port: opts.port }, (info) => {
         server.off('error', reject);
@@ -115,10 +109,7 @@ export async function runServeCommand(
       stopping = true;
       await inflight;
       await running?.stop();
-      if (deps) {
-        await deps.db.close();
-        await deps.pool.end();
-      }
+      if (deps) await closeDeps(deps);
     },
     logger,
     exit: hooks.exit,
@@ -132,7 +123,7 @@ export async function runServeCommand(
     const created = createDeps(config, { logger });
     deps = created;
     await step(
-      (hooks.startupChecks ?? runStartupChecks)(created.db, {
+      (hooks.startupChecks ?? runStartupChecks)(created.db, created.authDb, {
         allowInsecureDbRole: config.allowInsecureDbRole,
         nodeEnv: 'nodeEnv' in hooks ? hooks.nodeEnv : process.env.NODE_ENV,
         logger,

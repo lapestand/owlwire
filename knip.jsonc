@@ -22,10 +22,7 @@
         "grammy",
         // Built first through turbo's ^build, then copied into public/ by scripts/copy-assets.mjs.
         "@owlwire/web",
-        // Installed ahead of the account and sign-in code that imports them. Remove each entry in the change that
-        // adds its first import: better-auth with the auth setup, the passkey plugin with two-factor and passkey
-        // support.
-        "better-auth",
+        // Installed ahead of the two-factor and passkey support that imports it; remove it in that change.
         "@better-auth/passkey"
       ]
     },

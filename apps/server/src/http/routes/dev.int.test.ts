@@ -84,10 +84,8 @@ describe('GET /api/dev/deliveries', () => {
 
   it('does not exist when no dev admin token is configured', async () => {
     const app = createApp({
-      db: h.deps.db,
-      clock: h.deps.clock,
-      logger: h.deps.logger,
-      config: { devAdminToken: null },
+      ...h.deps,
+      config: { ...h.deps.config, devAdminToken: null },
       webDir: null,
     });
     const res = await app.request('/api/dev/deliveries', {

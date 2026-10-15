@@ -5,7 +5,7 @@ import { createKeyring } from '@owlwire/crypto';
 import { openDatabase } from '@owlwire/db';
 import { Command, Option } from 'commander';
 import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
-import { createDeps, type Deps } from './deps.js';
+import { closeDeps, createDeps } from './deps.js';
 import { createLogger, safeErrorText } from './logger.js';
 import { formatSeedResult, seedDevWorkspace } from './system/dev-seed.js';
 import { runKeysRotate } from './system/keys-rotate.js';
@@ -27,11 +27,6 @@ function readTextFileOrNull(path: string): string | null {
 function readConfig(roleOverride?: Role): ServerConfig {
   const config = loadConfig(process.env, readTextFileOrNull);
   return roleOverride ? { ...config, role: roleOverride } : config;
-}
-
-async function closeDeps(deps: Deps): Promise<void> {
-  await deps.db.close();
-  await deps.pool.end();
 }
 
 const program = new Command()

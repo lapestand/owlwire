@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDeps, type Deps } from './deps.js';
+import { closeDeps, createDeps, type Deps } from './deps.js';
 import { testConfig } from './test/config.js';
 
 let deps: Deps | undefined;
 afterEach(async () => {
-  await deps?.db.close();
-  await deps?.pool.end();
+  if (deps) await closeDeps(deps);
   deps = undefined;
 });
 
@@ -30,9 +29,9 @@ describe('createDeps', () => {
       const reused = createDeps(config, { db: base.db, pool: base.pool });
       expect(reused.db).toBe(base.db);
       expect(reused.pool).toBe(base.pool);
+      await reused.authDb.close();
     } finally {
-      await base.db.close();
-      await base.pool.end();
+      await closeDeps(base);
     }
   });
 });

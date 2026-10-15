@@ -1,6 +1,8 @@
 import type { OwlwireDb } from '@owlwire/db';
 import {
+  AuthRoleSeparationError,
   assertKeyringCoversKeys,
+  checkAuthRoleSeparation,
   checkRlsEnforcement,
   type LegacyUpgradeResult,
   RlsNotEnforcedError,
@@ -17,24 +19,37 @@ export interface StartupCheckOptions {
 
 /**
  * Called when serve starts. If the application connection can bypass RLS (superuser, BYPASSRLS,
- * table owner, e.g. the 'same' mode without OWLWIRE_MIGRATION_DATABASE_URL) the process does not start. The only
+ * table owner, e.g. the 'same' mode without OWLWIRE_MIGRATION_DATABASE_URL) the process does not start. Nor does it
+ * when the auth tables are not split between the roles: the application role (`db`) can touch the session, account,
+ * verification, two-factor, passkey or rate-limit tables or more of auth_user than its listed columns, or the auth
+ * connection (`authDb`) is the application role, can bypass RLS, owns the tables or lacks access to them. The only
  * exception is the explicit local-development opt-in OWLWIRE_ALLOW_INSECURE_DB_ROLE=true outside
  * NODE_ENV=production; then every reason is logged as a warning. A keyring that does not cover
  * or does not open the stored workspace keys refuses in every environment.
  */
 export async function runStartupChecks(
   db: OwlwireDb,
+  authDb: OwlwireDb,
   opts: StartupCheckOptions = {},
 ): Promise<void> {
+  const insecureAllowed = opts.allowInsecureDbRole === true && opts.nodeEnv !== 'production';
   const rls = await checkRlsEnforcement(SYSTEM, db);
   if (!rls.enforced) {
-    if (!opts.allowInsecureDbRole || opts.nodeEnv === 'production') {
-      throw new RlsNotEnforcedError(rls.reasons);
-    }
+    if (!insecureAllowed) throw new RlsNotEnforcedError(rls.reasons);
     for (const reason of rls.reasons) {
       opts.logger?.warn(
         { reason },
         'row level security is NOT enforced for the application database role (allowed by OWLWIRE_ALLOW_INSECURE_DB_ROLE)',
+      );
+    }
+  }
+  const split = await checkAuthRoleSeparation(SYSTEM, db, authDb);
+  if (!split.separated) {
+    if (!insecureAllowed) throw new AuthRoleSeparationError(split.reasons);
+    for (const reason of split.reasons) {
+      opts.logger?.warn(
+        { reason },
+        'the auth tables are NOT separated from the application database role (allowed by OWLWIRE_ALLOW_INSECURE_DB_ROLE)',
       );
     }
   }
