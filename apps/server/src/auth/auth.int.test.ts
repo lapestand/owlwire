@@ -115,6 +115,16 @@ describe('better auth with smtp', () => {
     expect((await h.signInResponse(email)).status).toBe(200);
   });
 
+  it('opens no session from the email verification link', async () => {
+    const email = uniqueEmail('verify-nosession');
+    expect((await h.signUp(email)).status).toBe(200);
+    const link = new URL(extractUrl((await mailTo(h.mailer.outbox, email)).text));
+    const verify = await h.request(`${link.pathname}${link.search}`);
+    expect(verify.status).toBeLessThan(400);
+    expect(sessionCookie(verify)).toBe('');
+    expect((await h.signInResponse(email)).status).toBe(200);
+  });
+
   it('localizes the verification email from accept-language', async () => {
     const email = uniqueEmail('tr');
     await h.request('/api/auth/sign-up/email', {
