@@ -45,7 +45,7 @@ interface TwoFactorRecord {
   verified: boolean;
 }
 
-const adapter = () => authAdapter(env.db)(OPTIONS);
+const adapter = () => authAdapter(env.authDb)(OPTIONS);
 
 async function createUser(): Promise<UserRecord> {
   const now = new Date();
@@ -69,7 +69,7 @@ describe('authAdapter', () => {
     }
   });
 
-  it('writes and reads auth_user as the app role, outside any tenant or system scope', async () => {
+  it('writes and reads auth_user as the auth role, outside any tenant or system scope', async () => {
     const created = await createUser();
     const found = await adapter().findOne<{ id: string; isInstanceAdmin: boolean }>({
       model: 'user',

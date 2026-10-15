@@ -14,7 +14,7 @@ import { createInstallation } from '../repos/installations.js';
 import { createInvitation } from '../repos/invitations.js';
 import { addMembership } from '../repos/memberships.js';
 import { createRule } from '../repos/rules.js';
-import { tenantScope, withTenant } from '../scope.js';
+import { SYSTEM, tenantScope, withSystem, withTenant } from '../scope.js';
 import { createTestWorkspace } from './fixtures.js';
 
 /**
@@ -41,9 +41,30 @@ export interface SeededTenant {
   secret: string;
 }
 
-export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTenant> {
+/**
+ * `authDb` is the auth role's handle: auth_user rows are written there, since the app role may only read a few of
+ * their columns.
+ */
+export async function seedTenant(
+  db: OwlwireDb,
+  authDb: OwlwireDb,
+  label: string,
+): Promise<SeededTenant> {
   const workspaceId = await createTestWorkspace(db, label);
   const secret = `${label}-secret-token-${randomUUID()}`;
+  // Two users, the owner and a plain member, so membership and invitation attacks have targets. auth_user is an
+  // instance-level table without a repository here, so its rows are raw inserts through the auth role.
+  const userId = newId();
+  const memberUserId = newId();
+  await withSystem(authDb, SYSTEM, async (s) => {
+    for (const [id, suffix] of [
+      [userId, 'owner'],
+      [memberUserId, 'member'],
+    ] as const) {
+      await q(s).execute(sql`insert into auth_user (id, name, email)
+        values (${id}, ${`${label}-${suffix}`}, ${`${label}-${suffix}-${id}@seed.test`})`);
+    }
+  });
   return withTenant(db, tenantScope(workspaceId), async (t) => {
     const conn = await createConnection(
       t,
@@ -101,18 +122,7 @@ export async function seedTenant(db: OwlwireDb, label: string): Promise<SeededTe
       values (${conn.id}, ${workspaceId}, '2026-10-12', 1)`);
     await q(t).execute(sql`insert into catalog_types (app_id, key, name)
       values (${app.id}, ${`${label}.type`}, ${label})`);
-    // Two users, the owner and a plain member, plus a pending invitation, so membership and invitation attacks have
-    // targets. auth_user is an instance-level table without a repository here, so its rows are raw inserts; the
-    // memberships and the invitation go through the tenant repositories.
-    const userId = newId();
-    const memberUserId = newId();
-    for (const [id, suffix] of [
-      [userId, 'owner'],
-      [memberUserId, 'member'],
-    ] as const) {
-      await q(t).execute(sql`insert into auth_user (id, name, email)
-        values (${id}, ${`${label}-${suffix}`}, ${`${label}-${suffix}-${id}@seed.test`})`);
-    }
+    // The memberships of the two users and a pending invitation go through the tenant repositories.
     await addMembership(t, { userId, role: 'owner', via: 'create' }, SYSTEM_ACTOR);
     await addMembership(t, { userId: memberUserId, role: 'member' }, SYSTEM_ACTOR);
     const invitationEmail = `${label}-invitee-${randomUUID()}@seed.test`;

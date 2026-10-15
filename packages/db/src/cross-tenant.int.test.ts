@@ -541,9 +541,9 @@ const inScope = <T>(db: OwlwireDb, ws: string, fn: (t: TenantTx) => Promise<T>):
 
 beforeAll(async () => {
   env = await setupDbTestEnv();
-  victim = await seedTenant(env.db, 'victim');
-  attacker = await seedTenant(env.db, 'attacker');
-  control = await seedTenant(env.db, 'control');
+  victim = await seedTenant(env.db, env.authDb, 'victim');
+  attacker = await seedTenant(env.db, env.authDb, 'attacker');
+  control = await seedTenant(env.db, env.authDb, 'control');
   // Owner role owns the tables and they are not FORCE RLS: on this handle only the repository filters isolate.
   ownerDb = openDatabase({ url: env.tdb.ownerUrl, keyring: env.keyring, clock: env.clock });
   before = await snapshot(victim);
