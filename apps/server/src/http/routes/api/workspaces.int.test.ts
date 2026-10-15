@@ -2,9 +2,15 @@ import { listAuditActions, seedMembership } from '@owlwire/db/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SESSION_EXPIRES_IN_SECONDS } from '../../../auth/auth.js';
 import { createAuthHooks } from '../../../auth/hooks.js';
-import { type AuthHarness, createAuthHarness, uniqueEmail } from '../../../test/auth-harness.js';
+import {
+  type AuthHarness,
+  createAuthHarness,
+  TEST_BASE_URL,
+  uniqueEmail,
+} from '../../../test/auth-harness.js';
 import { resolveWorkspaceContext } from '../../middleware/workspace-access.js';
-import { createApiRouter } from './index.js';
+import { API_BASE_PATH, createApiRouter, PUBLIC_API_PATHS } from './index.js';
+import { CROSS_SITE_DETAIL, UNSUPPORTED_MEDIA_TYPE_DETAIL } from './problems.js';
 
 interface WorkspaceDto {
   id: string;
@@ -319,6 +325,168 @@ describe('management api: workspaces', () => {
     for (const op of operations) expect(op.tags).toContain('internal');
     expect(Object.keys(doc.components?.schemas ?? {})).toContain('AuthConfig');
     expect(Object.keys(doc.components?.securitySchemes ?? {})).toContain('cookieAuth');
+  });
+});
+
+describe('management api: request hardening', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness();
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  /** A request exactly as given: no Origin and no content type unless the test sets them. */
+  function raw(
+    path: string,
+    init: {
+      method: string;
+      body?: NonNullable<RequestInit['body']>;
+      headers?: Record<string, string>;
+      cookie?: string;
+    },
+  ): Promise<Response> {
+    const headers = new Headers(init.headers);
+    if (init.cookie) headers.set('cookie', init.cookie);
+    return Promise.resolve(
+      h.app.request(`${TEST_BASE_URL}${path}`, {
+        method: init.method,
+        headers,
+        ...(init.body !== undefined ? { body: init.body } : {}),
+      }),
+    );
+  }
+  async function workspaceIds(cookie: string): Promise<string[]> {
+    const res = await h.request('/api/workspaces', { cookie });
+    return ((await res.json()) as { items: WorkspaceDto[] }).items.map((w) => w.id);
+  }
+
+  it('answers 415 problem details for bodies that are not JSON', async () => {
+    const u = await h.createUser();
+    const form = new FormData();
+    form.set('name', 'Multipart');
+    const bodies: Array<{
+      label: string;
+      body: () => NonNullable<RequestInit['body']>;
+      type?: string;
+    }> = [
+      { label: 'text', body: () => '{"name":"Text"}', type: 'text/plain' },
+      { label: 'form', body: () => new URLSearchParams({ name: 'Form' }) },
+      { label: 'multipart', body: () => form },
+      { label: 'no content type', body: () => new TextEncoder().encode('{"name":"Bare"}') },
+    ];
+    for (const [method, path] of [
+      ['POST', '/api/workspaces'],
+      ['PATCH', `/api/workspaces/${u.personalWorkspaceId}`],
+    ] as const) {
+      for (const b of bodies) {
+        const res = await raw(path, {
+          method,
+          body: b.body(),
+          cookie: u.cookie,
+          headers: { origin: TEST_BASE_URL, ...(b.type ? { 'content-type': b.type } : {}) },
+        });
+        expect(res.status, `${method} ${b.label}`).toBe(415);
+        expect(res.headers.get('content-type')).toContain('application/problem+json');
+        expect(await res.json(), `${method} ${b.label}`).toMatchObject({
+          status: 415,
+          code: 'validation_failed',
+          detail: UNSUPPORTED_MEDIA_TYPE_DETAIL,
+        });
+      }
+    }
+    expect(await workspaceIds(u.cookie)).toEqual([u.personalWorkspaceId]);
+  });
+
+  it('refuses cross-site mutations with 403 and lets same-origin and header-less clients through', async () => {
+    const u = await h.createUser();
+    const json = { 'content-type': 'application/json' };
+    const body = () => JSON.stringify({ name: 'Csrf' });
+    const crossSite: Array<Record<string, string>> = [
+      { origin: 'https://evil.example' },
+      { origin: 'null' },
+      { origin: TEST_BASE_URL, 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'cross-site' },
+    ];
+    for (const headers of crossSite) {
+      const res = await raw('/api/workspaces', {
+        method: 'POST',
+        body: body(),
+        cookie: u.cookie,
+        headers: { ...json, ...headers },
+      });
+      expect(res.status, JSON.stringify(headers)).toBe(403);
+      expect(await res.json()).toEqual({
+        type: 'https://owlwire.dev/errors/forbidden',
+        title: 'Forbidden',
+        status: 403,
+        code: 'forbidden',
+        detail: CROSS_SITE_DETAIL,
+      });
+    }
+    expect(await workspaceIds(u.cookie)).toEqual([u.personalWorkspaceId]);
+
+    const sameOrigin = await raw('/api/workspaces', {
+      method: 'POST',
+      body: body(),
+      cookie: u.cookie,
+      headers: { ...json, origin: TEST_BASE_URL, 'sec-fetch-site': 'same-origin' },
+    });
+    expect(sameOrigin.status).toBe(201);
+    const target = ((await sameOrigin.json()) as WorkspaceDto).id;
+    const headerless = await raw('/api/workspaces', {
+      method: 'POST',
+      body: body(),
+      cookie: u.cookie,
+      headers: json,
+    });
+    expect(headerless.status).toBe(201);
+
+    const crossDelete = await raw(`/api/workspaces/${target}`, {
+      method: 'DELETE',
+      cookie: u.cookie,
+      headers: { origin: 'https://evil.example' },
+    });
+    expect(crossDelete.status).toBe(403);
+    expect(await workspaceIds(u.cookie)).toContain(target);
+    // Reads are not state-changing and pass with any Origin.
+    const crossRead = await raw(`/api/workspaces/${target}`, {
+      method: 'GET',
+      cookie: u.cookie,
+      headers: { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+    });
+    expect(crossRead.status).toBe(200);
+  });
+
+  it('requires a session on every registered route except the public allowlist', async () => {
+    const doc = createApiRouter(h.deps).getOpenAPI31Document({
+      openapi: '3.1.0',
+      info: { title: 'test', version: '0' },
+    });
+    const paths = Object.entries(doc.paths ?? {});
+    expect(paths.length).toBeGreaterThan(0);
+    const documented = paths.map(([path]) => `${API_BASE_PATH}${path}`);
+    for (const pub of PUBLIC_API_PATHS) expect(documented).toContain(pub);
+    const someId = '00000000-0000-7000-8000-000000000001';
+    for (const [path, item] of paths) {
+      const full = `${API_BASE_PATH}${path.replace(/\{[^}]+\}/g, someId)}`;
+      for (const method of Object.keys(item as object)) {
+        const upper = method.toUpperCase();
+        const res = await h.request(full, {
+          method: upper,
+          ...(upper === 'POST' || upper === 'PATCH' || upper === 'PUT' ? { body: {} } : {}),
+        });
+        if (PUBLIC_API_PATHS.has(`${API_BASE_PATH}${path}`)) {
+          expect(res.status, `${upper} ${path}`).not.toBe(401);
+        } else {
+          expect(res.status, `${upper} ${path}`).toBe(401);
+          expect(await res.json()).toMatchObject({ code: 'unauthorized' });
+        }
+      }
+    }
+    // A path no route serves yet is behind the session too.
+    expect((await h.request('/api/not-a-route')).status).toBe(401);
   });
 });
 

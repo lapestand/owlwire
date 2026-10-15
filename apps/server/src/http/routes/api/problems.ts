@@ -8,6 +8,8 @@ import {
   RepoInputError,
   RepoNotFoundError,
 } from '@owlwire/db';
+import type { MiddlewareHandler } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { z } from 'zod';
 import { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL, ProblemError } from '../../problem.js';
 import type { WorkspaceContext } from './env.js';
@@ -78,6 +80,55 @@ export function repositoryProblem(err: unknown): ProblemError | null {
     return new ProblemError(422, 'validation_failed', AUDIT_DATA_DETAIL);
   }
   return null;
+}
+
+/** Fixed details for client errors raised by the framework; the framework's own messages may quote the request. */
+export const MALFORMED_JSON_DETAIL = 'The request body is not valid JSON.';
+export const UNSUPPORTED_MEDIA_TYPE_DETAIL = 'The request body must be JSON (application/json).';
+export const CROSS_SITE_DETAIL = 'Cross-site requests cannot change data.';
+
+/** Problem for a 4xx the framework raised (HTTPException). Status is kept, the detail is fixed. */
+export function httpProblem(status: number): ProblemError {
+  const s = status as ContentfulStatusCode;
+  switch (status) {
+    case 400:
+      return new ProblemError(400, 'validation_failed', MALFORMED_JSON_DETAIL);
+    case 401:
+      return new ProblemError(401, 'unauthorized');
+    case 403:
+      return new ProblemError(403, 'forbidden');
+    case 404:
+      return notFound();
+    case 413:
+      return new ProblemError(413, 'payload_too_large');
+    case 415:
+      return new ProblemError(415, 'validation_failed', UNSUPPORTED_MEDIA_TYPE_DETAIL);
+    case 429:
+      return new ProblemError(429, 'rate_limited');
+    default:
+      return new ProblemError(s, 'validation_failed');
+  }
+}
+
+const UNSAFE_METHODS: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Refuses state-changing requests a browser sent from another site: an Origin header other than the public origin,
+ * or Sec-Fetch-Site: cross-site, answers 403. Requests with neither header (non-browser clients) pass. This sits on
+ * top of the SameSite=Lax session cookie and the JSON-only bodies.
+ */
+export function crossSiteGuard(publicUrl: string): MiddlewareHandler {
+  const allowed = new URL(publicUrl).origin;
+  return async (c, next) => {
+    if (UNSAFE_METHODS.has(c.req.method)) {
+      const origin = c.req.header('origin');
+      const site = c.req.header('sec-fetch-site');
+      if ((origin !== undefined && origin !== allowed) || site === 'cross-site') {
+        throw new ProblemError(403, 'forbidden', CROSS_SITE_DETAIL);
+      }
+    }
+    await next();
+  };
 }
 
 export function toWorkspaceDto(ws: WorkspaceContext): WorkspaceDto {

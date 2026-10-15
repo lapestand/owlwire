@@ -24,6 +24,7 @@ function makeApp(over: Partial<AppDeps> = {}) {
     clock: systemClock,
     logger,
     config: { devAdminToken: null, trustedProxies: [] },
+    authEnv: { baseURL: 'http://localhost:8080' },
     webDir: null,
     checkReady: async () => true,
     ...over,
