@@ -6,7 +6,7 @@ import { APIError } from 'better-auth/api';
 import { twoFactor } from 'better-auth/plugins';
 import type { Logger } from 'pino';
 import type { AuthEnv } from '../config/auth-env.js';
-import { canEmailLinks, InsecureLinkError, mailFailure } from '../mail/links.js';
+import { canEmailLinks, InsecureLinkError, MAIL_NOT_SENT, mailFailure } from '../mail/links.js';
 import { pickLocale } from '../mail/locale.js';
 import type { Mailer } from '../mail/mailer.js';
 import { type MailTemplate, renderMail } from '../mail/templates.js';
@@ -165,7 +165,7 @@ export function createAuth(o: CreateAuthOptions) {
         const template = build();
         await mailer.send({ to, ...renderMail(pickLocale(acceptLanguage), template) });
       } catch (err) {
-        log.warn({ kind, ...mailFailure(err) }, 'auth email not sent');
+        log.warn({ kind, ...mailFailure(err) }, MAIL_NOT_SENT);
       }
     };
     void send();
