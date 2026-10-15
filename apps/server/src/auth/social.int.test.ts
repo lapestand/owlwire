@@ -587,12 +587,11 @@ describe('social sign-in', () => {
     expect(errorOf(res)).toBe('state_mismatch');
     expect(hasSessionCookie(res)).toBe(false);
     expect(await findUserByEmail(h.deps, email)).toBeNull();
-    const tokenCalls = vi
-      .mocked(globalThis.fetch)
-      .mock.calls.filter(([input]) =>
-        String(input instanceof Request ? input.url : input).includes('github.com'),
-      );
-    expect(tokenCalls).toHaveLength(0);
+    const providerCalls = vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => {
+      const { hostname } = new URL(input instanceof Request ? input.url : input);
+      return hostname === 'github.com' || hostname === 'api.github.com';
+    });
+    expect(providerCalls).toHaveLength(0);
 
     // The browser that started the sign-in can still finish it.
     const own = await completeAtCallback(h, start, cookieFrom(start));
