@@ -40,8 +40,22 @@ export const MALFORMED_JSON_DETAIL = 'The request body is not valid JSON.';
 export const UNSUPPORTED_MEDIA_TYPE_DETAIL = 'The request body must be JSON (application/json).';
 export const CROSS_SITE_DETAIL = 'Cross-site requests cannot change data.';
 
-/** Problem for a 4xx the framework raised (HTTPException). Status is kept, the detail is fixed. */
-export function httpProblem(status: number): ProblemError {
+/** Seconds a 429 asks the client to wait when the error that raised it gave no usable Retry-After. */
+export const DEFAULT_RETRY_AFTER_SECONDS = 60;
+
+/** The upstream Retry-After when it is delay-seconds or an HTTP date; otherwise the default. */
+function retryAfter(upstream: string | null | undefined): string {
+  const value = upstream?.trim() ?? '';
+  if (/^\d+$/.test(value) || (/[a-z]/i.test(value) && !Number.isNaN(Date.parse(value))))
+    return value;
+  return String(DEFAULT_RETRY_AFTER_SECONDS);
+}
+
+/**
+ * Problem for a 4xx the framework raised (HTTPException). Status is kept, the detail is fixed. A 429 always carries
+ * Retry-After: the one from the error's own response when it has one, else the default.
+ */
+export function httpProblem(status: number, upstreamRetryAfter?: string | null): ProblemError {
   const s = status as ContentfulStatusCode;
   switch (status) {
     case 400:
@@ -57,7 +71,9 @@ export function httpProblem(status: number): ProblemError {
     case 415:
       return new ProblemError(415, 'validation_failed', UNSUPPORTED_MEDIA_TYPE_DETAIL);
     case 429:
-      return new ProblemError(429, 'rate_limited');
+      return new ProblemError(429, 'rate_limited', undefined, {
+        'Retry-After': retryAfter(upstreamRetryAfter),
+      });
     default:
       return new ProblemError(s, 'validation_failed');
   }
