@@ -2,6 +2,8 @@ import { type EditionConfig, parseEditionConfig } from '@owlwire/core';
 import { type Kek, type KekRing, parseKek, parsePreviousKek } from '@owlwire/crypto';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { parseTrustedProxies, TrustedProxyError } from '../http/client-ip.js';
+import { type AuthEnv, AuthEnvError, loadAuthEnv } from './auth-env.js';
 
 export const ROLES = ['all', 'api', 'worker'] as const;
 export type Role = (typeof ROLES)[number];
@@ -14,6 +16,12 @@ export interface ServerConfig {
    * Sahip/migration rolü (owlwire). Yoksa databaseUrl kullanılır; o rol RLS'i aşabiliyorsa serve açılmaz.
    */
   migrationDatabaseUrl?: string;
+  /**
+   * The auth role (owlwire_auth): the only connection that can read sessions, credentials and tokens; the auth
+   * library alone uses it. Without it the auth library falls back to databaseUrl, and serve refuses to start (unless
+   * OWLWIRE_ALLOW_INSECURE_DB_ROLE allows it) because the application role cannot, and must not, reach those tables.
+   */
+  authDatabaseUrl?: string;
   /**
    * OWLWIRE_ALLOW_INSECURE_DB_ROLE=true: yerel geliştirme için, RLS'e tabi olmayan uygulama bağlantısıyla (tek rol,
    * süper kullanıcı) serve'ün uyarıyla açılmasına izin verir. NODE_ENV=production'da yok sayılır.
@@ -29,6 +37,13 @@ export interface ServerConfig {
   devAdminToken: string | null;
   devFakeAdapter: boolean;
   edition: EditionConfig;
+  /**
+   * Proxy addresses and CIDR ranges (OWLWIRE_TRUSTED_PROXIES) whose X-Forwarded-For is believed when they are the
+   * TCP peer. Empty: forwarded headers are never trusted and the socket address is the client.
+   */
+  trustedProxies: readonly string[];
+  /** Sign-in settings (secret, public URL, SMTP, social providers); serialising it hides the secrets. */
+  authEnv: AuthEnv;
 }
 
 export class ConfigError extends Error {
@@ -38,6 +53,10 @@ export class ConfigError extends Error {
 const envSchema = z.object({
   OWLWIRE_DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
   OWLWIRE_MIGRATION_DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL')
+    .optional(),
+  OWLWIRE_AUTH_DATABASE_URL: z
     .string()
     .regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL')
     .optional(),
@@ -55,6 +74,7 @@ const envSchema = z.object({
   OWLWIRE_TELEGRAM_BOT_TOKEN: z.string().optional(),
   OWLWIRE_DEV_ADMIN_TOKEN: z.string().min(16).optional(),
   OWLWIRE_DEV_FAKE_ADAPTER: z.enum(['0', '1']).default('0'),
+  OWLWIRE_TRUSTED_PROXIES: z.string().optional(),
 });
 
 /** Keeps OWLWIRE_* variables and drops empty values (compose writes `KEY=` for unset ones). */
@@ -115,11 +135,28 @@ export function loadConfig(
     throw new ConfigError(`invalid ${configPath}: ${message(err)}`);
   }
 
+  let trustedProxies: string[];
+  try {
+    trustedProxies = parseTrustedProxies(e.OWLWIRE_TRUSTED_PROXIES);
+  } catch (err) {
+    if (err instanceof TrustedProxyError) throw new ConfigError(err.message);
+    throw err;
+  }
+
+  let authEnv: AuthEnv;
+  try {
+    authEnv = loadAuthEnv(env);
+  } catch (err) {
+    if (err instanceof AuthEnvError) throw new ConfigError(err.message);
+    throw err;
+  }
+
   return {
     databaseUrl: e.OWLWIRE_DATABASE_URL,
     ...(e.OWLWIRE_MIGRATION_DATABASE_URL
       ? { migrationDatabaseUrl: e.OWLWIRE_MIGRATION_DATABASE_URL }
       : {}),
+    ...(e.OWLWIRE_AUTH_DATABASE_URL ? { authDatabaseUrl: e.OWLWIRE_AUTH_DATABASE_URL } : {}),
     allowInsecureDbRole: e.OWLWIRE_ALLOW_INSECURE_DB_ROLE === 'true',
     kek: { current, previous },
     role: e.OWLWIRE_ROLE,
@@ -131,5 +168,7 @@ export function loadConfig(
     devAdminToken: e.OWLWIRE_DEV_ADMIN_TOKEN ?? null,
     devFakeAdapter: e.OWLWIRE_DEV_FAKE_ADAPTER === '1',
     edition,
+    trustedProxies,
+    authEnv,
   };
 }

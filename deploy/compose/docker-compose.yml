@@ -33,9 +33,11 @@ services:
       - no-new-privileges:true
     env_file: .env
     environment:
-      # Two roles: migrations run as the owner, the server connects as owlwire_app (subject to RLS).
+      # Three roles: migrations run as the owner, the server connects as owlwire_app (subject to RLS), and sign-in
+      # (sessions, credentials, tokens) goes through owlwire_auth, the only role that can read those tables.
       OWLWIRE_MIGRATION_DATABASE_URL: postgres://owlwire:${OWLWIRE_DB_OWNER_PASSWORD:?set OWLWIRE_DB_OWNER_PASSWORD in .env}@postgres:5432/owlwire
       OWLWIRE_DATABASE_URL: postgres://owlwire_app:${OWLWIRE_DB_APP_PASSWORD:?set OWLWIRE_DB_APP_PASSWORD in .env}@postgres:5432/owlwire
+      OWLWIRE_AUTH_DATABASE_URL: postgres://owlwire_auth:${OWLWIRE_DB_AUTH_PASSWORD:?set OWLWIRE_DB_AUTH_PASSWORD in .env}@postgres:5432/owlwire
     ports:
       # loopback only; put a reverse proxy with TLS in front for remote access
       - "127.0.0.1:8080:8080"

@@ -22,7 +22,11 @@ import {
   withTenant,
 } from '@owlwire/db';
 import { migrateAll } from '@owlwire/db/migrate';
-import { KeyringCoverageError, RlsNotEnforcedError } from '@owlwire/db/system';
+import {
+  AuthRoleSeparationError,
+  KeyringCoverageError,
+  RlsNotEnforcedError,
+} from '@owlwire/db/system';
 import { startTestDatabase, type TestDatabase } from '@owlwire/testing';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -39,6 +43,7 @@ import { resolveTenant } from './tenant-resolver.js';
 
 let tdb: TestDatabase;
 let db: OwlwireDb;
+let authDb: OwlwireDb;
 let owner: pg.Pool;
 const keyring = createKeyring(generateKek(1));
 const opened: OwlwireDb[] = [];
@@ -52,6 +57,7 @@ const silent = { info: () => undefined, warn: () => undefined };
 beforeAll(async () => {
   tdb = await startTestDatabase({ migrate: migrateAll });
   db = open(tdb.appUrl);
+  authDb = open(tdb.authUrl);
   owner = new pg.Pool({ connectionString: tdb.ownerUrl, max: 2 });
 }, 120_000);
 
@@ -62,12 +68,12 @@ afterAll(async () => {
 });
 
 describe('startup checks', () => {
-  it('pass for the dedicated application role', async () => {
-    await expect(runStartupChecks(db)).resolves.toBeUndefined();
+  it('pass for the dedicated application and auth roles', async () => {
+    await expect(runStartupChecks(db, authDb)).resolves.toBeUndefined();
   });
 
   it('refuse to start when the application connects as the table owner', async () => {
-    const err = await runStartupChecks(open(tdb.ownerUrl)).catch((e: unknown) => e);
+    const err = await runStartupChecks(open(tdb.ownerUrl), authDb).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RlsNotEnforcedError);
     expect((err as RlsNotEnforcedError).reasons.join(' ')).toMatch(/SUPERUSER|owns the tables/);
   });
@@ -76,13 +82,13 @@ describe('startup checks', () => {
     const ownerDb = open(tdb.ownerUrl);
     // Without the opt-in: refused in every environment, development included.
     for (const nodeEnv of ['development', 'test', undefined]) {
-      await expect(runStartupChecks(ownerDb, { nodeEnv, logger: silent })).rejects.toBeInstanceOf(
-        RlsNotEnforcedError,
-      );
+      await expect(
+        runStartupChecks(ownerDb, authDb, { nodeEnv, logger: silent }),
+      ).rejects.toBeInstanceOf(RlsNotEnforcedError);
     }
     // The opt-in is ignored in production.
     await expect(
-      runStartupChecks(ownerDb, {
+      runStartupChecks(ownerDb, authDb, {
         allowInsecureDbRole: true,
         nodeEnv: 'production',
         logger: silent,
@@ -90,10 +96,13 @@ describe('startup checks', () => {
     ).rejects.toBeInstanceOf(RlsNotEnforcedError);
     const warnings: string[] = [];
     await expect(
-      runStartupChecks(ownerDb, {
+      runStartupChecks(ownerDb, authDb, {
         allowInsecureDbRole: true,
         nodeEnv: 'development',
-        logger: { warn: (obj: { reason: string }) => void warnings.push(obj.reason) },
+        logger: {
+          warn: (obj: { reason: string }, msg: string) =>
+            void (msg.startsWith('row level security') && warnings.push(obj.reason)),
+        },
       }),
     ).resolves.toBeUndefined();
     // The test owner is a superuser (with BYPASSRLS) that owns the tables: every reason, one warning each.
@@ -104,17 +113,55 @@ describe('startup checks', () => {
     ]);
   });
 
+  it('refuse to start when the application role can read the session or account tables', async () => {
+    await owner.query('grant select on auth_session to owlwire_app');
+    try {
+      const err = await runStartupChecks(db, authDb).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AuthRoleSeparationError);
+      expect((err as AuthRoleSeparationError).reasons).toEqual([
+        'application role can access auth_session',
+      ]);
+    } finally {
+      await owner.query('revoke select on auth_session from owlwire_app');
+    }
+  });
+
+  it('refuse to start when the auth connection is the application role or can bypass RLS', async () => {
+    const same = await runStartupChecks(db, open(tdb.appUrl)).catch((e: unknown) => e);
+    expect(same).toBeInstanceOf(AuthRoleSeparationError);
+    expect((same as Error).message).toMatch(/uses the application role/);
+    const ownerAuth = await runStartupChecks(db, open(tdb.ownerUrl)).catch((e: unknown) => e);
+    expect(ownerAuth).toBeInstanceOf(AuthRoleSeparationError);
+    expect((ownerAuth as AuthRoleSeparationError).reasons).toEqual(
+      expect.arrayContaining([
+        'auth role is SUPERUSER',
+        'auth role has BYPASSRLS',
+        'auth role owns the tables',
+      ]),
+    );
+    // The local-development opt-in turns them into warnings, as for row level security.
+    const warnings: string[] = [];
+    await expect(
+      runStartupChecks(db, open(tdb.appUrl), {
+        allowInsecureDbRole: true,
+        nodeEnv: 'development',
+        logger: { warn: (obj: { reason: string }) => void warnings.push(obj.reason) },
+      }),
+    ).resolves.toBeUndefined();
+    expect(warnings).toContain('the auth connection uses the application role owlwire_app');
+  });
+
   it('refuse to start when a stored KEK version is missing from the keyring', async () => {
     await seedDevWorkspace(db, { platform: 'telegram' });
     await expect(
-      runStartupChecks(open(tdb.appUrl, createKeyring(generateKek(9)))),
+      runStartupChecks(open(tdb.appUrl, createKeyring(generateKek(9))), authDb),
     ).rejects.toBeInstanceOf(KeyringCoverageError);
   });
 
   it('refuse to start when a stored KEK version is configured with the wrong key material', async () => {
     await seedDevWorkspace(db, { platform: 'telegram' });
     const wrong = createKeyring(generateKek(1)); // same version 1, different key
-    const err = await runStartupChecks(open(tdb.appUrl, wrong)).catch((e: unknown) => e);
+    const err = await runStartupChecks(open(tdb.appUrl, wrong), authDb).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(KeyringCoverageError);
     expect((err as KeyringCoverageError).missingVersions).toEqual([]);
     expect((err as KeyringCoverageError).mismatchedVersions).toEqual([1]);

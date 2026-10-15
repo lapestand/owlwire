@@ -124,13 +124,7 @@ describe('log privacy with real failing queries', () => {
   it('keeps them out of the problem+json body and the request log', async () => {
     const s = await seed();
     const { lines, logger } = capture();
-    const app = createApp({
-      db: h.deps.db,
-      clock: h.deps.clock,
-      logger,
-      config: h.deps.config,
-      webDir: null,
-    });
+    const app = createApp({ ...h.deps, logger, webDir: null });
     await withSecretCheck('events', async () => {
       const res = await app.request('/v1/events', {
         method: 'POST',
