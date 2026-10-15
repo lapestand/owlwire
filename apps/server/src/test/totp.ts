@@ -25,3 +25,11 @@ export function totp(secretBase32: string, at: Date): string {
   const code = (hmac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000;
   return code.toString().padStart(6, '0');
 }
+
+/**
+ * The code of the next 30 s step. The server accepts it now (one step either side), and it is never the code of the
+ * current step, which a code accepted earlier in the same test may have used: a step's code is accepted once.
+ */
+export function nextTotp(secretBase32: string): string {
+  return totp(secretBase32, new Date(Date.now() + 30_000));
+}

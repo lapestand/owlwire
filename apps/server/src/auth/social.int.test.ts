@@ -13,7 +13,7 @@ import {
   TEST_PASSWORD,
   uniqueEmail,
 } from '../test/auth-harness.js';
-import { totp } from '../test/totp.js';
+import { nextTotp, totp } from '../test/totp.js';
 import { INVITATION_TTL_MS, newInvitationToken } from '../workspaces/invitation-token.js';
 import { TWO_FACTOR_CHALLENGE_PATH } from './second-factor-gate.js';
 
@@ -554,11 +554,35 @@ describe('social sign-in', () => {
       });
       expect(wrong.status).toBe(401);
       const ok = await h.request('/api/auth/two-factor/verify-totp', {
-        body: { code: totp(secret, new Date()) },
+        body: { code: nextTotp(secret) },
         cookie: challenge,
       });
       expect(ok.status).toBe(200);
       expect(await sessionUserId(cookieFrom(ok))).toBe(u.id);
+    });
+
+    it('accepts a code at the GitHub second-factor step once', async () => {
+      const { u, githubId, secret } = await linkedTotpUser();
+      const code = nextTotp(secret);
+      const challengeOf = async () => {
+        vi.restoreAllMocks();
+        mockGitHub({ email: u.email, verified: true, id: githubId });
+        const res = await githubRoundTrip(h);
+        expect(hasSessionCookie(res)).toBe(false);
+        return cookieFrom(res);
+      };
+      const first = await h.request('/api/auth/two-factor/verify-totp', {
+        body: { code },
+        cookie: await challengeOf(),
+      });
+      expect(first.status).toBe(200);
+      const again = await h.request('/api/auth/two-factor/verify-totp', {
+        body: { code },
+        cookie: await challengeOf(),
+      });
+      expect(again.status).toBe(401);
+      expect(await again.json()).toMatchObject({ code: 'INVALID_CODE' });
+      expect(hasSessionCookie(again)).toBe(false);
     });
 
     it('completes a GitHub sign-in with a backup code', async () => {

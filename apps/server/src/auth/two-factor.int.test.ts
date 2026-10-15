@@ -6,7 +6,7 @@ import {
   TEST_PASSWORD,
   type TestUser,
 } from '../test/auth-harness.js';
-import { totp } from '../test/totp.js';
+import { nextTotp, totp } from '../test/totp.js';
 import { TWO_FACTOR_RATE_LIMIT } from './auth.js';
 
 describe('two factor and passkeys', () => {
@@ -47,7 +47,7 @@ describe('two factor and passkeys', () => {
   const signInWithTotp = async (u: TestUser): Promise<string> => {
     const challenge = cookieFrom(await h.signInResponse(u.email));
     const res = await h.request('/api/auth/two-factor/verify-totp', {
-      body: { code: totp(secrets.get(u.id) ?? '', new Date()) },
+      body: { code: nextTotp(secrets.get(u.id) ?? '') },
       cookie: challenge,
     });
     expect(res.status).toBe(200);
@@ -112,7 +112,7 @@ describe('two factor and passkeys', () => {
     const first = await h.signInResponse(u.email);
     expect(first.headers.getSetCookie().some((c) => /session_token=[^;]+/.test(c))).toBe(false);
     const byTotp = await h.request('/api/auth/two-factor/verify-totp', {
-      body: { code: totp(secret, new Date()) },
+      body: { code: nextTotp(secret) },
       cookie: cookieFrom(first),
     });
     expect(byTotp.status).toBe(200);
@@ -156,7 +156,7 @@ describe('two factor and passkeys', () => {
     expect(statuses[max]).toBe(429);
     // The limit is per client: the right code from another address still completes the sign-in.
     const ok = await h.request('/api/auth/two-factor/verify-totp', {
-      body: { code: totp(secret, new Date()) },
+      body: { code: nextTotp(secret) },
       cookie,
     });
     expect(ok.status).toBe(200);
@@ -187,7 +187,7 @@ describe('two factor and passkeys', () => {
 
     const fresh = cookieFrom(await h.signInResponse(u.email));
     const byTotp = await h.request('/api/auth/two-factor/verify-totp', {
-      body: { code: totp(secret, new Date()) },
+      body: { code: nextTotp(secret) },
       cookie: fresh,
     });
     expect(byTotp.status).toBe(429);
@@ -198,7 +198,60 @@ describe('two factor and passkeys', () => {
       cookie: fresh,
     });
     expect(byBackup.status).toBe(429);
+    expect(await byBackup.json()).toMatchObject({ code: 'ACCOUNT_TEMPORARILY_LOCKED' });
     expect(hasSessionCookie(byBackup)).toBe(false);
+  });
+
+  describe('single use of a TOTP code', () => {
+    const verifyTotp = (cookie: string, code: string) =>
+      h.request('/api/auth/two-factor/verify-totp', { body: { code }, cookie });
+
+    it('accepts a sign-in code once', async () => {
+      const u = await h.createUser();
+      const { secret } = await enableTotp(u);
+      const code = nextTotp(secret);
+      const first = await verifyTotp(cookieFrom(await h.signInResponse(u.email)), code);
+      expect(first.status).toBe(200);
+      expect(hasSessionCookie(first)).toBe(true);
+
+      const again = await verifyTotp(cookieFrom(await h.signInResponse(u.email)), code);
+      expect(again.status).toBe(401);
+      expect(await again.json()).toMatchObject({ code: 'INVALID_CODE' });
+      expect(hasSessionCookie(again)).toBe(false);
+    });
+
+    it('refuses at sign-in the code that turned TOTP on', async () => {
+      const u = await h.createUser();
+      const enable = await h.request('/api/auth/two-factor/enable', {
+        body: { password: TEST_PASSWORD },
+        cookie: u.cookie,
+      });
+      const { totpURI } = (await enable.json()) as { totpURI: string };
+      const secret = new URL(totpURI).searchParams.get('secret') ?? '';
+      const code = totp(secret, new Date());
+      expect((await verifyTotp(u.cookie, code)).status).toBe(200);
+
+      const challenge = cookieFrom(await h.signInResponse(u.email));
+      const reused = await verifyTotp(challenge, code);
+      expect(reused.status).toBe(401);
+      expect(hasSessionCookie(reused)).toBe(false);
+      // The refusal does not end the challenge: the next code still completes it.
+      const next = await verifyTotp(challenge, nextTotp(secret));
+      expect(next.status).toBe(200);
+    });
+
+    it('accepts one of two concurrent uses of the same code', async () => {
+      const u = await h.createUser();
+      const { secret } = await enableTotp(u);
+      const code = nextTotp(secret);
+      const challenges = [
+        cookieFrom(await h.signInResponse(u.email)),
+        cookieFrom(await h.signInResponse(u.email)),
+      ];
+      const answers = await Promise.all(challenges.map((c) => verifyTotp(c, code)));
+      expect(answers.map((r) => r.status).sort()).toEqual([200, 401]);
+      expect(answers.filter(hasSessionCookie)).toHaveLength(1);
+    });
   });
 
   describe('disabling TOTP', () => {

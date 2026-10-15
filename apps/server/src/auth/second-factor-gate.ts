@@ -15,7 +15,7 @@ export const TWO_FACTOR_CHALLENGE_PATH = '/sign-in/two-factor';
  * in its verify endpoints. The names are the plugin's own (not exported by the library); the integration tests pin
  * them by completing a challenge issued here.
  */
-const TWO_FACTOR_COOKIE = 'two_factor';
+export const TWO_FACTOR_COOKIE = 'two_factor';
 const CHALLENGE_PREFIX = '2fa-';
 const ATTEMPTS_PREFIX = '2fa-attempts-';
 const CHALLENGE_MAX_AGE_SECONDS = 600;
