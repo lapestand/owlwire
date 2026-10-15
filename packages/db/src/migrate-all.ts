@@ -11,10 +11,9 @@ export interface MigrateAllOptions {
 }
 
 /**
- * Bütün şema değişikliklerini sahip rolüyle uygular, ardından uygulama rolünü ve (authUrl verilmişse) auth rolünü
- * oluşturur ve yetkilerini verir.
- * runMigrations MIGRATION_LOCK_KEY advisory lock'unu alır; afterMigrate aynı kilit altında çalıştığı için
- * Drizzle, Graphile Worker şeması ve ensureAppRole tek kilit altında sıralanır.
+ * Applies every schema change as the owner role, then creates and grants the application role and (when authUrl is
+ * given) the auth role. runMigrations takes the MIGRATION_LOCK_KEY advisory lock and afterMigrate runs under the same
+ * lock, so Drizzle, the Graphile Worker schema and ensureAppRole run in order under one lock.
  */
 export async function migrateAll(
   opts: MigrateAllOptions,
