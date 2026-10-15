@@ -62,8 +62,12 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
 - **Startup check.** `serve` refuses to start (`AuthRoleSeparationError`) when the application role has any
   privilege on those six tables, any table-level privilege or any write privilege on `auth_user`, or `SELECT` on an
   `auth_user` column outside the list; or when the auth connection is the application role, can bypass RLS, owns
-  the tables or lacks DML on any auth table (`checkAuthRoleSeparation`). `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns
-  these into warnings outside production, as for the RLS check below.
+  the tables or lacks DML on any auth table (`checkAuthRoleSeparation`). It also refuses when either role is a member
+  of the other in any form: a grant `WITH INHERIT FALSE` (or `SET` only) adds no inherited privilege, but it still
+  allows `SET ROLE`. For the same reason the application-role privileges above are checked for every role
+  `owlwire_app` is a member of in any form, not only for the role itself, so access through a role it can only
+  `SET ROLE` to (a predefined role such as `pg_read_all_data` included) is refused too. `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns these into warnings outside
+  production, as for the RLS check below.
 
 ### Sign-in library hardening
 
@@ -154,8 +158,12 @@ The library only sees a `Request`, so the HTTP mount passes the address in an in
 header. By default the address is the TCP peer of the connection and `X-Forwarded-For` is ignored, because any client
 can send it. Only when the peer is listed in `OWLWIRE_TRUSTED_PROXIES` (addresses or CIDR ranges) is the header read:
 its hops are walked from the right, trusted proxies are skipped, and the first untrusted hop is the client; a hop that
-is not an address stops the walk. Behind an unlisted proxy, every user shares the proxy's limit (a denial of service
+is not an address stops the walk. A hop with a port (`203.0.113.5:4711`, `[2001:db8::1]:4711`, as some gateways
+send) is read without the port. Behind an unlisted proxy, every user shares the proxy's limit (a denial of service
 risk, not a bypass); listing a range that also contains clients would let those clients pick their own address.
+The first time `X-Forwarded-For` arrives from a peer that is not listed, the server logs one warning per process,
+without any address. An IPv4-mapped entry (`::ffff:10.0.0.0/104`) is read as its IPv4 range (`10.0.0.0/8`); a `/0`
+range, which would trust every peer, is a configuration error.
 
 `serve` cannot see a proxy, so it guesses: the server itself speaks plain HTTP, and an `https://` public URL means TLS
 ends somewhere in front of it. With an `https://` `OWLWIRE_PUBLIC_URL` and an empty `OWLWIRE_TRUSTED_PROXIES` it logs a
@@ -252,7 +260,15 @@ database credentials, so shell access to the deployment is the trust boundary.
   stored in clear. A password is never accepted as a command-line argument (it would land in shell history and the
   process list). For an existing user, a password from stdin is ignored and the command says so: promoting never
   changes credentials.
-- An invalid email or a password shorter than 10 characters exits with code `2` before connecting to the database.
+- An invalid email, or a password shorter than 10 or longer than 128 characters, exits with code `2` before connecting
+  to the database. So does `--password-stdin` when stdin is a terminal (it would wait and echo the password): pipe
+  the password instead. Exactly one trailing newline is removed from a piped password.
+- If a sign-up for the same email lands between the command's existence check and its own sign-up, the stored account
+  is not the one the command created and its password is someone else's. The command then changes nothing and exits
+  with code `2`, saying the account was not created by it. It does not suggest a retry: it names the promote path
+  (`owlwire admin create --email <email>` on an existing account) and says to use it only after checking that the
+  account is yours. Promoting an existing account whose email is unverified prints a warning that nothing proves the
+  address owner created it.
 - `/api/admin/*` requires a session of an instance admin (`403 forbidden` otherwise). `GET` and `PUT
   /api/admin/settings/registration` read and store the registration mode (`closed`, `invite`, `open`); a stored value
   overrides the edition config, and every change writes a `settings.updated` audit entry with the admin as actor.
@@ -260,9 +276,14 @@ database credentials, so shell access to the deployment is the trust boundary.
   Invitations).
 
 At startup `serve` logs, without values, setup problems that weaken sign-in: no instance admin (with the command to
-run), no SMTP (email-less personal mode), social sign-in without `OWLWIRE_PUBLIC_URL`, an `http://` public URL with
-`NODE_ENV=production` (no `Secure` cookies, passkeys only on localhost, no verification or reset emails) and the
-trusted-proxy case above. These are warnings: the server still starts.
+run), no SMTP (email-less personal mode), social sign-in without `OWLWIRE_PUBLIC_URL`, an `http://` or unset public
+URL with `NODE_ENV=production` (no `Secure` cookies, passkeys only on localhost, no verification or reset emails), an
+IP address as the public URL host (passkeys need a domain name), an `smtp://` `OWLWIRE_SMTP_URL` without
+`requireTLS=true` with `NODE_ENV=production` (STARTTLS is then optional, so a network attacker can strip it and read
+sign-in links and the SMTP password; `smtps://` or `?requireTLS=true` closes this) and the trusted-proxy case above.
+These are warnings: the server still starts. The only URL part a warning prints is the fallback origin used when
+`OWLWIRE_PUBLIC_URL` is not set (for example `http://localhost:8080`); configured URLs, and so any credentials in them
+(the SMTP URL, the database URLs), never reach the log.
 
 ## Background jobs
 

@@ -19,6 +19,22 @@ export class AdminInputError extends Error {
   }
 }
 
+/**
+ * A sign-up for the same email ran between the command's existence check and its own sign-up, so the stored account
+ * is not the one the command made, and its password is someone else's. Nothing is changed. The message names the
+ * promote path and says to check ownership first; that path then says whether the account's email is verified.
+ */
+export class ConcurrentAdminUserError extends Error {
+  constructor(email: string) {
+    super(
+      `an account with the email ${email} already exists and was not created by this command; nothing was ` +
+        'changed. Promoting an existing account makes whoever controls it an instance admin: only if you have ' +
+        `checked that it is yours, promote it with \`owlwire admin create --email ${email}\`.`,
+    );
+    this.name = 'ConcurrentAdminUserError';
+  }
+}
+
 export interface AdminInput {
   email: string;
   name: string;
@@ -32,7 +48,15 @@ export interface BootstrapInstanceAdminResult {
   generatedPassword: string | null;
   /** An existing user keeps their password: a provided one is not applied. */
   passwordIgnored: boolean;
+  /**
+   * Whether the account's email is verified. A created admin always is; a promoted account may not be, and then
+   * nothing proves that the address owner made it.
+   */
+  emailVerified: boolean;
 }
+
+/** The sign-in library's default maxPasswordLength; a longer password would fail inside sign-up. */
+export const MAX_PASSWORD_LENGTH = 128;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -40,7 +64,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GENERATED_PASSWORD_BYTES = 18;
 
 /**
- * Lower-cases and trims the email, defaults the name to the email's local part and checks the password length. The
+ * Lower-cases and trims the email, defaults the name to the email's local part and checks the password length
+ * (MIN_PASSWORD_LENGTH to MAX_PASSWORD_LENGTH). The
  * error message names the email the operator typed, never the password.
  */
 export function normalizeAdminInput(raw: {
@@ -52,6 +77,9 @@ export function normalizeAdminInput(raw: {
   if (!EMAIL_RE.test(email)) throw new AdminInputError(`invalid email: ${raw.email}`);
   if (raw.password !== undefined && raw.password.length < MIN_PASSWORD_LENGTH) {
     throw new AdminInputError(`password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
+  if (raw.password !== undefined && raw.password.length > MAX_PASSWORD_LENGTH) {
+    throw new AdminInputError(`password must be at most ${MAX_PASSWORD_LENGTH} characters`);
   }
   const name = raw.name?.trim() || email.split('@')[0] || email;
   return { email, name, ...(raw.password !== undefined ? { password: raw.password } : {}) };
@@ -78,6 +106,7 @@ export async function bootstrapInstanceAdmin(
       created: false,
       generatedPassword: null,
       passwordIgnored: input.password !== undefined,
+      emailVerified: existing.emailVerified,
     };
   }
 
@@ -86,16 +115,24 @@ export async function bootstrapInstanceAdmin(
       ? randomBytes(GENERATED_PASSWORD_BYTES).toString('base64url')
       : null;
   const password = input.password ?? generatedPassword ?? '';
-  await runAsBootstrap(() =>
+  const signedUp = await runAsBootstrap(() =>
     deps.auth.api.signUpEmail({ body: { email: input.email, password, name: input.name } }),
   );
   // Sign-up answers some failures with a generic success and a user that was never stored, so the stored row is the
-  // source of truth for the id.
+  // source of truth. For an email taken in the meantime that generic answer carries a made-up id, and the stored row
+  // belongs to whoever signed up first: it must not be promoted with a password the command never set.
   const created = await withSystem(deps.authDb, SYSTEM, (s) => findAuthUserByEmail(s, input.email));
   if (!created) throw new Error('the sign-in library did not create the admin user');
+  if (created.id !== signedUp.user.id) throw new ConcurrentAdminUserError(input.email);
   await withSystem(deps.authDb, SYSTEM, async (s) => {
     await markEmailVerified(s, created.id);
     await grantInstanceAdmin(s, created.id, SYSTEM_ACTOR);
   });
-  return { userId: created.id, created: true, generatedPassword, passwordIgnored: false };
+  return {
+    userId: created.id,
+    created: true,
+    generatedPassword,
+    passwordIgnored: false,
+    emailVerified: true,
+  };
 }
