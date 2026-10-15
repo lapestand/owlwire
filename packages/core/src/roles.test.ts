@@ -73,6 +73,44 @@ describe('canChangeRole', () => {
   });
 });
 
+describe('canChangeRole no-op', () => {
+  it('allows a change to the current role when the actor may make the change', () => {
+    for (const personal of [false, true])
+      expect(
+        canChangeRole({
+          actorRole: 'owner',
+          targetRole: 'owner',
+          newRole: 'owner',
+          ownerCount: 1,
+          personal,
+        }),
+      ).toEqual({ ok: true });
+  });
+
+  it('still needs the permission the change would need', () => {
+    for (const personal of [false, true]) {
+      expect(
+        canChangeRole({
+          actorRole: 'admin',
+          targetRole: 'owner',
+          newRole: 'owner',
+          ownerCount: 1,
+          personal,
+        }),
+      ).toEqual({ ok: false, reason: 'forbidden' });
+      expect(
+        canChangeRole({
+          actorRole: 'member',
+          targetRole: 'member',
+          newRole: 'member',
+          ownerCount: 1,
+          personal,
+        }),
+      ).toEqual({ ok: false, reason: 'forbidden' });
+    }
+  });
+});
+
 describe('canRemoveMember', () => {
   const base = { ownerCount: 2, targetIsPersonalOwner: false };
   it.each([
@@ -145,7 +183,9 @@ describe('exhaustive role rules', () => {
               const d = canChangeRole({ actorRole, targetRole, newRole, ownerCount, personal });
               const owner = touchesOwner(targetRole, newRole);
               let expected: MemberDecision;
-              if (personal && owner) expected = { ok: false, reason: 'personal_workspace' };
+              const noop = targetRole === newRole;
+              if (personal && owner && !noop)
+                expected = { ok: false, reason: 'personal_workspace' };
               else if (owner ? actorRole !== 'owner' : actorRole === 'member')
                 expected = { ok: false, reason: 'forbidden' };
               else if (targetRole === 'owner' && newRole !== 'owner' && ownerCount === 1)
