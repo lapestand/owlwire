@@ -30,6 +30,11 @@ export function problems(...codes: ProblemStatus[]) {
   ) as Record<ProblemStatus, ReturnType<typeof json<typeof ProblemDetails>>>;
 }
 
+/** A 409 response whose description lists the `detail` values the operation can answer with. */
+export function conflicts(...details: string[]) {
+  return { 409: json(ProblemDetails, `Conflict (detail: ${details.join(', ')})`) };
+}
+
 /** 403 forbidden unless the caller's role in the workspace is at least `min`. */
 export function assertRole(ws: WorkspaceContext, min: WorkspaceRole): void {
   if (!roleAtLeast(ws.role, min)) throw new ProblemError(403, 'forbidden');
