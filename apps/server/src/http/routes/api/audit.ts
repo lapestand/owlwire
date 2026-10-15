@@ -10,7 +10,7 @@ import type { Deps } from '../../../deps.js';
 import { listWorkspaceAudit } from '../../../workspaces/audit.js';
 import { listWorkspaceMembers } from '../../../workspaces/members.js';
 import type { ApiEnv } from './env.js';
-import { json, problems, SECURITY, TAGS } from './problems.js';
+import { assertRole, json, problems, SECURITY, TAGS } from './problems.js';
 
 /**
  * The actor as one object. A user's name is known only while they are a member of this workspace; a former member,
@@ -33,6 +33,7 @@ function toAuditDto(r: AuditLogRow, memberNames: ReadonlyMap<string, string>): A
   };
 }
 
+/** The workspace audit log, newest first; readable by owners and admins (403 for plain members). */
 export function registerAuditRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void {
   api.openapi(
     createRoute({
@@ -43,11 +44,14 @@ export function registerAuditRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void 
       request: { params: WorkspaceIdParams, query: AuditQuery },
       responses: {
         200: json(AuditListSchema, 'Workspace audit log, newest first'),
-        ...problems(401, 404, 422),
+        ...problems(401, 403, 404, 422),
       },
     }),
     async (c) => {
-      const workspaceId = c.get('workspace').id;
+      // Owners and admins only: entries carry member and invitee details (for example invitation emails).
+      const ws = c.get('workspace');
+      assertRole(ws, 'admin');
+      const workspaceId = ws.id;
       const page = await listWorkspaceAudit(deps, workspaceId, c.req.valid('query'));
       const members = await listWorkspaceMembers(deps, workspaceId);
       const names = new Map(members.map((m) => [m.userId, m.name] as const));
