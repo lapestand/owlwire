@@ -54,6 +54,12 @@ const TR_MAP: Record<string, string> = {
   Ü: 'u',
 };
 
+/**
+ * Folds a display name into slug characters. Only the Turkish letters are transliterated (ı, ş, ğ, ç, ö, ü and their
+ * capitals); NFKD then strips combining accents and folds compatibility forms (full-width letters, ligatures) to
+ * ASCII. Any other letter with no decomposition (ß, ø, non-Latin scripts) becomes a dash. Users who need another
+ * spelling choose their own slug, which must match SLUG_PATTERN, so no look-alike character can enter one.
+ */
 export function slugify(input: string): string {
   const mapped = Array.from(input, (ch) => TR_MAP[ch] ?? ch).join('');
   return mapped
