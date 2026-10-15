@@ -1,44 +1,29 @@
-import { type Clock, systemClock } from '@owlwire/core';
-import { createKeyring, type Keyring } from '@owlwire/crypto';
-import { type OwlwireDb, openDatabase } from '@owlwire/db';
+import { systemClock } from '@owlwire/core';
+import { createKeyring } from '@owlwire/crypto';
+import { openDatabase } from '@owlwire/db';
 import pg from 'pg';
-import type { Logger } from 'pino';
-import {
-  type AdapterRegistry,
-  buildDefaultAdapters,
-  createAdapterRegistry,
-} from './adapters/registry.js';
-import { type Auth, type AuthHooks, createAuth, noopAuthHooks } from './auth/auth.js';
+import { buildDefaultAdapters, createAdapterRegistry } from './adapters/registry.js';
+import { type Auth, type AuthHooks, createAuth } from './auth/auth.js';
+import { createAuthHooks } from './auth/hooks.js';
+import type { BaseDeps } from './base-deps.js';
 import type { AuthEnv } from './config/auth-env.js';
 import type { ServerConfig } from './config/load.js';
 import { createLogger, toAdapterLogger } from './logger.js';
 import { createMailerFromEnv, type Mailer } from './mail/mailer.js';
 
-export interface BaseDeps {
-  config: ServerConfig;
-  /** Application role pool for Graphile Worker (and, later, leader election). Data access goes through deps.db. */
-  pool: pg.Pool;
-  db: OwlwireDb;
-  /**
-   * Auth role handle (owlwire_auth): the auth library's adapter and the auth_user system functions only. The
-   * application role behind `db` cannot read sessions, credentials or tokens.
-   */
-  authDb: OwlwireDb;
-  keyring: Keyring;
-  clock: Clock;
-  logger: Logger;
-  adapters: AdapterRegistry;
-  rand: () => number;
-}
+export type { BaseDeps };
 
 export type Deps = BaseDeps & { authEnv: AuthEnv; mailer: Mailer | null; auth: Auth };
 
-/** Builds the auth library on top of the base dependencies; `hooks` sees the base (registration gates, workspaces). */
+/**
+ * Builds the auth library on top of the base dependencies; `hooks` sees the base. The default hooks enforce the
+ * registration mode and create the personal workspace of every new user.
+ */
 export function attachAuth(
   base: BaseDeps,
   authEnv: AuthEnv,
   mailer: Mailer | null,
-  hooks: (base: BaseDeps) => AuthHooks = () => noopAuthHooks,
+  hooks: (base: BaseDeps) => AuthHooks = createAuthHooks,
 ): Deps {
   const auth = createAuth({
     db: base.authDb,
