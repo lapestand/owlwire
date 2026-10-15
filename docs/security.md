@@ -289,6 +289,10 @@ belongs to a member is `409 already_member`; inviting an address again replaces 
   `POST /api/invitations/accept`, which checks the token and the email again.
 - A personal workspace has only its owner and takes no invitations: creating one and accepting one are both
   `409 personal_workspace`.
+- While registration is `closed`, an invitation can only be accepted by an existing account, since nobody can sign
+  up. Inviting an address with no account is refused with `409 registration_closed`, and nothing is stored or sent.
+  This tells an owner or admin that the address has no account, which only the instance admin's choice of closed
+  mode exposes; in `invite` and `open` mode the answer does not depend on it.
 
 ## Instance administrators
 
