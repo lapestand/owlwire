@@ -10,7 +10,7 @@ import type { Deps } from '../../../deps.js';
 import { listWorkspaceAudit } from '../../../workspaces/audit.js';
 import { listWorkspaceMembers } from '../../../workspaces/members.js';
 import type { ApiEnv } from './env.js';
-import { assertRole, json, problems, SECURITY, TAGS } from './problems.js';
+import { assertRole, json, problems, problemWith, SECURITY, TAGS } from './problems.js';
 
 /**
  * The actor as one object. A user's name is known only while they are a member of this workspace; a former member,
@@ -44,7 +44,8 @@ export function registerAuditRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void 
       request: { params: WorkspaceIdParams, query: AuditQuery },
       responses: {
         200: json(AuditListSchema, 'Workspace audit log, newest first'),
-        ...problems(401, 403, 404, 422),
+        ...problems(401, 403, 404),
+        ...problemWith(422, 'invalid_cursor', 'unknown_audit_action'),
       },
     }),
     async (c) => {

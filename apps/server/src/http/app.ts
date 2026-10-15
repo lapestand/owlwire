@@ -3,7 +3,7 @@ import { type Context, Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { AUTH_BASE_PATH, AUTH_CLIENT_IP_HEADER } from '../auth/auth.js';
 import type { Deps } from '../deps.js';
-import { ProblemError, repositoryProblem } from '../errors.js';
+import { notFound, ProblemError, repositoryProblem } from '../errors.js';
 import { type ClientIpResolver, createClientIpResolver } from './client-ip.js';
 import { requestId } from './middleware/request-id.js';
 import { problem } from './problem.js';
@@ -59,7 +59,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     (c.get('log') ?? deps.logger).error({ err }, 'unhandled error');
     return problem(c, new ProblemError(500, 'internal'));
   });
-  app.notFound((c) => problem(c, new ProblemError(404, 'not_found')));
+  app.notFound((c) => problem(c, notFound()));
 
   app.route('/', healthRoutes(deps.checkReady ?? dbReadiness(deps.db)));
   app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, (c) =>
