@@ -1,0 +1,315 @@
+import { randomInt } from 'node:crypto';
+import { SYSTEM_ACTOR } from '@owlwire/db';
+import { seedCommunityWorkspace, seedInvitation } from '@owlwire/db/fixtures';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { setRegistrationMode } from '../system/registration.js';
+import { listWorkspacesForUser } from '../system/user-workspaces.js';
+import { findUserByEmail } from '../system/users.js';
+import {
+  type AuthHarness,
+  cookieFrom,
+  createAuthHarness,
+  TEST_BASE_URL,
+  uniqueEmail,
+} from '../test/auth-harness.js';
+import { INVITATION_TTL_MS, newInvitationToken } from '../workspaces/invitation-token.js';
+
+// No request leaves the process: the GitHub token and profile endpoints are answered by a fetch stub.
+
+const realFetch = globalThis.fetch;
+
+interface GitHubIdentity {
+  email: string;
+  /** What GitHub reports for the address in /user/emails. */
+  verified?: boolean;
+  /** GitHub account id; unique per test so an account row from another test is never reused. */
+  id?: number;
+}
+
+function mockGitHub(identity: GitHubIdentity): number {
+  const id = identity.id ?? randomInt(1, 2 ** 31);
+  const { email } = identity;
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith('https://github.com/login/oauth/access_token')) {
+      return Response.json({
+        access_token: 'fake-github-access-token',
+        token_type: 'bearer',
+        scope: 'read:user,user:email',
+      });
+    }
+    if (url === 'https://api.github.com/user') {
+      return Response.json({ id, login: 'octo', name: 'Octo Cat', email, avatar_url: null });
+    }
+    if (url === 'https://api.github.com/user/emails') {
+      return Response.json([
+        { email, primary: true, verified: identity.verified ?? true, visibility: 'public' },
+      ]);
+    }
+    return realFetch(input, init);
+  });
+  return id;
+}
+
+/** Follows the provider redirect back to our callback, as the browser would after the user approves. */
+async function completeAtCallback(
+  h: AuthHarness,
+  start: Response,
+  cookie: string,
+): Promise<Response> {
+  expect(start.status).toBe(200);
+  const { url } = (await start.json()) as { url: string };
+  const state = new URL(url).searchParams.get('state') ?? '';
+  return h.request(`/api/auth/callback/github?code=test-code&state=${encodeURIComponent(state)}`, {
+    cookie,
+  });
+}
+
+async function githubRoundTrip(h: AuthHarness): Promise<Response> {
+  const start = await h.request('/api/auth/sign-in/social', {
+    body: { provider: 'github', callbackURL: '/' },
+  });
+  return completeAtCallback(h, start.clone(), cookieFrom(start));
+}
+
+function hasSessionCookie(res: Response): boolean {
+  return res.headers.getSetCookie().some((c) => /session_token=[^;]+/.test(c));
+}
+
+function errorOf(res: Response): string | null {
+  return new URL(res.headers.get('location') ?? '/', TEST_BASE_URL).searchParams.get('error');
+}
+
+describe('social sign-in', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness({
+      env: { OWLWIRE_GITHUB_CLIENT_ID: 'gh-id', OWLWIRE_GITHUB_CLIENT_SECRET: 'gh-secret' },
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  const workspaceCount = async (): Promise<number> => {
+    const { rows } = await h.harness.ownerPool.query<{ n: number }>(
+      'select count(*)::int as n from workspaces',
+    );
+    return rows[0]?.n ?? -1;
+  };
+
+  const githubAccountsOf = async (userId: string): Promise<number> => {
+    const { rows } = await h.harness.ownerPool.query<{ n: number }>(
+      "select count(*)::int as n from auth_account where user_id = $1 and provider_id = 'github'",
+      [userId],
+    );
+    return rows[0]?.n ?? -1;
+  };
+
+  it('redirects to GitHub with our callback url', async () => {
+    const res = await h.request('/api/auth/sign-in/social', {
+      body: { provider: 'github', callbackURL: '/' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { url: string };
+    const url = new URL(body.url);
+    expect(url.host).toBe('github.com');
+    expect(url.searchParams.get('client_id')).toBe('gh-id');
+    expect(url.searchParams.get('redirect_uri')).toBe(`${TEST_BASE_URL}/api/auth/callback/github`);
+  });
+
+  it('refuses an unconfigured provider', async () => {
+    const res = await h.request('/api/auth/sign-in/social', {
+      body: { provider: 'google', callbackURL: '/' },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('creates the user and the personal workspace in open mode', async () => {
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    const email = uniqueEmail('octo-open');
+    const githubId = mockGitHub({ email });
+    const res = await githubRoundTrip(h);
+    expect(res.status).toBe(302);
+    expect(errorOf(res)).toBeNull();
+    expect(hasSessionCookie(res)).toBe(true);
+    const user = await findUserByEmail(h.deps, email);
+    expect(user).not.toBeNull();
+    expect(user?.emailVerified).toBe(true);
+    expect(await listWorkspacesForUser(h.deps, user?.id ?? '')).toHaveLength(1);
+    // The provider token reaches auth_account only encrypted.
+    const { rows } = await h.harness.ownerPool.query<{ account_id: string; access_token: string }>(
+      "select account_id, access_token from auth_account where user_id = $1 and provider_id = 'github'",
+      [user?.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.account_id).toBe(String(githubId));
+    expect(rows[0]?.access_token).not.toContain('fake-github-access-token');
+  });
+
+  it('signs a returning user in with the same GitHub account', async () => {
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    const email = uniqueEmail('octo-return');
+    const id = mockGitHub({ email });
+    expect(errorOf(await githubRoundTrip(h))).toBeNull();
+    // Registration closes; an existing account still signs in.
+    await setRegistrationMode(h.deps, 'closed', SYSTEM_ACTOR);
+    vi.restoreAllMocks();
+    mockGitHub({ email, id });
+    const again = await githubRoundTrip(h);
+    expect(again.status).toBe(302);
+    expect(errorOf(again)).toBeNull();
+    expect(hasSessionCookie(again)).toBe(true);
+  });
+
+  it('does not create a user through social sign-in when registration is closed', async () => {
+    await setRegistrationMode(h.deps, 'closed', SYSTEM_ACTOR);
+    const before = await workspaceCount();
+    const email = uniqueEmail('octo-closed');
+    mockGitHub({ email });
+    const res = await githubRoundTrip(h);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location') ?? '').toContain('error');
+    expect(hasSessionCookie(res)).toBe(false);
+    expect(await findUserByEmail(h.deps, email)).toBeNull();
+    expect(await workspaceCount()).toBe(before);
+  });
+
+  it('does not create a user through social sign-in in invite mode without an invitation', async () => {
+    await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
+    const before = await workspaceCount();
+    const email = uniqueEmail('octo-uninvited');
+    mockGitHub({ email });
+    const res = await githubRoundTrip(h);
+    expect(res.status).toBe(302);
+    expect(errorOf(res)).not.toBeNull();
+    expect(hasSessionCookie(res)).toBe(false);
+    expect(await findUserByEmail(h.deps, email)).toBeNull();
+    expect(await workspaceCount()).toBe(before);
+  });
+
+  it('admits an invited address through social sign-in in invite mode', async () => {
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    const owner = await h.createUser();
+    const workspaceId = await seedCommunityWorkspace(h.deps.db, owner.id);
+    const email = uniqueEmail('octo-invited');
+    await seedInvitation(h.deps.db, {
+      workspaceId,
+      email,
+      invitedBy: owner.id,
+      tokenHash: newInvitationToken().tokenHash,
+      expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+    });
+    await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
+    mockGitHub({ email });
+    const res = await githubRoundTrip(h);
+    expect(errorOf(res)).toBeNull();
+    const user = await findUserByEmail(h.deps, email);
+    expect(user).not.toBeNull();
+    expect(await listWorkspacesForUser(h.deps, user?.id ?? '')).toHaveLength(1);
+  });
+
+  it('does not create a user from an address the provider has not verified', async () => {
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    const before = await workspaceCount();
+    const email = uniqueEmail('octo-unverified');
+    mockGitHub({ email, verified: false });
+    const res = await githubRoundTrip(h);
+    expect(res.status).toBe(302);
+    expect(errorOf(res)).toBe('email_not_verified');
+    expect(hasSessionCookie(res)).toBe(false);
+    expect(await findUserByEmail(h.deps, email)).toBeNull();
+    expect(await workspaceCount()).toBe(before);
+  });
+
+  describe('account linking', () => {
+    it('does not link an unverified provider address to an existing account', async () => {
+      await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+      // The victim has a verified local account; the attacker's GitHub account claims the same address.
+      const victim = await h.createUser(uniqueEmail('victim'));
+      expect((await findUserByEmail(h.deps, victim.email))?.emailVerified).toBe(true);
+      mockGitHub({ email: victim.email, verified: false });
+      const res = await githubRoundTrip(h);
+      expect(res.status).toBe(302);
+      expect(errorOf(res)).not.toBeNull();
+      expect(hasSessionCookie(res)).toBe(false);
+      expect(await githubAccountsOf(victim.id)).toBe(0);
+    });
+
+    it('does not link a verified provider address to an unverified local account', async () => {
+      // Without SMTP local addresses are never verified, so an account squatted at someone else's address
+      // cannot capture that person's GitHub identity on their first social sign-in.
+      const plain = await createAuthHarness({
+        smtp: false,
+        env: { OWLWIRE_GITHUB_CLIENT_ID: 'gh-id', OWLWIRE_GITHUB_CLIENT_SECRET: 'gh-secret' },
+      });
+      try {
+        const local = await plain.createUser(uniqueEmail('squatter'));
+        expect((await findUserByEmail(plain.deps, local.email))?.emailVerified).toBe(false);
+        mockGitHub({ email: local.email, verified: true });
+        const res = await githubRoundTrip(plain);
+        expect(res.status).toBe(302);
+        expect(errorOf(res)).not.toBeNull();
+        expect(hasSessionCookie(res)).toBe(false);
+        const { rows } = await plain.harness.ownerPool.query<{ n: number }>(
+          "select count(*)::int as n from auth_account where user_id = $1 and provider_id = 'github'",
+          [local.id],
+        );
+        expect(rows[0]?.n).toBe(0);
+      } finally {
+        await plain.close();
+      }
+    });
+
+    it('links a provider address verified on both sides to the existing account', async () => {
+      await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+      const local = await h.createUser(uniqueEmail('linked'));
+      mockGitHub({ email: local.email, verified: true });
+      const res = await githubRoundTrip(h);
+      expect(errorOf(res)).toBeNull();
+      expect(hasSessionCookie(res)).toBe(true);
+      expect(await githubAccountsOf(local.id)).toBe(1);
+      // No second user and no second personal workspace.
+      expect(await listWorkspacesForUser(h.deps, local.id)).toHaveLength(1);
+    });
+
+    it('refuses an explicit link of an unverified provider address while signed in', async () => {
+      await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+      const local = await h.createUser(uniqueEmail('explicit'));
+      mockGitHub({ email: local.email, verified: false });
+      const start = await h.request('/api/auth/link-social', {
+        body: { provider: 'github', callbackURL: '/' },
+        cookie: local.cookie,
+      });
+      const res = await completeAtCallback(
+        h,
+        start.clone(),
+        [local.cookie, cookieFrom(start)].filter(Boolean).join('; '),
+      );
+      expect(res.status).toBe(302);
+      expect(errorOf(res)).not.toBeNull();
+      expect(await githubAccountsOf(local.id)).toBe(0);
+    });
+
+    it('links a verified provider address explicitly while signed in', async () => {
+      await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+      const local = await h.createUser(uniqueEmail('explicit-ok'));
+      mockGitHub({ email: local.email, verified: true });
+      const start = await h.request('/api/auth/link-social', {
+        body: { provider: 'github', callbackURL: '/' },
+        cookie: local.cookie,
+      });
+      const res = await completeAtCallback(
+        h,
+        start.clone(),
+        [local.cookie, cookieFrom(start)].filter(Boolean).join('; '),
+      );
+      expect(res.status).toBe(302);
+      expect(errorOf(res)).toBeNull();
+      expect(await githubAccountsOf(local.id)).toBe(1);
+    });
+  });
+});

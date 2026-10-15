@@ -21,9 +21,7 @@
         "drizzle-orm",
         "grammy",
         // Built first through turbo's ^build, then copied into public/ by scripts/copy-assets.mjs.
-        "@owlwire/web",
-        // Installed ahead of the two-factor and passkey support that imports it; remove it in that change.
-        "@better-auth/passkey"
+        "@owlwire/web"
       ]
     },
     "apps/web": {},
