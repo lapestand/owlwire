@@ -3,8 +3,7 @@ import { newId } from '@owlwire/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './http/app.js';
 import { createLogger } from './logger.js';
-import { seedDevWorkspace } from './system/dev-seed.js';
-import { ingestFor } from './test/fixtures.js';
+import { ingestFor, seedDeliveryWorkspace } from './test/fixtures.js';
 import { createHarness, type Harness } from './test/harness.js';
 import { waitFor } from './test/wait.js';
 import { startWorker } from './worker/runner.js';
@@ -41,7 +40,7 @@ function capture() {
 }
 
 async function seed() {
-  return seedDevWorkspace(h.deps.db, { platform: 'webhook', chatId: `chat-${newId()}` });
+  return seedDeliveryWorkspace(h.deps.db, { platform: 'webhook', chatId: `chat-${newId()}` });
 }
 
 /** Message text of the error and its whole cause chain, plus pg fields: proves the raw error does carry the secret. */

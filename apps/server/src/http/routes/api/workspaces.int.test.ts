@@ -485,8 +485,11 @@ describe('management api: request hardening', () => {
         }
       }
     }
-    // A path no route serves yet is behind the session too.
-    expect((await h.request('/api/not-a-route')).status).toBe(401);
+    // A path no route serves is gone, signed in or not; registered routes stay behind the session (above).
+    const unknown = await h.request('/api/not-a-route');
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toMatchObject({ code: 'not_found' });
+    expect((await h.request('/api/me/not-a-route')).status).toBe(404);
   });
 });
 

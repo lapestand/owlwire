@@ -1,8 +1,8 @@
 import { verifyTokenHash } from '@owlwire/crypto';
 import { readConnectionConfig, tenantScope, withTenant } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createHarness, type Harness } from '../test/harness.js';
-import { seedDevWorkspace } from './dev-seed.js';
+import { seedDeliveryWorkspace } from './fixtures.js';
+import { createHarness, type Harness } from './harness.js';
 
 let h: Harness;
 beforeAll(async () => {
@@ -12,9 +12,20 @@ afterAll(async () => {
   await h.close();
 });
 
-describe('seedDevWorkspace', () => {
+describe('seedDeliveryWorkspace', () => {
+  it('uses the shared bot (no config, no destination) without a bot token', async () => {
+    const r = await seedDeliveryWorkspace(h.deps.db, { platform: 'telegram' });
+    expect(r.destinationId).toBeNull();
+    const conn = (
+      await h.ownerPool.query('select kind, config_enc from connections where id = $1', [
+        r.connectionId,
+      ])
+    ).rows[0];
+    expect(conn).toMatchObject({ kind: 'shared_bot', config_enc: null });
+  });
+
   it('creates a full telegram route with an encrypted bot token', async () => {
-    const r = await seedDevWorkspace(h.deps.db, {
+    const r = await seedDeliveryWorkspace(h.deps.db, {
       platform: 'telegram',
       botToken: '123:ABC',
       chatId: '-1001234',
@@ -73,8 +84,8 @@ describe('seedDevWorkspace', () => {
   });
 
   it('creates a fake webhook route without config and can run twice', async () => {
-    const a = await seedDevWorkspace(h.deps.db, { platform: 'webhook', chatId: 'smoke' });
-    const b = await seedDevWorkspace(h.deps.db, { platform: 'webhook', chatId: 'smoke' });
+    const a = await seedDeliveryWorkspace(h.deps.db, { platform: 'webhook', chatId: 'smoke' });
+    const b = await seedDeliveryWorkspace(h.deps.db, { platform: 'webhook', chatId: 'smoke' });
     expect(a.workspaceId).not.toBe(b.workspaceId);
     const conn = (
       await h.ownerPool.query('select platform, kind, config_enc from connections where id = $1', [

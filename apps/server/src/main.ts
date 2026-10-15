@@ -4,10 +4,9 @@ import { systemClock } from '@owlwire/core';
 import { createKeyring } from '@owlwire/crypto';
 import { openDatabase } from '@owlwire/db';
 import { Command, Option } from 'commander';
+import { registerAdminCommands } from './cli/admin.js';
 import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
-import { closeDeps, createDeps } from './deps.js';
 import { createLogger, safeErrorText } from './logger.js';
-import { formatSeedResult, seedDevWorkspace } from './system/dev-seed.js';
 import { runKeysRotate } from './system/keys-rotate.js';
 import { migrateDatabase } from './system/migrate.js';
 import { runServeCommand } from './system/serve.js';
@@ -93,54 +92,7 @@ keys
     }
   });
 
-program
-  .command('dev:seed')
-  .description(
-    'Development only: create a workspace, app, installation, connection, destination and rule',
-  )
-  .addOption(
-    new Option('--platform <platform>', 'target platform')
-      .choices(['telegram', 'webhook'])
-      .default('telegram'),
-  )
-  .option('--bot-token <token>', 'telegram bot token (own bot); without it the shared bot is used')
-  .option('--chat-id <id>', 'telegram chat id, or any label for the fake webhook adapter')
-  .option('--thread-id <id>', 'telegram forum topic id')
-  .option('--name <name>', 'workspace name', 'Dev')
-  .action(
-    async (opts: {
-      platform: 'telegram' | 'webhook';
-      botToken?: string;
-      chatId?: string;
-      threadId?: string;
-      name: string;
-    }) => {
-      const config = readConfig();
-      const logger = createLogger(config.logLevel);
-      if (opts.platform === 'telegram' && opts.chatId && !opts.botToken) {
-        logger.warn(
-          'dev:seed: --chat-id without --bot-token creates a shared_bot connection; shared Telegram bot delivery ' +
-            'is not available yet, so deliveries to this destination will fail. Pass --bot-token to use your own bot.',
-        );
-      }
-      await migrateDatabase(config, logger);
-      const deps = createDeps(config, { logger });
-      try {
-        const result = await seedDevWorkspace(deps.db, {
-          platform: opts.platform,
-          chatId: opts.chatId ?? (opts.platform === 'webhook' ? 'fake-destination' : undefined),
-          ...(opts.botToken ? { botToken: opts.botToken } : {}),
-          ...(opts.threadId ? { threadId: opts.threadId } : {}),
-          name: opts.name,
-        });
-        process.stdout.write(
-          formatSeedResult(result, { port: deps.config.port, platform: opts.platform }),
-        );
-      } finally {
-        await closeDeps(deps);
-      }
-    },
-  );
+registerAdminCommands(program, () => readConfig());
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   if (err instanceof ConfigError) {

@@ -10,8 +10,7 @@ import {
 } from '@owlwire/db';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createLogger } from '../../logger.js';
-import { seedDevWorkspace } from '../../system/dev-seed.js';
-import { ingestFor, seedAndIngest } from '../../test/fixtures.js';
+import { ingestFor, seedAndIngest, seedDeliveryWorkspace } from '../../test/fixtures.js';
 import { createHarness, type Harness } from '../../test/harness.js';
 import { listJobs } from '../../test/jobs.js';
 import { createTaskList } from '../runner.js';
@@ -230,12 +229,12 @@ describe('sendDelivery', () => {
   });
 
   it('fails clearly when connection config cannot be decrypted', async () => {
-    const seed = await seedDevWorkspace(h.deps.db, {
+    const seed = await seedDeliveryWorkspace(h.deps.db, {
       platform: 'telegram',
       botToken: '1:abc',
       chatId: '-100',
     });
-    const other = await seedDevWorkspace(h.deps.db, {
+    const other = await seedDeliveryWorkspace(h.deps.db, {
       platform: 'telegram',
       botToken: '2:def',
       chatId: '-200',
