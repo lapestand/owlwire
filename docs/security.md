@@ -165,7 +165,9 @@ startup warning. A deployment that terminates TLS on the same host without a pro
 
 The web UI's API is authenticated with the session cookie. Every path under `/api` requires a session except an
 explicit allowlist of public routes (today only `GET /api/auth-config`), so a route added later is protected unless
-it is deliberately made public; a test walks every registered route and expects `401` without a session. The sign-in
+it is deliberately made public; a test walks every registered route and expects `401` without a session. A path that
+no route answers gets `404` before the session check, so a removed or mistyped endpoint reads as gone; route names are
+already public in the API document, and a path the check misses is refused rather than served without a session. The sign-in
 routes under `/api/auth/*` are served by the sign-in library and are not part of this router.
 
 Cross-site request forgery is refused in layers:
