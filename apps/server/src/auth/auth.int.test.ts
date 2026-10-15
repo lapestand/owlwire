@@ -1,0 +1,636 @@
+import { Hono } from 'hono';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { sessionAuth } from '../http/middleware/session-auth.js';
+import { ProblemError, problem } from '../http/problem.js';
+import type { ApiEnv } from '../http/routes/api/env.js';
+import { createLogger } from '../logger.js';
+import { createMemoryMailer, type Mailer, MailMessageError } from '../mail/mailer.js';
+import { MailTemplateError } from '../mail/templates.js';
+import { countInstanceAdmins, findUserByEmail, findUserById } from '../system/users.js';
+import {
+  type AuthHarness,
+  cookieFrom,
+  createAuthHarness,
+  extractUrl,
+  TEST_BASE_URL,
+  TEST_PASSWORD,
+  uniqueEmail,
+} from '../test/auth-harness.js';
+import { TEST_AUTH_SECRET, testAuthEnv } from '../test/config.js';
+import {
+  AUTH_CLIENT_IP_HEADER,
+  AUTH_COOKIE_PREFIX,
+  AUTH_RATE_LIMIT,
+  createAuth,
+  EMAIL_VERIFICATION_EXPIRES_IN_SECONDS,
+  MIN_PASSWORD_LENGTH,
+  noopAuthHooks,
+  RESET_PASSWORD_TOKEN_EXPIRES_IN_SECONDS,
+  RegistrationDeniedError,
+  SESSION_EXPIRES_IN_SECONDS,
+  SESSION_UPDATE_AGE_SECONDS,
+  SIGN_IN_RATE_LIMIT,
+  secureCookiesFor,
+} from './auth.js';
+import { runAsBootstrap } from './bootstrap-context.js';
+
+/** A pino logger whose JSON lines land in `lines`. */
+function captureLogger() {
+  const lines: string[] = [];
+  const logger = createLogger('debug', { write: (line: string) => void lines.push(line) });
+  return { lines, logger };
+}
+
+const sessionCookie = (res: Response) =>
+  res.headers.getSetCookie().find((c) => c.includes(`${AUTH_COOKIE_PREFIX}.session_token=`)) ?? '';
+
+describe('better auth with smtp', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness();
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('issues an owlwire-prefixed session cookie and exposes the session', async () => {
+    const u = await h.createUser();
+    expect(u.cookie).toContain('owlwire.session_token=');
+    const res = await h.request('/api/auth/get-session', { cookie: u.cookie });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { user: { email: string; isInstanceAdmin: boolean } };
+    expect(body.user.email).toBe(u.email);
+    expect(body.user.isInstanceAdmin).toBe(false);
+  });
+
+  it('marks the session cookie HttpOnly and SameSite=Lax', async () => {
+    const res = await h.signInResponse((await h.createUser()).email);
+    const cookie = sessionCookie(res);
+    expect(cookie).toMatch(/;\s*HttpOnly/i);
+    expect(cookie).toMatch(/;\s*SameSite=Lax/i);
+  });
+
+  it('requires email verification before sign-in', async () => {
+    const email = uniqueEmail('verify');
+    expect((await h.signUp(email)).status).toBe(200);
+    expect((await h.signInResponse(email)).status).toBe(403);
+    const mail = h.mailer.outbox.find((m) => m.to === email);
+    expect(mail?.subject).toBe('Verify your Owlwire email address');
+    const link = new URL(extractUrl(mail?.text ?? ''));
+    expect(link.origin).toBe(TEST_BASE_URL);
+    expect(link.pathname).toBe('/api/auth/verify-email');
+    expect(link.searchParams.get('callbackURL')).toBe(`${TEST_BASE_URL}/`);
+    const verify = await h.request(`${link.pathname}${link.search}`);
+    expect(verify.status).toBeLessThan(400);
+    expect((await h.signInResponse(email)).status).toBe(200);
+  });
+
+  it('localizes the verification email from accept-language', async () => {
+    const email = uniqueEmail('tr');
+    await h.request('/api/auth/sign-up/email', {
+      body: { email, password: TEST_PASSWORD, name: 'Ayşe' },
+      headers: { 'accept-language': 'tr-TR,tr;q=0.9' },
+    });
+    const mail = h.mailer.outbox.find((m) => m.to === email);
+    expect(mail?.subject).toBe('Owlwire e-posta adresinizi doğrulayın');
+  });
+
+  it('ignores a client-provided isInstanceAdmin field', async () => {
+    const email = uniqueEmail('sneaky');
+    await h.request('/api/auth/sign-up/email', {
+      body: { email, password: TEST_PASSWORD, name: 'Sneaky', isInstanceAdmin: true },
+    });
+    const user = await findUserByEmail(h.deps, email);
+    expect(user?.isInstanceAdmin ?? false).toBe(false);
+  });
+
+  it('resets the password through the emailed link', async () => {
+    const u = await h.createUser(uniqueEmail('reset'));
+    const res = await h.request('/api/auth/request-password-reset', {
+      body: { email: u.email, redirectTo: `${TEST_BASE_URL}/reset-password` },
+    });
+    expect(res.status).toBe(200);
+    const mail = h.mailer.outbox.filter((m) => m.to === u.email).at(-1);
+    expect(mail?.subject).toBe('Reset your Owlwire password');
+    expect(RESET_PASSWORD_TOKEN_EXPIRES_IN_SECONDS).toBe(3600);
+    expect(mail?.text).toContain('1 hour');
+    const link = new URL(extractUrl(mail?.text ?? ''));
+    expect(link.searchParams.get('callbackURL')).toBe(`${TEST_BASE_URL}/reset-password`);
+    const token = link.pathname.split('/').pop() ?? '';
+    const done = await h.request('/api/auth/reset-password', {
+      body: { newPassword: 'another-long-password', token },
+    });
+    expect(done.status).toBe(200);
+    expect((await h.signInResponse(u.email, TEST_PASSWORD)).status).toBe(401);
+    expect((await h.signInResponse(u.email, 'another-long-password')).status).toBe(200);
+  });
+
+  it('stores the reset token only as a hash', async () => {
+    const u = await h.createUser(uniqueEmail('hashed'));
+    await h.request('/api/auth/request-password-reset', {
+      body: { email: u.email, redirectTo: `${TEST_BASE_URL}/reset-password` },
+    });
+    const mail = h.mailer.outbox.filter((m) => m.to === u.email).at(-1);
+    const token = new URL(extractUrl(mail?.text ?? '')).pathname.split('/').pop() ?? '';
+    expect(token.length).toBeGreaterThan(10);
+    const { rows } = await h.harness.ownerPool.query<{ identifier: string }>(
+      'select identifier from auth_verification',
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.identifier).not.toContain(token);
+  });
+
+  it('rejects passwords shorter than the minimum', async () => {
+    expect(MIN_PASSWORD_LENGTH).toBe(10);
+    const short = await h.signUp(uniqueEmail('short'), {
+      password: 'p'.repeat(MIN_PASSWORD_LENGTH - 1),
+    });
+    expect(short.status).toBe(400);
+    const exact = await h.signUp(uniqueEmail('exact'), {
+      password: 'p'.repeat(MIN_PASSWORD_LENGTH),
+    });
+    expect(exact.status).toBe(200);
+  });
+
+  it('sends no verification email for a user created in the bootstrap context', async () => {
+    const email = uniqueEmail('bootstrap');
+    const before = h.mailer.outbox.length;
+    await runAsBootstrap(() =>
+      h.deps.auth.api.signUpEmail({ body: { email, password: TEST_PASSWORD, name: 'Admin' } }),
+    );
+    expect(h.mailer.outbox.slice(before).filter((m) => m.to === email)).toEqual([]);
+    expect(await findUserByEmail(h.deps, email)).not.toBeNull();
+  });
+
+  it('sessionAuth answers 401 problem details without a session and passes the user with one', async () => {
+    const mini = new Hono<ApiEnv>();
+    mini.onError((err, c) =>
+      err instanceof ProblemError ? problem(c, err) : problem(c, new ProblemError(500, 'internal')),
+    );
+    mini.get('/whoami', sessionAuth(h.deps.auth), (c) => c.json(c.get('user')));
+    const anon = await mini.request(`${TEST_BASE_URL}/whoami`);
+    expect(anon.status).toBe(401);
+    expect(await anon.json()).toMatchObject({ status: 401, code: 'unauthorized' });
+    const u = await h.createUser();
+    const ok = await mini.request(`${TEST_BASE_URL}/whoami`, { headers: { cookie: u.cookie } });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({
+      id: u.id,
+      email: u.email,
+      emailVerified: true,
+      isInstanceAdmin: false,
+      twoFactorEnabled: false,
+    });
+  });
+});
+
+describe('better auth on the auth database role', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness({ smtp: false });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('signs up and in through the auth role while the application role gets 42501 on the secrets', async () => {
+    const before = await countInstanceAdmins(h.deps);
+    const u = await h.createUser(uniqueEmail('authrole'));
+    expect(cookieFrom(await h.signInResponse(u.email))).toContain('owlwire.session_token=');
+    expect(await findUserById(h.deps, u.id)).toMatchObject({
+      email: u.email,
+      isInstanceAdmin: false,
+      twoFactorEnabled: false,
+    });
+    expect(await countInstanceAdmins(h.deps)).toBe(before);
+    const { rows } = await h.harness.ownerPool.query(
+      'select count(*)::int as n from auth_session s join auth_user u on u.id = s.user_id where u.email = $1',
+      [u.email],
+    );
+    expect(rows[0]).toEqual({ n: 3 });
+    // deps.pool connects as the application role.
+    for (const query of [
+      'select * from auth_session limit 1',
+      'select * from auth_account limit 1',
+      'select * from auth_verification limit 1',
+      'select * from auth_rate_limit limit 1',
+    ]) {
+      await expect(h.deps.pool.query(query)).rejects.toMatchObject({ code: '42501' });
+    }
+    await expect(
+      h.deps.pool.query('select id, name, email from auth_user where email = $1', [u.email]),
+    ).resolves.toMatchObject({ rowCount: 1 });
+  });
+});
+
+describe('better auth without smtp', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness({ smtp: false });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('signs in without email verification and sends no email', async () => {
+    const email = uniqueEmail('nosmtp');
+    expect((await h.signUp(email)).status).toBe(200);
+    expect((await h.signInResponse(email)).status).toBe(200);
+    expect(h.mailer.outbox).toHaveLength(0);
+  });
+});
+
+describe('better auth with a failing smtp server', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness({
+      mailer: {
+        async send() {
+          throw new Error('smtp down');
+        },
+      },
+    });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('still creates the account when the verification email fails', async () => {
+    const email = uniqueEmail('smtpdown');
+    expect((await h.signUp(email)).status).toBe(200);
+    expect(await findUserByEmail(h.deps, email)).not.toBeNull();
+  });
+});
+
+describe('auth email failures', () => {
+  let h: AuthHarness;
+  // Sign-ups are rate limited per address (a few per ten seconds); each call below is its own client.
+  let lastOctet = 0;
+  const nextIp = () => `192.0.2.${100 + (lastOctet++ % 100)}`;
+  beforeAll(async () => {
+    h = await createAuthHarness({ smtp: false });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  const signUpWith = async (send: Mailer['send'], nodeEnv = 'test', baseURL = TEST_BASE_URL) => {
+    const { lines, logger } = captureLogger();
+    const auth = createAuth({
+      db: h.deps.authDb,
+      env: testAuthEnv({
+        smtp: true,
+        env: { OWLWIRE_PUBLIC_URL: baseURL },
+      }),
+      mailer: { send },
+      logger,
+      hooks: noopAuthHooks,
+      nodeEnv,
+    });
+    const email = uniqueEmail('mailfail');
+    const res = await auth.handler(
+      new Request(`${baseURL}/api/auth/sign-up/email`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: baseURL,
+          [AUTH_CLIENT_IP_HEADER]: nextIp(),
+        },
+        body: JSON.stringify({ email, password: TEST_PASSWORD, name: 'Mail Fail' }),
+      }),
+    );
+    return { res, email, log: lines.join('\n') };
+  };
+
+  it.each([
+    ['MailTemplateError', new MailTemplateError('mail link is not an absolute URL')],
+    [
+      'MailMessageError',
+      new MailMessageError('mail recipient must be exactly one plain email address'),
+    ],
+  ])('treats a %s as "email not sent" and logs it without the link', async (name, error) => {
+    const { res, email, log } = await signUpWith(async () => {
+      throw error;
+    });
+    expect(res.status).toBe(200);
+    expect(await findUserByEmail(h.deps, email)).not.toBeNull();
+    expect(log).toContain('auth email not sent');
+    expect(log).toContain(`"reason":"${name}"`);
+    expect(log).not.toContain('verify-email');
+    expect(log).not.toContain(email);
+  });
+
+  it('sends no http link in production', async () => {
+    const sent: string[] = [];
+    const { res, log } = await signUpWith(async () => void sent.push('sent'), 'production');
+    expect(res.status).toBe(200);
+    expect(sent).toEqual([]);
+    expect(log).toContain('"reason":"AuthLinkError"');
+    expect(log).not.toContain('token=');
+  });
+
+  it('sends https links in production', async () => {
+    const outbox = createMemoryMailer();
+    const { res, email } = await signUpWith(
+      (msg) => outbox.send(msg),
+      'production',
+      'https://owlwire.example',
+    );
+    expect(res.status).toBe(200);
+    const link = new URL(extractUrl(outbox.outbox.find((m) => m.to === email)?.text ?? ''));
+    expect(link.protocol).toBe('https:');
+    expect(link.origin).toBe('https://owlwire.example');
+    expect(link.searchParams.get('token')).toBeTruthy();
+  });
+});
+
+describe('better auth hardening', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness({ smtp: false });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('keeps sessions for 30 days and refreshes them at most once a day', async () => {
+    expect(SESSION_EXPIRES_IN_SECONDS).toBe(30 * 24 * 60 * 60);
+    expect(SESSION_UPDATE_AGE_SECONDS).toBe(24 * 60 * 60);
+    expect(h.deps.auth.options.session).toMatchObject({
+      expiresIn: SESSION_EXPIRES_IN_SECONDS,
+      updateAge: SESSION_UPDATE_AGE_SECONDS,
+    });
+    const u = await h.createUser();
+    const result = await h.deps.auth.api.getSession({ headers: new Headers({ cookie: u.cookie }) });
+    // Test measurement only: Better Auth stamps expiresAt from its own clock.
+    const remainingMs = new Date(result?.session.expiresAt ?? 0).getTime() - Date.now();
+    expect(remainingMs).toBeGreaterThan(SESSION_EXPIRES_IN_SECONDS * 1000 - 60_000);
+    expect(remainingMs).toBeLessThanOrEqual(SESSION_EXPIRES_IN_SECONDS * 1000);
+  });
+
+  it('configures the rate limits and link lifetimes', () => {
+    expect(h.deps.auth.options.rateLimit).toMatchObject({
+      enabled: true,
+      storage: 'database',
+      window: AUTH_RATE_LIMIT.window,
+      max: AUTH_RATE_LIMIT.max,
+      customRules: { '/sign-in/email': SIGN_IN_RATE_LIMIT },
+    });
+    expect(h.deps.auth.options.emailAndPassword).toMatchObject({
+      resetPasswordTokenExpiresIn: RESET_PASSWORD_TOKEN_EXPIRES_IN_SECONDS,
+    });
+    expect(EMAIL_VERIFICATION_EXPIRES_IN_SECONDS).toBe(3600);
+  });
+
+  it('turns telemetry off, hashes verification identifiers and encrypts provider tokens', () => {
+    expect(h.deps.auth.options.telemetry).toEqual({ enabled: false });
+    expect(h.deps.auth.options.verification).toMatchObject({ storeIdentifier: 'hashed' });
+    expect(h.deps.auth.options.account).toMatchObject({ encryptOAuthTokens: true });
+  });
+
+  it('derives useSecureCookies from the OWLWIRE_PUBLIC_URL scheme', () => {
+    expect(secureCookiesFor('https://owlwire.example')).toBe(true);
+    expect(secureCookiesFor('http://localhost:8080')).toBe(false);
+    expect(h.deps.auth.options.advanced?.useSecureCookies).toBe(false);
+  });
+
+  it('keeps a plain session cookie on http', async () => {
+    const cookie = sessionCookie(await h.signUp(uniqueEmail('plain')));
+    expect(cookie.startsWith('owlwire.session_token=')).toBe(true);
+    expect(cookie).not.toMatch(/;\s*Secure/i);
+  });
+
+  it('issues a __Secure- prefixed Secure session cookie when the public URL is https', async () => {
+    const httpsUrl = 'https://owlwire.example';
+    const secure = createAuth({
+      db: h.deps.authDb,
+      env: testAuthEnv({ env: { OWLWIRE_PUBLIC_URL: httpsUrl } }),
+      mailer: null,
+      logger: h.deps.logger,
+      hooks: noopAuthHooks,
+    });
+    expect(secure.options.advanced?.useSecureCookies).toBe(true);
+    const res = await secure.handler(
+      new Request(`${httpsUrl}/api/auth/sign-up/email`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: httpsUrl,
+          [AUTH_CLIENT_IP_HEADER]: '192.0.2.41',
+        },
+        body: JSON.stringify({
+          email: uniqueEmail('secure'),
+          password: TEST_PASSWORD,
+          name: 'Secure',
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const cookie = sessionCookie(res);
+    expect(cookie.startsWith('__Secure-owlwire.session_token=')).toBe(true);
+    expect(cookie).toMatch(/;\s*Secure/i);
+  });
+
+  it('rate limits sign-in per client IP with database storage shared by every replica', async () => {
+    const email = uniqueEmail('ratelimit');
+    expect((await h.signUp(email)).status).toBe(200);
+    const wrong = { email, password: 'wrong-password-123' };
+    const fromIp = (ip: string, headers: Record<string, string> = {}) =>
+      h.request('/api/auth/sign-in/email', { body: wrong, remoteAddress: ip, headers });
+    for (let i = 0; i < SIGN_IN_RATE_LIMIT.max; i++) {
+      expect((await fromIp('203.0.113.7')).status).toBe(401);
+    }
+    expect((await fromIp('203.0.113.7')).status).toBe(429);
+    // A client-sent internal header or forwarded header does not move it into another bucket.
+    expect((await fromIp('203.0.113.7', { [AUTH_CLIENT_IP_HEADER]: '198.51.100.77' })).status).toBe(
+      429,
+    );
+    expect((await fromIp('203.0.113.7', { 'x-forwarded-for': '198.51.100.78' })).status).toBe(429);
+    // Without a socket address (no peer known) a client-sent internal header is dropped, not believed.
+    const socketless = await h.app.request(`${TEST_BASE_URL}/api/auth/sign-in/email`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: TEST_BASE_URL,
+        [AUTH_CLIENT_IP_HEADER]: '203.0.113.7',
+      },
+      body: JSON.stringify(wrong),
+    });
+    expect(socketless.status).toBe(401);
+    // A second Auth instance on the same database (another replica) sees the same counter.
+    const replica = createAuth({
+      db: h.deps.authDb,
+      env: h.deps.authEnv,
+      mailer: null,
+      logger: h.deps.logger,
+      hooks: noopAuthHooks,
+    });
+    const viaReplica = await replica.handler(
+      new Request(`${TEST_BASE_URL}/api/auth/sign-in/email`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: TEST_BASE_URL,
+          [AUTH_CLIENT_IP_HEADER]: '203.0.113.7',
+        },
+        body: JSON.stringify(wrong),
+      }),
+    );
+    expect(viaReplica.status).toBe(429);
+    // Another client address has its own bucket.
+    expect((await fromIp('198.51.100.9')).status).toBe(401);
+  });
+
+  it('answers an unknown email and a wrong password identically', async () => {
+    const known = await h.createUser(uniqueEmail('enum'));
+    const unknown = await h.signInResponse(uniqueEmail('nobody'), 'some-long-password');
+    const wrong = await h.signInResponse(known.email, 'some-long-password');
+    expect(unknown.status).toBe(401);
+    expect(wrong.status).toBe(401);
+    expect(await unknown.json()).toEqual(await wrong.json());
+    expect(unknown.headers.getSetCookie()).toEqual(wrong.headers.getSetCookie());
+  });
+
+  it('refuses a foreign callback URL and logs it through pino with URLs and emails redacted', async () => {
+    const { lines, logger } = captureLogger();
+    const auth = createAuth({
+      db: h.deps.authDb,
+      env: h.deps.authEnv,
+      mailer: null,
+      logger,
+      hooks: noopAuthHooks,
+    });
+    const email = uniqueEmail('logged');
+    const res = await auth.handler(
+      new Request(`${TEST_BASE_URL}/api/auth/sign-up/email`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: TEST_BASE_URL,
+          [AUTH_CLIENT_IP_HEADER]: '192.0.2.42',
+        },
+        body: JSON.stringify({
+          email,
+          password: TEST_PASSWORD,
+          name: 'Logged',
+          callbackURL: `https://attacker.example/steal?token=abc&email=${email}`,
+        }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    const log = lines.join('\n');
+    expect(log).not.toContain(TEST_AUTH_SECRET);
+    expect(log).toContain('"component":"auth"');
+    expect(log).toContain('[url]');
+    expect(log).not.toContain('attacker.example');
+    expect(log).not.toContain(email);
+  });
+});
+
+describe('better auth with smtp, enumeration', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness();
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('answers a sign-up for a taken email like a new one', async () => {
+    const taken = await h.createUser(uniqueEmail('taken'));
+    const again = await h.signUp(taken.email);
+    const fresh = await h.signUp(uniqueEmail('fresh'));
+    expect(again.status).toBe(200);
+    expect(fresh.status).toBe(200);
+    const shape = async (res: Response) => {
+      const b = (await res.json()) as { token: unknown; user: Record<string, unknown> };
+      return { token: b.token, keys: Object.keys(b.user).sort() };
+    };
+    expect(await shape(again)).toEqual(await shape(fresh));
+  });
+
+  it('answers a password reset request for an unknown email like a known one', async () => {
+    const known = await h.createUser(uniqueEmail('resetknown'));
+    const redirectTo = `${TEST_BASE_URL}/reset-password`;
+    const a = await h.request('/api/auth/request-password-reset', {
+      body: { email: known.email, redirectTo },
+    });
+    const b = await h.request('/api/auth/request-password-reset', {
+      body: { email: uniqueEmail('resetunknown'), redirectTo },
+    });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(await a.json()).toEqual(await b.json());
+  });
+});
+
+describe('client address behind a trusted proxy', () => {
+  let h: AuthHarness;
+  beforeAll(async () => {
+    h = await createAuthHarness({ smtp: false, trustedProxies: ['192.0.2.1'] });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('uses X-Forwarded-For only when the TCP peer is a trusted proxy', async () => {
+    const email = uniqueEmail('proxy');
+    expect((await h.signUp(email)).status).toBe(200);
+    const wrong = { email, password: 'wrong-password-123' };
+    const viaProxy = (client: string) =>
+      h.request('/api/auth/sign-in/email', {
+        body: wrong,
+        remoteAddress: '192.0.2.1',
+        headers: { 'x-forwarded-for': `${client}, 192.0.2.1` },
+      });
+    for (let i = 0; i < SIGN_IN_RATE_LIMIT.max; i++) {
+      expect((await viaProxy('203.0.113.50')).status).toBe(401);
+    }
+    expect((await viaProxy('203.0.113.50')).status).toBe(429);
+    // Another client behind the same proxy has its own bucket.
+    expect((await viaProxy('203.0.113.51')).status).toBe(401);
+    // An untrusted peer cannot borrow the limited client's bucket, nor escape its own, with the header.
+    const direct = await h.request('/api/auth/sign-in/email', {
+      body: wrong,
+      remoteAddress: '198.51.100.20',
+      headers: { 'x-forwarded-for': '203.0.113.50' },
+    });
+    expect(direct.status).toBe(401);
+  });
+});
+
+describe('registration hooks', () => {
+  let h: AuthHarness;
+  const created: string[] = [];
+  beforeAll(async () => {
+    h = await createAuthHarness({
+      smtp: false,
+      hooks: () => ({
+        async beforeUserCreate(email) {
+          if (email.startsWith('closed-')) throw new RegistrationDeniedError('registration_closed');
+        },
+        async afterUserCreate(user) {
+          created.push(user.email);
+        },
+      }),
+    });
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  it('turns a registration denial into 403 with its code and creates no user', async () => {
+    const email = uniqueEmail('closed');
+    const res = await h.signUp(email);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: 'REGISTRATION_CLOSED' });
+    expect(await findUserByEmail(h.deps, email)).toBeNull();
+    expect(created).not.toContain(email);
+  });
+
+  it('runs the after hook with the lower-cased email of a new user', async () => {
+    const email = uniqueEmail('Open');
+    expect((await h.signUp(email)).status).toBe(200);
+    expect(created).toContain(email.toLowerCase());
+  });
+});

@@ -17,16 +17,17 @@ import { type AppDeps, AUDIT_DATA_DETAIL, createApp, NOT_FOUND_DETAIL } from './
 
 const logger = createLogger('silent');
 
+/** Only what the routes under test touch; the auth library is not reached by these requests. */
 function makeApp(over: Partial<AppDeps> = {}) {
   return createApp({
     db: {} as OwlwireDb,
     clock: systemClock,
     logger,
-    config: { devAdminToken: null },
+    config: { devAdminToken: null, trustedProxies: [] },
     webDir: null,
     checkReady: async () => true,
     ...over,
-  });
+  } as unknown as AppDeps);
 }
 
 describe('health', () => {

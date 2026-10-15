@@ -134,7 +134,7 @@ describe('runServeCommand', () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it('passes the insecure database role opt-in and NODE_ENV to the startup checks', async () => {
+  it('passes both database handles, the insecure database role opt-in and NODE_ENV to the startup checks', async () => {
     const startupChecks = vi.fn(async () => undefined);
     const stop = vi.fn(async () => undefined);
     const { handlers, exits, hooks } = harness({
@@ -144,6 +144,7 @@ describe('runServeCommand', () => {
     });
     await runServeCommand({ ...config(), allowInsecureDbRole: true }, silent, null, hooks);
     expect(startupChecks).toHaveBeenCalledWith(
+      expect.anything(),
       expect.anything(),
       expect.objectContaining({ allowInsecureDbRole: true, nodeEnv: 'development' }),
     );

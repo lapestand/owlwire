@@ -28,15 +28,19 @@ jobs:
         run: |
           owner_password=$(openssl rand -hex 16)
           app_password=$(openssl rand -hex 24)
+          auth_password=$(openssl rand -hex 24)
           kek=$(openssl rand -base64 32)
-          for secret in "$owner_password" "$app_password" "$kek"; do
+          auth_secret=$(openssl rand -base64 32)
+          for secret in "$owner_password" "$app_password" "$auth_password" "$kek" "$auth_secret"; do
             echo "::add-mask::$secret"
           done
           umask 077
           sed \
             -e "s|^OWLWIRE_DB_OWNER_PASSWORD=.*|OWLWIRE_DB_OWNER_PASSWORD=$owner_password|" \
             -e "s|^OWLWIRE_DB_APP_PASSWORD=.*|OWLWIRE_DB_APP_PASSWORD=$app_password|" \
+            -e "s|^OWLWIRE_DB_AUTH_PASSWORD=.*|OWLWIRE_DB_AUTH_PASSWORD=$auth_password|" \
             -e "s|^OWLWIRE_KEK=.*|OWLWIRE_KEK=$kek|" \
+            -e "s|^OWLWIRE_AUTH_SECRET=.*|OWLWIRE_AUTH_SECRET=$auth_secret|" \
             .env.example > .env
       # The compose file both names the image and builds it from docker/Dockerfile.
       - name: Build image
@@ -99,7 +103,7 @@ jobs:
             key=${line%%=*}
             value=${line#*=}
             case "$key" in
-              OWLWIRE_DB_OWNER_PASSWORD | OWLWIRE_DB_APP_PASSWORD | OWLWIRE_KEK | OWLWIRE_KEK_PREVIOUS | OWLWIRE_DEV_ADMIN_TOKEN | OWLWIRE_TELEGRAM_BOT_TOKEN)
+              OWLWIRE_DB_OWNER_PASSWORD | OWLWIRE_DB_APP_PASSWORD | OWLWIRE_DB_AUTH_PASSWORD | OWLWIRE_KEK | OWLWIRE_KEK_PREVIOUS | OWLWIRE_AUTH_SECRET | OWLWIRE_DEV_ADMIN_TOKEN | OWLWIRE_TELEGRAM_BOT_TOKEN)
                 if [ -n "$value" ]; then
                   logs=${logs//"$value"/***}
                 fi

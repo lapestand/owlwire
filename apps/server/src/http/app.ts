@@ -1,16 +1,16 @@
-import type { Clock } from '@owlwire/core';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import {
   AuditDataError,
   InvalidScopeError,
-  type OwlwireDb,
   RepoConflictError,
   RepoInputError,
   RepoNotFoundError,
 } from '@owlwire/db';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import type { Logger } from 'pino';
-import type { ServerConfig } from '../config/load.js';
+import { AUTH_BASE_PATH, AUTH_CLIENT_IP_HEADER } from '../auth/auth.js';
+import type { Deps } from '../deps.js';
+import { type ClientIpResolver, createClientIpResolver } from './client-ip.js';
 import { requestId } from './middleware/request-id.js';
 import { ProblemError, problem } from './problem.js';
 import { devRoutes } from './routes/dev.js';
@@ -19,14 +19,7 @@ import { v1Routes } from './routes/v1/index.js';
 import { staticHandler } from './static.js';
 import type { AppEnv } from './types.js';
 
-export interface AppDeps {
-  db: OwlwireDb;
-  clock: Clock;
-  logger: Logger;
-  config: Pick<ServerConfig, 'devAdminToken'>;
-  webDir: string | null;
-  checkReady?: () => Promise<boolean>;
-}
+export type AppDeps = Deps & { webDir: string | null; checkReady?: () => Promise<boolean> };
 
 /** Fixed detail of the 404 for repository not-found and invalid scope errors (same text for both, so the response does not reveal which one happened). */
 export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
@@ -34,7 +27,27 @@ export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
 /** Fixed detail of the 422 for audit guard rejections; the guard's own message may name input keys. */
 export const AUDIT_DATA_DETAIL = 'The request contains data that cannot be recorded.';
 
+/**
+ * The request handed to the auth library: a copy whose AUTH_CLIENT_IP_HEADER is the resolved client address. A value
+ * the client sent in that header is always dropped. Without a socket (app.request() in tests that pass none) the
+ * header is simply absent.
+ */
+function withClientIp(c: Context, resolve: ClientIpResolver): Request {
+  const headers = new Headers(c.req.raw.headers);
+  headers.delete(AUTH_CLIENT_IP_HEADER);
+  let socketAddress: string | undefined;
+  try {
+    socketAddress = getConnInfo(c).remote.address;
+  } catch {
+    socketAddress = undefined;
+  }
+  const address = resolve(socketAddress, c.req.raw.headers.get('x-forwarded-for'));
+  if (address) headers.set(AUTH_CLIENT_IP_HEADER, address);
+  return new Request(c.req.raw, { headers });
+}
+
 export function createApp(deps: AppDeps): Hono<AppEnv> {
+  const resolveClientIp = createClientIpResolver(deps.config.trustedProxies);
   const app = new Hono<AppEnv>();
   app.use('*', requestId(deps.logger));
   app.onError((err, c) => {
@@ -67,6 +80,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.notFound((c) => problem(c, new ProblemError(404, 'not_found')));
 
   app.route('/', healthRoutes(deps.checkReady ?? dbReadiness(deps.db)));
+  app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, (c) =>
+    deps.auth.handler(withClientIp(c, resolveClientIp)),
+  );
   app.route('/v1', v1Routes({ db: deps.db }));
   app.route('/api/dev', devRoutes({ db: deps.db, config: deps.config }));
 

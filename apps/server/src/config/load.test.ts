@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from './load.js';
 
 const KEK = randomBytes(32).toString('base64');
-const base = { OWLWIRE_DATABASE_URL: 'postgres://u:p@localhost:5432/owlwire', OWLWIRE_KEK: KEK };
+const base = {
+  OWLWIRE_DATABASE_URL: 'postgres://u:p@localhost:5432/owlwire',
+  OWLWIRE_KEK: KEK,
+  OWLWIRE_AUTH_SECRET: `${'x'.repeat(16)}abcdefghijklmnop`,
+};
 const noFile = () => null;
 
 describe('loadConfig', () => {
@@ -23,6 +27,43 @@ describe('loadConfig', () => {
     expect(c.kek.current.version).toBe(1);
     expect(c.kek.previous).toBeNull();
     expect(c.edition.profile).toBe('personal');
+  });
+
+  it('fails with ConfigError when OWLWIRE_AUTH_SECRET is missing or short', () => {
+    const { OWLWIRE_AUTH_SECRET: _omit, ...withoutSecret } = base;
+    expect(() => loadConfig(withoutSecret, noFile)).toThrow(ConfigError);
+    expect(() => loadConfig({ ...base, OWLWIRE_AUTH_SECRET: 'short' }, noFile)).toThrow(
+      /at least 32/,
+    );
+  });
+
+  it('exposes the parsed auth environment', () => {
+    expect(loadConfig(base, noFile).authEnv).toMatchObject({
+      baseURL: 'http://localhost:8080',
+      smtp: null,
+    });
+  });
+
+  it('reads the auth role URL and the trusted proxies', () => {
+    const c = loadConfig(
+      {
+        ...base,
+        OWLWIRE_AUTH_DATABASE_URL: 'postgres://owlwire_auth:pw@localhost:5432/owlwire',
+        OWLWIRE_TRUSTED_PROXIES: '10.0.0.5, 10.1.0.0/16',
+      },
+      noFile,
+    );
+    expect(c.authDatabaseUrl).toBe('postgres://owlwire_auth:pw@localhost:5432/owlwire');
+    expect(c.trustedProxies).toEqual(['10.0.0.5', '10.1.0.0/16']);
+    const defaults = loadConfig(base, noFile);
+    expect(defaults.authDatabaseUrl).toBeUndefined();
+    expect(defaults.trustedProxies).toEqual([]);
+    expect(() => loadConfig({ ...base, OWLWIRE_AUTH_DATABASE_URL: 'mysql://x' }, noFile)).toThrow(
+      /OWLWIRE_AUTH_DATABASE_URL/,
+    );
+    expect(() => loadConfig({ ...base, OWLWIRE_TRUSTED_PROXIES: 'proxy.local' }, noFile)).toThrow(
+      ConfigError,
+    );
   });
 
   it('reports every missing required variable', () => {
