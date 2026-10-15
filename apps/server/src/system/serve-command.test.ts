@@ -26,6 +26,7 @@ function harness(over: Partial<ServeCommandHooks> = {}) {
     migrate: async () => 'separate',
     startupChecks: async () => undefined,
     upgrade: async () => ({ keysCreated: 0, upgraded: 0, failed: [] }),
+    authWarnings: async () => [],
     nodeEnv: 'test',
     ...over,
   };
@@ -151,5 +152,46 @@ describe('runServeCommand', () => {
     handlers.get('SIGTERM')?.();
     await vi.waitFor(() => expect(exits).toEqual([0]));
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs each sign-in setup warning before starting, with NODE_ENV from the hooks', async () => {
+    const logger = createLogger('silent');
+    const warn = vi.spyOn(logger, 'warn');
+    const authWarnings = vi.fn(async () => ['first warning', 'second warning']);
+    const start = vi.fn(async () => {
+      // Logged before the server starts.
+      expect(warn).toHaveBeenCalledWith('second warning');
+      return { port: 1, worker: null, stop: async () => undefined };
+    });
+    const { handlers, exits, hooks } = harness({ authWarnings, start, nodeEnv: 'production' });
+    await runServeCommand(config(), logger, null, hooks);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('first warning');
+    expect(authWarnings).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ NODE_ENV: 'production' }),
+    );
+    handlers.get('SIGTERM')?.();
+    await vi.waitFor(() => expect(exits).toEqual([0]));
+  });
+
+  it('still starts when the sign-in setup warnings cannot be collected', async () => {
+    const logger = createLogger('silent');
+    const warn = vi.spyOn(logger, 'warn');
+    const start = vi.fn(async () => ({ port: 1, worker: null, stop: async () => undefined }));
+    const { handlers, exits, hooks } = harness({
+      authWarnings: async () => {
+        throw new Error('connection refused');
+      },
+      start,
+    });
+    await runServeCommand(config(), logger, null, hooks);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      'sign-in setup warnings could not be collected',
+    );
+    handlers.get('SIGTERM')?.();
+    await vi.waitFor(() => expect(exits).toEqual([0]));
   });
 });

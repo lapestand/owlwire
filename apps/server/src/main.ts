@@ -4,6 +4,7 @@ import { systemClock } from '@owlwire/core';
 import { createKeyring } from '@owlwire/crypto';
 import { openDatabase } from '@owlwire/db';
 import { Command, Option } from 'commander';
+import { registerAdminCommands } from './cli/admin.js';
 import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
 import { closeDeps, createDeps } from './deps.js';
 import { createLogger, safeErrorText } from './logger.js';
@@ -92,6 +93,8 @@ keys
       await db.close();
     }
   });
+
+registerAdminCommands(program, () => readConfig());
 
 program
   .command('dev:seed')

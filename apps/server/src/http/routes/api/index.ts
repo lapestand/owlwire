@@ -2,9 +2,11 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
 import { AUTH_COOKIE_PREFIX } from '../../../auth/auth.js';
 import type { Deps } from '../../../deps.js';
+import { requireInstanceAdmin } from '../../middleware/instance-admin.js';
 import { sessionAuth } from '../../middleware/session-auth.js';
 import { workspaceAccess } from '../../middleware/workspace-access.js';
 import { ProblemError, problem, validationProblem } from '../../problem.js';
+import { registerAdminRoutes } from './admin.js';
 import type { ApiEnv } from './env.js';
 import { registerMeRoutes } from './me.js';
 import { crossSiteGuard, httpProblem, repositoryProblem } from './problems.js';
@@ -51,9 +53,11 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   api.use('*', (c, next) => (PUBLIC_API_PATHS.has(c.req.path) ? next() : session(c, next)));
   api.use('/workspaces/:workspaceId', member);
   api.use('/workspaces/:workspaceId/*', member);
+  api.use('/admin/*', requireInstanceAdmin());
 
   registerPublicRoutes(api, deps);
   registerMeRoutes(api, deps);
   registerWorkspaceRoutes(api, deps);
+  registerAdminRoutes(api, deps);
   return api;
 }
