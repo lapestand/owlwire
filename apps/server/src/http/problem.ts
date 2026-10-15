@@ -1,6 +1,6 @@
 import type { ProblemCode } from '@owlwire/contracts';
 import type { Context } from 'hono';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { ProblemError } from '../errors.js';
 
 const TITLES: Record<ProblemCode, string> = {
   unauthorized: 'Unauthorized',
@@ -15,33 +15,6 @@ const TITLES: Record<ProblemCode, string> = {
   internal: 'Internal Server Error',
   unavailable: 'Service Unavailable',
 };
-
-/** Fixed detail of the 404 for repository not-found and invalid scope errors (same text for both, so the response does not reveal which one happened). */
-export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
-
-/** Fixed detail of the 422 for audit guard rejections; the guard's own message may name input keys. */
-export const AUDIT_DATA_DETAIL = 'The request contains data that cannot be recorded.';
-
-export class ProblemError extends Error {
-  readonly status: ContentfulStatusCode;
-  readonly code: ProblemCode;
-  readonly detail: string | undefined;
-  readonly headers: Record<string, string>;
-
-  constructor(
-    status: ContentfulStatusCode,
-    code: ProblemCode,
-    detail?: string,
-    headers: Record<string, string> = {},
-  ) {
-    super(detail ?? code);
-    this.name = 'ProblemError';
-    this.status = status;
-    this.code = code;
-    this.detail = detail;
-    this.headers = headers;
-  }
-}
 
 function problemBody(status: number, code: ProblemCode, detail?: string) {
   return {

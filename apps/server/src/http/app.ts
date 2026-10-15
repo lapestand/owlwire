@@ -1,18 +1,12 @@
 import { getConnInfo } from '@hono/node-server/conninfo';
-import {
-  AuditDataError,
-  InvalidScopeError,
-  RepoConflictError,
-  RepoInputError,
-  RepoNotFoundError,
-} from '@owlwire/db';
 import { type Context, Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { AUTH_BASE_PATH, AUTH_CLIENT_IP_HEADER } from '../auth/auth.js';
 import type { Deps } from '../deps.js';
+import { ProblemError, repositoryProblem } from '../errors.js';
 import { type ClientIpResolver, createClientIpResolver } from './client-ip.js';
 import { requestId } from './middleware/request-id.js';
-import { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL, ProblemError, problem } from './problem.js';
+import { problem } from './problem.js';
 import { API_BASE_PATH, createApiRouter } from './routes/api/index.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
 import { v1Routes } from './routes/v1/index.js';
@@ -21,7 +15,7 @@ import type { AppEnv } from './types.js';
 
 export type AppDeps = Deps & { webDir: string | null; checkReady?: () => Promise<boolean> };
 
-export { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL } from './problem.js';
+export { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL } from '../errors.js';
 
 /**
  * The request handed to the auth library: a copy whose AUTH_CLIENT_IP_HEADER is the resolved client address. A value
@@ -60,21 +54,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (err instanceof HTTPException && err.status === 400) {
       return problem(c, new ProblemError(400, 'validation_failed', err.message || undefined));
     }
-    // Repository errors carry only entity/constraint/reason names, never values (mapped to 422 / 409).
-    if (err instanceof RepoInputError) {
-      return problem(c, new ProblemError(422, 'validation_failed', err.message));
-    }
-    // The audit guard rejects input (secret-looking keys, non-JSON data); its message names keys, so the detail is fixed.
-    if (err instanceof AuditDataError) {
-      return problem(c, new ProblemError(422, 'validation_failed', AUDIT_DATA_DETAIL));
-    }
-    // Unknown, foreign or malformed ids look the same to the caller: a fixed text, never the id or the input.
-    if (err instanceof RepoNotFoundError || err instanceof InvalidScopeError) {
-      return problem(c, new ProblemError(404, 'not_found', NOT_FOUND_DETAIL));
-    }
-    if (err instanceof RepoConflictError) {
-      return problem(c, new ProblemError(409, 'conflict', err.message));
-    }
+    // Repository and audit guard errors get the same fixed details as on /api: never an id, a key or the input.
+    const mapped = repositoryProblem(err);
+    if (mapped) return problem(c, mapped);
     // The logger's err serializer drops query params, pg row fields and echoed input but keeps code and constraint.
     (c.get('log') ?? deps.logger).error({ err }, 'unhandled error');
     return problem(c, new ProblemError(500, 'internal'));

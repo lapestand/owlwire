@@ -9,10 +9,9 @@ import {
   withTenant,
 } from '@owlwire/db';
 import { findInvitationByTokenHash, SYSTEM, withSystem } from '@owlwire/db/system';
+import type { SessionUser } from '../auth/session-user.js';
 import type { Deps } from '../deps.js';
-import type { SessionUser } from '../http/middleware/session-auth.js';
-import { ProblemError } from '../http/problem.js';
-import { notFound } from '../http/routes/api/problems.js';
+import { notFound, ProblemError } from '../errors.js';
 import { hashInvitationToken } from '../workspaces/invitation-token.js';
 
 /** What the invitation page may show before sign-in: nothing beyond what the invitation email already said. */

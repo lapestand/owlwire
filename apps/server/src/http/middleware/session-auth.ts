@@ -1,9 +1,8 @@
 import type { MiddlewareHandler } from 'hono';
 import type { Auth } from '../../auth/auth.js';
-import { ProblemError } from '../problem.js';
-import type { ApiEnv, SessionUser } from '../routes/api/env.js';
-
-export type { SessionUser } from '../routes/api/env.js';
+import type { SessionUser } from '../../auth/session-user.js';
+import { ProblemError } from '../../errors.js';
+import type { ApiEnv } from '../routes/api/env.js';
 
 interface RawUser {
   id: string;

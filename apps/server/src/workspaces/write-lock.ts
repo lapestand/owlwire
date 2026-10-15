@@ -5,8 +5,7 @@ import {
   type TenantTx,
   type WorkspaceSummary,
 } from '@owlwire/db';
-import { ProblemError } from '../http/problem.js';
-import { notFound } from '../http/routes/api/problems.js';
+import { notFound, ProblemError } from '../errors.js';
 
 /**
  * First step of every workspace write that depends on the caller's role. The access middleware checks the role in

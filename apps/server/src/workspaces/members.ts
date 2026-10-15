@@ -12,8 +12,7 @@ import {
   withTenant,
 } from '@owlwire/db';
 import type { BaseDeps } from '../base-deps.js';
-import { ProblemError } from '../http/problem.js';
-import { decisionProblem, notFound } from '../http/routes/api/problems.js';
+import { decisionProblem, notFound, ProblemError } from '../errors.js';
 import { lockForActor } from './write-lock.js';
 
 /** Fixed detail of the 422 for a transfer to the caller themselves. */
