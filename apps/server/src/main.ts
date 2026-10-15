@@ -5,6 +5,7 @@ import { createKeyring } from '@owlwire/crypto';
 import { openDatabase } from '@owlwire/db';
 import { Command, CommanderError, Option } from 'commander';
 import { registerAdminCommands } from './cli/admin.js';
+import { addVersionOption, readPackageVersion } from './cli/version.js';
 import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
 import { createLogger, safeErrorText } from './logger.js';
 import { runKeysRotate } from './system/keys-rotate.js';
@@ -32,6 +33,8 @@ const program = new Command()
   .name('owlwire')
   .description('Owlwire notification router')
   .showHelpAfterError();
+// Like ../public above, ../package.json is the server package's own in both layouts (and in the image).
+addVersionOption(program, readPackageVersion(new URL('../package.json', import.meta.url)));
 
 program
   .command('serve')
