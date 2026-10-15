@@ -43,7 +43,8 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   both roles.
 - **Three roles.** The owner (`owlwire`) runs migrations. The application role (`owlwire_app`) runs every request,
   job and system lookup. The auth role (`owlwire_auth`, `OWLWIRE_AUTH_DATABASE_URL`) is used only by the sign-in
-  library's adapter and by the `auth_user` system functions (`apps/server/src/system/users.ts`). `owlwire migrate`
+  library's adapter, by the `auth_user` system functions (`apps/server/src/system/users.ts`, which `owlwire admin
+  create` also goes through) and by the startup check of the role split. `owlwire migrate`
   creates and grants it (`ensureAuthRole` in `packages/db/src/roles.ts`) with the same checks as the application
   role: `NOSUPERUSER`, `NOBYPASSRLS`, not a member of the owner role or of any superuser or `BYPASSRLS` role, owning
   no relation or schema. It must also be a different role from `owlwire_app`, and neither may be a member of the

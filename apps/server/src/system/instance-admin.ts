@@ -1,15 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { SYSTEM_ACTOR } from '@owlwire/db';
-import {
-  findAuthUserByEmail,
-  grantInstanceAdmin,
-  markEmailVerified,
-  SYSTEM,
-  withSystem,
-} from '@owlwire/db/system';
 import { MIN_PASSWORD_LENGTH } from '../auth/auth.js';
 import { runAsBootstrap } from '../auth/bootstrap-context.js';
 import type { Deps } from '../deps.js';
+import { findUserByEmail, grantUserInstanceAdmin } from './users.js';
 
 /** The email or the password given to `owlwire admin create` is not acceptable; checked before any database access. */
 export class AdminInputError extends Error {
@@ -96,11 +89,9 @@ export async function bootstrapInstanceAdmin(
   raw: { email: string; name?: string; password?: string },
 ): Promise<BootstrapInstanceAdminResult> {
   const input = normalizeAdminInput(raw);
-  const existing = await withSystem(deps.authDb, SYSTEM, (s) =>
-    findAuthUserByEmail(s, input.email),
-  );
+  const existing = await findUserByEmail(deps, input.email);
   if (existing) {
-    await withSystem(deps.authDb, SYSTEM, (s) => grantInstanceAdmin(s, existing.id, SYSTEM_ACTOR));
+    await grantUserInstanceAdmin(deps, existing.id);
     return {
       userId: existing.id,
       created: false,
@@ -121,13 +112,10 @@ export async function bootstrapInstanceAdmin(
   // Sign-up answers some failures with a generic success and a user that was never stored, so the stored row is the
   // source of truth. For an email taken in the meantime that generic answer carries a made-up id, and the stored row
   // belongs to whoever signed up first: it must not be promoted with a password the command never set.
-  const created = await withSystem(deps.authDb, SYSTEM, (s) => findAuthUserByEmail(s, input.email));
+  const created = await findUserByEmail(deps, input.email);
   if (!created) throw new Error('the sign-in library did not create the admin user');
   if (created.id !== signedUp.user.id) throw new ConcurrentAdminUserError(input.email);
-  await withSystem(deps.authDb, SYSTEM, async (s) => {
-    await markEmailVerified(s, created.id);
-    await grantInstanceAdmin(s, created.id, SYSTEM_ACTOR);
-  });
+  await grantUserInstanceAdmin(deps, created.id, { verifyEmail: true });
   return {
     userId: created.id,
     created: true,
