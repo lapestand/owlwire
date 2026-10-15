@@ -112,7 +112,8 @@ interface AuthRoleAccess {
  * privilege at all on AUTH_SECRET_TABLES, no table-level privilege and no INSERT/UPDATE/REFERENCES on auth_user,
  * and SELECT on no auth_user column outside APP_AUTH_USER_COLUMNS. On the auth connection (`authDb`): a different
  * role than the application's, subject to row level security exactly like the application role (no superuser,
- * BYPASSRLS, owner membership or ownership), with SELECT, INSERT, UPDATE and DELETE on every auth table.
+ * BYPASSRLS, owner membership or ownership), with SELECT, INSERT, UPDATE and DELETE on every auth table. Neither
+ * role may be a member of the other, in any form, since membership allows SET ROLE.
  */
 export async function checkAuthRoleSeparation(
   scope: SystemScope,
@@ -152,6 +153,13 @@ export async function checkAuthRoleSeparation(
   const tables = sql`${sql.param([...AUTH_TABLES])}::text[]`;
   const auth = await withSystem(authDb, scope, async (s) => {
     const subject = await q(s).execute(rlsSubjectQuery(null));
+    // MEMBER counts every membership, also one granted WITH INHERIT FALSE (or SET only): such a grant gives no table
+    // privilege, so the checks above miss it, but SET ROLE still crosses over.
+    const linked = await q(s).execute(sql`
+      select coalesce(pg_has_role(a.oid, b.oid, 'MEMBER') or pg_has_role(b.oid, a.oid, 'MEMBER'), false)
+        as "linked"
+      from pg_roles a, pg_roles b
+      where a.rolname = ${app.role} and b.rolname = current_user and a.oid <> b.oid`);
     const access = await q(s).execute(sql`
       select current_user::text as "role", coalesce((
         select array_agg(t.name order by t.name) from unnest(${tables}) as t(name)
@@ -166,6 +174,7 @@ export async function checkAuthRoleSeparation(
     return {
       flags: subject.rows[0] as RlsSubjectFlags | undefined,
       access: access.rows[0] as unknown as AuthRoleAccess,
+      linked: (linked.rows[0] as { linked: boolean } | undefined)?.linked ?? false,
     };
   });
 
@@ -173,6 +182,8 @@ export async function checkAuthRoleSeparation(
   if (auth.access.role === app.role) {
     reasons.push(`the auth connection uses the application role ${app.role}`);
   }
+  if (auth.linked)
+    reasons.push(`roles ${app.role} and ${auth.access.role} are members of each other`);
   for (const table of app.secretTables) reasons.push(`application role can access ${table}`);
   if (app.userTableWide) reasons.push('application role has table-wide privileges on auth_user');
   if (app.userColumnWrite) reasons.push('application role can write auth_user columns');
