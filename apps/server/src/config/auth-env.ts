@@ -1,9 +1,9 @@
 import { inspect } from 'node:util';
 import { z } from 'zod';
 
-/** @public Consumed by the sign-in provider setup. */
+/** Social sign-in providers Owlwire supports (the auth/social.ts setup). */
 export type SocialProvider = 'discord' | 'google' | 'github';
-/** @public Consumed by the sign-in provider setup. */
+/** OAuth client of one social sign-in provider. */
 export interface SocialCredentials {
   clientId: string;
   clientSecret: string;
