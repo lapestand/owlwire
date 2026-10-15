@@ -1,4 +1,4 @@
-import { newId, personalSlug } from '@owlwire/core';
+import { clampWorkspaceName, newId, personalSlug } from '@owlwire/core';
 import {
   type AuditActor,
   addMembership,
@@ -10,12 +10,11 @@ import {
 import { findPersonalWorkspaceByOwner, SYSTEM, withSystem } from '@owlwire/db/system';
 import type { BaseDeps } from '../base-deps.js';
 
-/** Same limit as a workspace name chosen through the API. */
-const PERSONAL_NAME_MAX = 80;
 const SLUG_UNIQUE = 'workspaces_slug_unique';
 
+/** The user's name within the API's workspace name limit (same measure), or 'Personal' when blank. */
 function personalName(name: string): string {
-  const cut = Array.from(name.trim()).slice(0, PERSONAL_NAME_MAX).join('').trim();
+  const cut = clampWorkspaceName(name);
   return cut.length > 0 ? cut : 'Personal';
 }
 

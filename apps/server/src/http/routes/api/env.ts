@@ -11,7 +11,7 @@ export interface SessionUser {
   twoFactorEnabled: boolean;
 }
 
-/** @public Set by the workspace access middleware for workspace routes. */
+/** Set by the workspace access middleware for workspace routes. */
 export interface WorkspaceContext extends WorkspaceSummary {
   role: WorkspaceRole;
 }

@@ -12,7 +12,8 @@ import { AUTH_BASE_PATH, AUTH_CLIENT_IP_HEADER } from '../auth/auth.js';
 import type { Deps } from '../deps.js';
 import { type ClientIpResolver, createClientIpResolver } from './client-ip.js';
 import { requestId } from './middleware/request-id.js';
-import { ProblemError, problem } from './problem.js';
+import { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL, ProblemError, problem } from './problem.js';
+import { createApiRouter } from './routes/api/index.js';
 import { devRoutes } from './routes/dev.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
 import { v1Routes } from './routes/v1/index.js';
@@ -21,11 +22,7 @@ import type { AppEnv } from './types.js';
 
 export type AppDeps = Deps & { webDir: string | null; checkReady?: () => Promise<boolean> };
 
-/** Fixed detail of the 404 for repository not-found and invalid scope errors (same text for both, so the response does not reveal which one happened). */
-export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
-
-/** Fixed detail of the 422 for audit guard rejections; the guard's own message may name input keys. */
-export const AUDIT_DATA_DETAIL = 'The request contains data that cannot be recorded.';
+export { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL } from './problem.js';
 
 /**
  * The request handed to the auth library: a copy whose AUTH_CLIENT_IP_HEADER is the resolved client address. A value
@@ -83,6 +80,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.on(['GET', 'POST'], `${AUTH_BASE_PATH}/*`, (c) =>
     deps.auth.handler(withClientIp(c, resolveClientIp)),
   );
+  app.route('/api', createApiRouter(deps));
   app.route('/v1', v1Routes({ db: deps.db }));
   app.route('/api/dev', devRoutes({ db: deps.db, config: deps.config }));
 
