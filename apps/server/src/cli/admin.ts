@@ -51,8 +51,9 @@ export function formatAdminCreateResult(email: string, r: BootstrapInstanceAdmin
 }
 
 /**
- * A usage error of `admin create` (a missing or empty `--email`, an unknown option) is invalid input too: commander's
- * own exit code 1 becomes 2. Help keeps 0. The error is rethrown for the entry point to exit with.
+ * A usage error of `admin` (no or an unknown subcommand) or of `admin create` (a missing or empty `--email`, an unknown
+ * option) is invalid input too: commander's own exit code 1 becomes 2. Help keeps 0. The error is rethrown for the
+ * entry point to exit with.
  */
 function usageExit(err: CommanderError): never {
   throw new CommanderError(err.exitCode === 0 ? 0 : 2, err.code, err.message);
@@ -103,7 +104,10 @@ export function registerAdminCommands(
   program: Command,
   loadServerConfig: () => ServerConfig,
 ): void {
-  const admin = program.command('admin').description('instance administration');
+  const admin = program
+    .command('admin')
+    .description('instance administration')
+    .exitOverride(usageExit);
   admin
     .command('create')
     .description(
