@@ -7,3 +7,4 @@ export * from './redaction.js';
 export * from './registration.js';
 export * from './roles.js';
 export * from './slug.js';
+export * from './workspace-name.js';

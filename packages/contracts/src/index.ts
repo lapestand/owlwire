@@ -91,3 +91,5 @@ export const ProblemDetails = z.object({
   detail: z.string().optional(),
 });
 export type ProblemDetails = z.infer<typeof ProblemDetails>;
+export * from './api/account.js';
+export * from './api/workspaces.js';

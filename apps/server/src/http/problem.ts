@@ -16,6 +16,12 @@ const TITLES: Record<ProblemCode, string> = {
   unavailable: 'Service Unavailable',
 };
 
+/** Fixed detail of the 404 for repository not-found and invalid scope errors (same text for both, so the response does not reveal which one happened). */
+export const NOT_FOUND_DETAIL = 'The requested resource was not found.';
+
+/** Fixed detail of the 422 for audit guard rejections; the guard's own message may name input keys. */
+export const AUDIT_DATA_DETAIL = 'The request contains data that cannot be recorded.';
+
 export class ProblemError extends Error {
   readonly status: ContentfulStatusCode;
   readonly code: ProblemCode;

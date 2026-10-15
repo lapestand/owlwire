@@ -34,7 +34,6 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
 /**
  * Validates a slug a user picked for a shared workspace: right shape, not reserved,
  * and not in the `p-<32 hex>` namespace that belongs to personal workspaces.
- * @public Consumed by the workspace create and rename endpoints.
  */
 export function isValidSlug(slug: string): boolean {
   return SLUG_PATTERN.test(slug) && !RESERVED_SLUGS.has(slug) && !PERSONAL_SLUG_PATTERN.test(slug);
