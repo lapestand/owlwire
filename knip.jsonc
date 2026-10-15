@@ -16,9 +16,9 @@
     "apps/server": {
       "ignoreDependencies": [
         // tsup bundles the workspace packages but keeps their npm dependencies external, so the server lists the
-        // runtime dependencies of @owlwire/db (drizzle-orm) and @owlwire/adapter-telegram (grammy) itself.
-        // pnpm deploy --prod installs only what the server package declares.
-        "drizzle-orm",
+        // runtime dependencies of @owlwire/adapter-telegram (grammy) itself. pnpm deploy --prod installs only what the
+        // server package declares. drizzle-orm, the runtime dependency of @owlwire/db, is declared the same way;
+        // knip already counts it as used, so it needs no entry here.
         "grammy",
         // Built first through turbo's ^build, then copied into public/ by scripts/copy-assets.mjs.
         "@owlwire/web"
