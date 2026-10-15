@@ -8,6 +8,7 @@ import {
   UpdateMemberInput,
   WorkspaceIdParams,
 } from '@owlwire/contracts';
+import { roleAtLeast, type WorkspaceRole } from '@owlwire/core';
 import type { MemberListItem } from '@owlwire/db';
 import type { Deps } from '../../../deps.js';
 import {
@@ -19,18 +20,20 @@ import {
 import type { ApiEnv } from './env.js';
 import { json, problems, SECURITY, TAGS } from './problems.js';
 
-function toMemberDto(m: MemberListItem): MemberDto {
+/** Owners and admins see every member's email; plain members see id, name, image and role only. */
+function toMemberDto(m: MemberListItem, viewerRole: WorkspaceRole): MemberDto {
   return {
     userId: m.userId,
     name: m.name,
-    email: m.email,
+    ...(roleAtLeast(viewerRole, 'admin') ? { email: m.email } : {}),
+    image: m.image,
     role: m.role,
     joinedAt: m.joinedAt.toISOString(),
   };
 }
 
 /**
- * Members of a workspace: any member reads the list; role changes, removals and ownership transfers are decided in
+ * Members of a workspace: any member reads the list (emails only for owners and admins); role changes, removals and ownership transfers are decided in
  * workspaces/members.ts on the roles read under the workspace lock, so these handlers do no role check themselves.
  */
 export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void {
@@ -44,8 +47,9 @@ export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
       responses: { 200: json(MemberListSchema, 'Workspace members'), ...problems(401, 404) },
     }),
     async (c) => {
-      const items = await listWorkspaceMembers(deps, c.get('workspace').id);
-      return c.json({ items: items.map(toMemberDto) }, 200);
+      const ws = c.get('workspace');
+      const items = await listWorkspaceMembers(deps, ws.id);
+      return c.json({ items: items.map((m) => toMemberDto(m, ws.role)) }, 200);
     },
   );
 
@@ -67,14 +71,10 @@ export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
     async (c) => {
       const { userId } = c.req.valid('param');
       const { role } = c.req.valid('json');
-      const item = await changeMemberRole(
-        deps,
-        c.get('workspace').id,
-        c.get('user').id,
-        userId,
-        role,
-      );
-      return c.json(toMemberDto(item), 200);
+      const ws = c.get('workspace');
+      const item = await changeMemberRole(deps, ws.id, c.get('user').id, userId, role);
+      // Only an admin or owner can get here with a 200; the role is the one the access check read.
+      return c.json(toMemberDto(item, ws.role), 200);
     },
   );
 
