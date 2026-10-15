@@ -137,23 +137,29 @@ export function createAuth(o: CreateAuthOptions) {
   const log = o.logger.child({ component: 'auth' });
 
   /**
-   * Never throws: an email that cannot be built or sent is logged (without link, address or token) and the request
-   * carries on, so sign-up and reset requests never fail with a 500 because of mail.
+   * Never throws and never waits for the mail server: the message is built and sent in the background, so a request
+   * for a known email takes the same path as one for an unknown email (no SMTP round trip in the response time).
+   * A failure is logged without link, address or token, and the request has already been answered.
    */
-  const sendAuthMail = async (
+  const sendAuthMail = (
     to: string,
     request: Request | undefined,
     kind: LinkKind,
     build: () => MailTemplate,
   ): Promise<void> => {
-    if (!o.mailer || isBootstrap()) return;
-    try {
-      const template = build();
-      const locale = pickLocale(request?.headers.get('accept-language'));
-      await o.mailer.send({ to, ...renderMail(locale, template) });
-    } catch (err) {
-      log.warn(mailFailure(kind, err), 'auth email not sent');
-    }
+    const mailer = o.mailer;
+    if (!mailer || isBootstrap()) return Promise.resolve();
+    const acceptLanguage = request?.headers.get('accept-language');
+    const send = async () => {
+      try {
+        const template = build();
+        await mailer.send({ to, ...renderMail(pickLocale(acceptLanguage), template) });
+      } catch (err) {
+        log.warn(mailFailure(kind, err), 'auth email not sent');
+      }
+    };
+    void send();
+    return Promise.resolve();
   };
 
   return betterAuth({
@@ -205,6 +211,9 @@ export function createAuth(o: CreateAuthOptions) {
       enabled: true,
       minPasswordLength: MIN_PASSWORD_LENGTH,
       requireEmailVerification: emailEnabled,
+      // Sign-up never signs in: it answers a new email, a taken email and a refused registration with the same
+      // 200 (the library's generic response), with or without SMTP. The client signs in with a separate request.
+      autoSignIn: false,
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: RESET_PASSWORD_TOKEN_EXPIRES_IN_SECONDS,
       ...(emailEnabled
@@ -257,6 +266,8 @@ export function createAuth(o: CreateAuthOptions) {
               await o.hooks.beforeUserCreate(email);
             } catch (err) {
               if (err instanceof RegistrationDeniedError) {
+                // Stops the insert. Email sign-up answers it with the library's generic 200 (autoSignIn is off),
+                // so a refusal looks like any other sign-up; clients learn the registration mode elsewhere.
                 throw new APIError('FORBIDDEN', {
                   message: err.reason,
                   code: err.reason.toUpperCase(),

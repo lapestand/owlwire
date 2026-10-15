@@ -1,10 +1,15 @@
 import { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { sessionAuth } from '../http/middleware/session-auth.js';
 import { ProblemError, problem } from '../http/problem.js';
 import type { ApiEnv } from '../http/routes/api/env.js';
 import { createLogger } from '../logger.js';
-import { createMemoryMailer, type Mailer, MailMessageError } from '../mail/mailer.js';
+import {
+  createMemoryMailer,
+  type Mailer,
+  type MailMessage,
+  MailMessageError,
+} from '../mail/mailer.js';
 import { MailTemplateError } from '../mail/templates.js';
 import { countInstanceAdmins, findUserByEmail, findUserById } from '../system/users.js';
 import {
@@ -41,6 +46,30 @@ function captureLogger() {
   return { lines, logger };
 }
 
+/** Auth mail is sent in the background, after the response: wait for the message to arrive. */
+async function mailTo(outbox: MailMessage[], to: string, subject?: string): Promise<MailMessage> {
+  return vi.waitFor(() => {
+    const mail = outbox.filter((m) => m.to === to && (!subject || m.subject === subject)).at(-1);
+    if (!mail) throw new Error('mail not sent yet');
+    return mail;
+  });
+}
+
+/** Logs from background mail sends land after the response. */
+async function logged(lines: string[], text: string): Promise<string> {
+  return vi.waitFor(() => {
+    const log = lines.join('\n');
+    if (!log.includes(text)) throw new Error('not logged yet');
+    return log;
+  });
+}
+
+/** What a sign-up response reveals: the token (always null) and the user fields present. */
+async function responseShape(res: Response): Promise<{ token: unknown; keys: string[] }> {
+  const b = (await res.json()) as { token: unknown; user: Record<string, unknown> };
+  return { token: b.token, keys: Object.keys(b.user).sort() };
+}
+
 const sessionCookie = (res: Response) =>
   res.headers.getSetCookie().find((c) => c.includes(`${AUTH_COOKIE_PREFIX}.session_token=`)) ?? '';
 
@@ -74,9 +103,9 @@ describe('better auth with smtp', () => {
     const email = uniqueEmail('verify');
     expect((await h.signUp(email)).status).toBe(200);
     expect((await h.signInResponse(email)).status).toBe(403);
-    const mail = h.mailer.outbox.find((m) => m.to === email);
-    expect(mail?.subject).toBe('Verify your Owlwire email address');
-    const link = new URL(extractUrl(mail?.text ?? ''));
+    const mail = await mailTo(h.mailer.outbox, email);
+    expect(mail.subject).toBe('Verify your Owlwire email address');
+    const link = new URL(extractUrl(mail.text));
     expect(link.origin).toBe(TEST_BASE_URL);
     expect(link.pathname).toBe('/api/auth/verify-email');
     expect(link.searchParams.get('callbackURL')).toBe(`${TEST_BASE_URL}/`);
@@ -91,8 +120,8 @@ describe('better auth with smtp', () => {
       body: { email, password: TEST_PASSWORD, name: 'Ayşe' },
       headers: { 'accept-language': 'tr-TR,tr;q=0.9' },
     });
-    const mail = h.mailer.outbox.find((m) => m.to === email);
-    expect(mail?.subject).toBe('Owlwire e-posta adresinizi doğrulayın');
+    const mail = await mailTo(h.mailer.outbox, email);
+    expect(mail.subject).toBe('Owlwire e-posta adresinizi doğrulayın');
   });
 
   it('ignores a client-provided isInstanceAdmin field', async () => {
@@ -110,11 +139,10 @@ describe('better auth with smtp', () => {
       body: { email: u.email, redirectTo: `${TEST_BASE_URL}/reset-password` },
     });
     expect(res.status).toBe(200);
-    const mail = h.mailer.outbox.filter((m) => m.to === u.email).at(-1);
-    expect(mail?.subject).toBe('Reset your Owlwire password');
+    const mail = await mailTo(h.mailer.outbox, u.email, 'Reset your Owlwire password');
     expect(RESET_PASSWORD_TOKEN_EXPIRES_IN_SECONDS).toBe(3600);
-    expect(mail?.text).toContain('1 hour');
-    const link = new URL(extractUrl(mail?.text ?? ''));
+    expect(mail.text).toContain('1 hour');
+    const link = new URL(extractUrl(mail.text));
     expect(link.searchParams.get('callbackURL')).toBe(`${TEST_BASE_URL}/reset-password`);
     const token = link.pathname.split('/').pop() ?? '';
     const done = await h.request('/api/auth/reset-password', {
@@ -130,8 +158,8 @@ describe('better auth with smtp', () => {
     await h.request('/api/auth/request-password-reset', {
       body: { email: u.email, redirectTo: `${TEST_BASE_URL}/reset-password` },
     });
-    const mail = h.mailer.outbox.filter((m) => m.to === u.email).at(-1);
-    const token = new URL(extractUrl(mail?.text ?? '')).pathname.split('/').pop() ?? '';
+    const mail = await mailTo(h.mailer.outbox, u.email, 'Reset your Owlwire password');
+    const token = new URL(extractUrl(mail.text)).pathname.split('/').pop() ?? '';
     expect(token.length).toBeGreaterThan(10);
     const { rows } = await h.harness.ownerPool.query<{ identifier: string }>(
       'select identifier from auth_verification',
@@ -161,27 +189,6 @@ describe('better auth with smtp', () => {
     expect(h.mailer.outbox.slice(before).filter((m) => m.to === email)).toEqual([]);
     expect(await findUserByEmail(h.deps, email)).not.toBeNull();
   });
-
-  it('sessionAuth answers 401 problem details without a session and passes the user with one', async () => {
-    const mini = new Hono<ApiEnv>();
-    mini.onError((err, c) =>
-      err instanceof ProblemError ? problem(c, err) : problem(c, new ProblemError(500, 'internal')),
-    );
-    mini.get('/whoami', sessionAuth(h.deps.auth), (c) => c.json(c.get('user')));
-    const anon = await mini.request(`${TEST_BASE_URL}/whoami`);
-    expect(anon.status).toBe(401);
-    expect(await anon.json()).toMatchObject({ status: 401, code: 'unauthorized' });
-    const u = await h.createUser();
-    const ok = await mini.request(`${TEST_BASE_URL}/whoami`, { headers: { cookie: u.cookie } });
-    expect(ok.status).toBe(200);
-    expect(await ok.json()).toMatchObject({
-      id: u.id,
-      email: u.email,
-      emailVerified: true,
-      isInstanceAdmin: false,
-      twoFactorEnabled: false,
-    });
-  });
 });
 
 describe('better auth on the auth database role', () => {
@@ -207,7 +214,8 @@ describe('better auth on the auth database role', () => {
       'select count(*)::int as n from auth_session s join auth_user u on u.id = s.user_id where u.email = $1',
       [u.email],
     );
-    expect(rows[0]).toEqual({ n: 3 });
+    // Sign-up opens no session: one from createUser's sign-in, one from the sign-in above.
+    expect(rows[0]).toEqual({ n: 2 });
     // deps.pool connects as the application role.
     for (const query of [
       'select * from auth_session limit 1',
@@ -232,11 +240,23 @@ describe('better auth without smtp', () => {
     await h.close();
   });
 
-  it('signs in without email verification and sends no email', async () => {
+  it('signs in separately after sign-up, without email verification and without email', async () => {
     const email = uniqueEmail('nosmtp');
-    expect((await h.signUp(email)).status).toBe(200);
+    const signUp = await h.signUp(email);
+    expect(signUp.status).toBe(200);
+    expect(sessionCookie(signUp)).toBe('');
+    expect(((await signUp.json()) as { token: unknown }).token).toBeNull();
     expect((await h.signInResponse(email)).status).toBe(200);
     expect(h.mailer.outbox).toHaveLength(0);
+  });
+
+  it('answers a sign-up for a taken email like a new one', async () => {
+    const taken = await h.createUser(uniqueEmail('nosmtp-taken'));
+    const again = await h.signUp(taken.email);
+    const fresh = await h.signUp(uniqueEmail('nosmtp-fresh'));
+    expect(again.status).toBe(200);
+    expect(fresh.status).toBe(200);
+    expect(await responseShape(again)).toEqual(await responseShape(fresh));
   });
 });
 
@@ -299,7 +319,7 @@ describe('auth email failures', () => {
         body: JSON.stringify({ email, password: TEST_PASSWORD, name: 'Mail Fail' }),
       }),
     );
-    return { res, email, log: lines.join('\n') };
+    return { res, email, lines };
   };
 
   it.each([
@@ -309,12 +329,12 @@ describe('auth email failures', () => {
       new MailMessageError('mail recipient must be exactly one plain email address'),
     ],
   ])('treats a %s as "email not sent" and logs it without the link', async (name, error) => {
-    const { res, email, log } = await signUpWith(async () => {
+    const { res, email, lines } = await signUpWith(async () => {
       throw error;
     });
     expect(res.status).toBe(200);
     expect(await findUserByEmail(h.deps, email)).not.toBeNull();
-    expect(log).toContain('auth email not sent');
+    const log = await logged(lines, 'auth email not sent');
     expect(log).toContain(`"reason":"${name}"`);
     expect(log).not.toContain('verify-email');
     expect(log).not.toContain(email);
@@ -322,10 +342,10 @@ describe('auth email failures', () => {
 
   it('sends no http link in production', async () => {
     const sent: string[] = [];
-    const { res, log } = await signUpWith(async () => void sent.push('sent'), 'production');
+    const { res, lines } = await signUpWith(async () => void sent.push('sent'), 'production');
     expect(res.status).toBe(200);
+    const log = await logged(lines, '"reason":"AuthLinkError"');
     expect(sent).toEqual([]);
-    expect(log).toContain('"reason":"AuthLinkError"');
     expect(log).not.toContain('token=');
   });
 
@@ -337,7 +357,7 @@ describe('auth email failures', () => {
       'https://owlwire.example',
     );
     expect(res.status).toBe(200);
-    const link = new URL(extractUrl(outbox.outbox.find((m) => m.to === email)?.text ?? ''));
+    const link = new URL(extractUrl((await mailTo(outbox.outbox, email)).text));
     expect(link.protocol).toBe('https:');
     expect(link.origin).toBe('https://owlwire.example');
     expect(link.searchParams.get('token')).toBeTruthy();
@@ -395,7 +415,9 @@ describe('better auth hardening', () => {
   });
 
   it('keeps a plain session cookie on http', async () => {
-    const cookie = sessionCookie(await h.signUp(uniqueEmail('plain')));
+    const email = uniqueEmail('plain');
+    expect((await h.signUp(email)).status).toBe(200);
+    const cookie = sessionCookie(await h.signInResponse(email));
     expect(cookie.startsWith('owlwire.session_token=')).toBe(true);
     expect(cookie).not.toMatch(/;\s*Secure/i);
   });
@@ -410,21 +432,23 @@ describe('better auth hardening', () => {
       hooks: noopAuthHooks,
     });
     expect(secure.options.advanced?.useSecureCookies).toBe(true);
-    const res = await secure.handler(
-      new Request(`${httpsUrl}/api/auth/sign-up/email`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          origin: httpsUrl,
-          [AUTH_CLIENT_IP_HEADER]: '192.0.2.41',
-        },
-        body: JSON.stringify({
-          email: uniqueEmail('secure'),
-          password: TEST_PASSWORD,
-          name: 'Secure',
+    const email = uniqueEmail('secure');
+    const post = (path: string, body: unknown) =>
+      secure.handler(
+        new Request(`${httpsUrl}/api/auth/${path}`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            origin: httpsUrl,
+            [AUTH_CLIENT_IP_HEADER]: '192.0.2.41',
+          },
+          body: JSON.stringify(body),
         }),
-      }),
-    );
+      );
+    expect(
+      (await post('sign-up/email', { email, password: TEST_PASSWORD, name: 'Secure' })).status,
+    ).toBe(200);
+    const res = await post('sign-in/email', { email, password: TEST_PASSWORD });
     expect(res.status).toBe(200);
     const cookie = sessionCookie(res);
     expect(cookie.startsWith('__Secure-owlwire.session_token=')).toBe(true);
@@ -542,11 +566,7 @@ describe('better auth with smtp, enumeration', () => {
     const fresh = await h.signUp(uniqueEmail('fresh'));
     expect(again.status).toBe(200);
     expect(fresh.status).toBe(200);
-    const shape = async (res: Response) => {
-      const b = (await res.json()) as { token: unknown; user: Record<string, unknown> };
-      return { token: b.token, keys: Object.keys(b.user).sort() };
-    };
-    expect(await shape(again)).toEqual(await shape(fresh));
+    expect(await responseShape(again)).toEqual(await responseShape(fresh));
   });
 
   it('answers a password reset request for an unknown email like a known one', async () => {
@@ -619,11 +639,12 @@ describe('registration hooks', () => {
     await h.close();
   });
 
-  it('turns a registration denial into 403 with its code and creates no user', async () => {
+  it('answers a refused registration like an accepted one and creates no user', async () => {
     const email = uniqueEmail('closed');
     const res = await h.signUp(email);
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ code: 'REGISTRATION_CLOSED' });
+    const fresh = await h.signUp(uniqueEmail('open'));
+    expect(res.status).toBe(200);
+    expect(await responseShape(res)).toEqual(await responseShape(fresh));
     expect(await findUserByEmail(h.deps, email)).toBeNull();
     expect(created).not.toContain(email);
   });
@@ -632,5 +653,141 @@ describe('registration hooks', () => {
     const email = uniqueEmail('Open');
     expect((await h.signUp(email)).status).toBe(200);
     expect(created).toContain(email.toLowerCase());
+  });
+});
+
+describe('auth email is sent in the background', () => {
+  let h: AuthHarness;
+  let release: () => void = () => undefined;
+  const pending: MailMessage[] = [];
+  const delivered: MailMessage[] = [];
+  beforeAll(async () => {
+    // A mail server that answers only when the test releases it.
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h = await createAuthHarness({
+      mailer: {
+        async send(msg) {
+          pending.push(msg);
+          await gate;
+          delivered.push(msg);
+        },
+      },
+    });
+  });
+  afterAll(async () => {
+    release();
+    await h.close();
+  });
+
+  it('answers sign-up and reset requests for known and unknown emails without waiting for the mail server', async () => {
+    const fresh = uniqueEmail('slow-new');
+    expect((await h.signUp(fresh)).status).toBe(200);
+    // The verification mail is in flight, not delivered, yet the response is already here.
+    await vi.waitFor(() => expect(pending.map((m) => m.to)).toContain(fresh));
+    expect(delivered).toEqual([]);
+    expect((await h.signUp(fresh)).status).toBe(200);
+
+    const redirectTo = `${TEST_BASE_URL}/reset-password`;
+    const known = await h.request('/api/auth/request-password-reset', {
+      body: { email: fresh, redirectTo },
+    });
+    const unknown = await h.request('/api/auth/request-password-reset', {
+      body: { email: uniqueEmail('slow-unknown'), redirectTo },
+    });
+    expect(known.status).toBe(200);
+    expect(await known.json()).toEqual(await unknown.json());
+    await vi.waitFor(() => expect(pending.filter((m) => m.to === fresh)).toHaveLength(2));
+    expect(delivered).toEqual([]);
+
+    release();
+    await vi.waitFor(() => expect(delivered).toHaveLength(2));
+  });
+});
+
+describe('sessionAuth', () => {
+  let h: AuthHarness;
+  let mini: Hono<ApiEnv>;
+  beforeAll(async () => {
+    h = await createAuthHarness({ smtp: false });
+    mini = new Hono<ApiEnv>();
+    mini.onError((err, c) =>
+      err instanceof ProblemError ? problem(c, err) : problem(c, new ProblemError(500, 'internal')),
+    );
+    mini.get('/whoami', sessionAuth(h.deps.auth), (c) => c.json(c.get('user')));
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  const whoami = (cookie?: string) =>
+    mini.request(`${TEST_BASE_URL}/whoami`, cookie ? { headers: { cookie } } : {});
+  const expectUnauthorized = async (res: Response) => {
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ status: 401, code: 'unauthorized' });
+  };
+  const sessionToken = (cookie: string) =>
+    decodeURIComponent(/owlwire\.session_token=([^;]+)/.exec(cookie)?.[1] ?? '').split('.')[0] ??
+    '';
+
+  it('answers 401 problem details without a session and passes the user with one', async () => {
+    await expectUnauthorized(await whoami());
+    const u = await h.createUser();
+    const ok = await whoami(u.cookie);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({
+      id: u.id,
+      email: u.email,
+      isInstanceAdmin: false,
+      twoFactorEnabled: false,
+    });
+    // A fresh session is not refreshed, so no cookie is re-issued.
+    expect(ok.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('answers 401 for a tampered cookie', async () => {
+    const u = await h.createUser();
+    const value = /owlwire\.session_token=([^;]+)/.exec(u.cookie)?.[1] ?? '';
+    const flipped = `${value.slice(0, 5)}${value[5] === 'a' ? 'b' : 'a'}${value.slice(6)}`;
+    await expectUnauthorized(await whoami(`owlwire.session_token=${flipped}`));
+  });
+
+  it('answers 401 after sign-out', async () => {
+    const u = await h.createUser();
+    expect(
+      (await h.request('/api/auth/sign-out', { method: 'POST', body: {}, cookie: u.cookie }))
+        .status,
+    ).toBe(200);
+    await expectUnauthorized(await whoami(u.cookie));
+  });
+
+  it('answers 401 for an expired session', async () => {
+    const u = await h.createUser();
+    await h.harness.ownerPool.query(
+      "update auth_session set expires_at = now() - interval '1 minute' where token = $1",
+      [sessionToken(u.cookie)],
+    );
+    await expectUnauthorized(await whoami(u.cookie));
+  });
+
+  it('forwards the re-issued cookie when the session is extended', async () => {
+    const u = await h.createUser();
+    // Two days into a 30-day session: due for its daily extension.
+    const { rowCount } = await h.harness.ownerPool.query(
+      "update auth_session set expires_at = now() + interval '28 days' where token = $1",
+      [sessionToken(u.cookie)],
+    );
+    expect(rowCount).toBe(1);
+    const res = await whoami(u.cookie);
+    expect(res.status).toBe(200);
+    const cookie = sessionCookie(res);
+    expect(cookie.startsWith('owlwire.session_token=')).toBe(true);
+    expect(cookie).toMatch(new RegExp(`Max-Age=${SESSION_EXPIRES_IN_SECONDS}`));
+    const { rows } = await h.harness.ownerPool.query<{ days: number }>(
+      'select extract(epoch from expires_at - now()) / 86400 as days from auth_session where token = $1',
+      [sessionToken(u.cookie)],
+    );
+    expect(Number(rows[0]?.days)).toBeGreaterThan(29.9);
   });
 });
