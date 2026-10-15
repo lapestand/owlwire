@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 import type { Handler } from 'hono';
-import { ProblemError } from '../errors.js';
+import { notFound } from '../errors.js';
 import type { AppEnv } from './types.js';
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -32,17 +32,17 @@ export function staticHandler(root: string): Handler<AppEnv> {
     try {
       pathname = decodeURIComponent(new URL(c.req.url).pathname);
     } catch {
-      throw new ProblemError(404, 'not_found');
+      throw notFound();
     }
     if (API_PREFIX.test(pathname) || pathname.includes('\0')) {
-      throw new ProblemError(404, 'not_found');
+      throw notFound();
     }
     const target = resolve(absRoot, `.${pathname}`);
     if (target !== absRoot && !target.startsWith(absRoot + sep)) {
-      throw new ProblemError(404, 'not_found');
+      throw notFound();
     }
     const file = (await isFile(target)) ? target : join(absRoot, 'index.html');
-    if (!(await isFile(file))) throw new ProblemError(404, 'not_found');
+    if (!(await isFile(file))) throw notFound();
     const isIndex = file.endsWith(`${sep}index.html`);
     return c.body(new Uint8Array(await readFile(file)), 200, {
       'content-type': CONTENT_TYPES[extname(file)] ?? 'application/octet-stream',

@@ -12,6 +12,11 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 /**
  * Errors the server's services raise for the caller. They carry the status, the problem code and a fixed detail; the
  * http layer only renders them as RFC 9457 problem details, so services never depend on the http modules.
+ *
+ * Management API details follow one rule. A condition a client tells apart from others with the same code carries a
+ * snake_case reason (`personal_workspace`, `already_member`, `invalid_cursor`), which the web UI keys on. A generic
+ * error carries one of the fixed sentences below (or of the API router's), which the UI only shows; a 404 always
+ * carries NOT_FOUND_DETAIL. A detail never echoes the request.
  */
 export class ProblemError extends Error {
   readonly status: ContentfulStatusCode;

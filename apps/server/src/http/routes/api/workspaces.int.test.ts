@@ -2,6 +2,7 @@ import { listAuditActions, seedMembership } from '@owlwire/db/fixtures';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SESSION_EXPIRES_IN_SECONDS } from '../../../auth/auth.js';
 import { createAuthHooks } from '../../../auth/hooks.js';
+import { NOT_FOUND_DETAIL } from '../../../errors.js';
 import { createLogger } from '../../../logger.js';
 import { listWorkspacesForUser } from '../../../system/user-workspaces.js';
 import {
@@ -356,7 +357,7 @@ describe('management api: workspaces', () => {
     }
   });
 
-  it('documents the conflicts of creating and accepting an invitation', () => {
+  it('lists the detail reasons of invitation conflicts and audit query errors', () => {
     const doc = createApiRouter(h.deps).getOpenAPI31Document({
       openapi: '3.1.0',
       info: { title: 'test', version: '0' },
@@ -369,6 +370,10 @@ describe('management api: workspaces', () => {
       expect(create?.responses['409']?.description).toContain(detail);
     }
     expect(accept?.responses['409']?.description).toContain('personal_workspace');
+    const audit = paths['/workspaces/{workspaceId}/audit']?.get;
+    for (const detail of ['invalid_cursor', 'unknown_audit_action']) {
+      expect(audit?.responses['422']?.description).toContain(detail);
+    }
   });
 });
 
@@ -537,7 +542,8 @@ describe('management api: request hardening', () => {
     // A path no route serves is gone, signed in or not; registered routes stay behind the session (above).
     const unknown = await h.request('/api/not-a-route');
     expect(unknown.status).toBe(404);
-    expect(await unknown.json()).toMatchObject({ code: 'not_found' });
+    // The same body as an unknown resource: the web UI keys on one 404 shape.
+    expect(await unknown.json()).toMatchObject({ code: 'not_found', detail: NOT_FOUND_DETAIL });
     expect((await h.request('/api/me/not-a-route')).status).toBe(404);
   });
 

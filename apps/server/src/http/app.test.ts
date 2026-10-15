@@ -94,6 +94,7 @@ describe('errors', () => {
       title: 'Not Found',
       status: 404,
       code: 'not_found',
+      detail: NOT_FOUND_DETAIL,
     });
   });
 

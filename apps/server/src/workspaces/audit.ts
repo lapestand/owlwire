@@ -11,9 +11,9 @@ import {
 import type { BaseDeps } from '../base-deps.js';
 import { ProblemError } from '../errors.js';
 
-/** Fixed details of the 422s below; the rejected value is never echoed. */
-const INVALID_CURSOR_DETAIL = 'invalid cursor';
-const UNKNOWN_AUDIT_ACTION_DETAIL = 'unknown audit action';
+/** Fixed details of the 422s below, snake_case like every detail a client branches on; the value is never echoed. */
+const INVALID_CURSOR_DETAIL = 'invalid_cursor';
+const UNKNOWN_AUDIT_ACTION_DETAIL = 'unknown_audit_action';
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
