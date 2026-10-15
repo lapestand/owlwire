@@ -190,8 +190,8 @@ describe('owlwire admin create argument errors', () => {
     process.exitCode = undefined;
   });
 
-  /** Parses `owlwire admin create <args>`; returns the exit code commander asks for and what it printed. */
-  async function parse(args: string[]): Promise<{ code: number | undefined; output: string }> {
+  /** Parses `owlwire <argv>`; returns the exit code commander asks for and what it printed. */
+  async function parseArgv(argv: string[]): Promise<{ code: number | undefined; output: string }> {
     const written: string[] = [];
     const program = new Command().name('owlwire').exitOverride();
     program.configureOutput({
@@ -202,7 +202,7 @@ describe('owlwire admin create argument errors', () => {
       throw new Error('the database must not be touched');
     });
     try {
-      await program.parseAsync(['node', 'owlwire', 'admin', 'create', ...args]);
+      await program.parseAsync(['node', 'owlwire', ...argv]);
       return {
         code: process.exitCode === undefined ? undefined : Number(process.exitCode),
         output: written.join(''),
@@ -212,6 +212,16 @@ describe('owlwire admin create argument errors', () => {
       return { code: err.exitCode, output: written.join('') };
     }
   }
+
+  const parse = (args: string[]) => parseArgv(['admin', 'create', ...args]);
+
+  it('exits 2 for admin without a subcommand or with an unknown one, and 0 for its help', async () => {
+    expect((await parseArgv(['admin'])).code).toBe(2);
+    const unknown = await parseArgv(['admin', 'bogus']);
+    expect(unknown.code).toBe(2);
+    expect(unknown.output).toContain('bogus');
+    expect((await parseArgv(['admin', '--help'])).code).toBe(0);
+  });
 
   it('exits 2 without --email', async () => {
     const r = await parse([]);
