@@ -6,7 +6,8 @@
    hashes, sign-in and reset tokens) lives in tables that only a third database role, `owlwire_auth`, can read. The
    application role `owlwire_app` loses all access to them and keeps a read-only view of a few user columns (id,
    name, email, image). Existing `.env` files need both lines, or `docker compose up` stops with
-   `set OWLWIRE_DB_AUTH_PASSWORD in .env` and the server with a configuration error:
+   `set OWLWIRE_DB_AUTH_PASSWORD in .env` or `set OWLWIRE_AUTH_SECRET in .env` before starting anything. Without
+   compose, a missing `OWLWIRE_AUTH_SECRET` stops the server with a configuration error:
 
    ```sh
    echo "OWLWIRE_DB_AUTH_PASSWORD=$(openssl rand -hex 24)" >> .env
@@ -34,6 +35,12 @@
 4. **`OWLWIRE_PUBLIC_URL` must be `https://` for verification and password reset emails in production.** With an
    `http://` public URL the server skips those emails and logs a warning instead of sending a link that would expose
    its token in transit.
+
+   Passkeys are bound to the host name of `OWLWIRE_PUBLIC_URL`. Changing that host later (a new domain, or moving
+   from `localhost`) makes every registered passkey unusable; users then sign in with their password or a social
+   account and register a new passkey. An IP address as the host does not work for passkeys at all, and `serve`
+   warns about it. With `NODE_ENV=production`, `serve` also warns when `OWLWIRE_SMTP_URL` is `smtp://` without
+   `?requireTLS=true`; use `smtps://` or add that flag so mail with sign-in links cannot be downgraded to clear text.
 
 5. **Create an instance admin.** Registration is `closed` by default (personal profile), so nobody can sign up
    until an admin exists or the mode is changed. Run
@@ -69,9 +76,8 @@
 2. **Upgrade every Owlwire process before writing new connections.** Migration `0006` changes the default of
    `connections.config_enc_scheme` from `kek_v0` to `dek_v1`. Existing rows keep `kek_v0`, and the server re-encrypts
    them with workspace keys when it starts. During a rolling upgrade (for example separate `--role api` and
-   `--role worker` processes), an older process that still inserts connections (only the development seed command of
-   that release does) would write rows that the new code cannot decrypt. Stop or upgrade all old processes first, then
-   seed again.
+   `--role worker` processes), an older process that still inserts connections (only `dev:seed` does) would write
+   rows that the new code cannot decrypt. Stop or upgrade all old processes first, then run `dev:seed`.
 
 3. **`OWLWIRE_ALLOW_INSECURE_DB_ROLE` (local development only).** `serve` refuses to start when its database
    connection can bypass row level security: a superuser, `BYPASSRLS`, or the table owner. The usual cause is that

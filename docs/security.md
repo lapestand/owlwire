@@ -62,8 +62,10 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
 - **Startup check.** `serve` refuses to start (`AuthRoleSeparationError`) when the application role has any
   privilege on those six tables, any table-level privilege or any write privilege on `auth_user`, or `SELECT` on an
   `auth_user` column outside the list; or when the auth connection is the application role, can bypass RLS, owns
-  the tables or lacks DML on any auth table (`checkAuthRoleSeparation`). `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns
-  these into warnings outside production, as for the RLS check below.
+  the tables or lacks DML on any auth table (`checkAuthRoleSeparation`). It also refuses when either role is a member
+  of the other in any form: a grant `WITH INHERIT FALSE` (or `SET` only) adds no table privilege, so the privilege
+  checks miss it, but it still allows `SET ROLE`. `OWLWIRE_ALLOW_INSECURE_DB_ROLE` turns these into warnings outside
+  production, as for the RLS check below.
 
 ### Sign-in library hardening
 
@@ -154,8 +156,12 @@ The library only sees a `Request`, so the HTTP mount passes the address in an in
 header. By default the address is the TCP peer of the connection and `X-Forwarded-For` is ignored, because any client
 can send it. Only when the peer is listed in `OWLWIRE_TRUSTED_PROXIES` (addresses or CIDR ranges) is the header read:
 its hops are walked from the right, trusted proxies are skipped, and the first untrusted hop is the client; a hop that
-is not an address stops the walk. Behind an unlisted proxy, every user shares the proxy's limit (a denial of service
+is not an address stops the walk. A hop with a port (`203.0.113.5:4711`, `[2001:db8::1]:4711`, as some gateways
+send) is read without the port. Behind an unlisted proxy, every user shares the proxy's limit (a denial of service
 risk, not a bypass); listing a range that also contains clients would let those clients pick their own address.
+The first time `X-Forwarded-For` arrives from a peer that is not listed, the server logs one warning per process,
+without any address. An IPv4-mapped entry (`::ffff:10.0.0.0/104`) is read as its IPv4 range (`10.0.0.0/8`); a `/0`
+range, which would trust every peer, is a configuration error.
 
 `serve` cannot see a proxy, so it guesses: the server itself speaks plain HTTP, and an `https://` public URL means TLS
 ends somewhere in front of it. With an `https://` `OWLWIRE_PUBLIC_URL` and an empty `OWLWIRE_TRUSTED_PROXIES` it logs a
@@ -240,15 +246,23 @@ database credentials, so shell access to the deployment is the trust boundary.
   stored in clear. A password is never accepted as a command-line argument (it would land in shell history and the
   process list). For an existing user, a password from stdin is ignored and the command says so: promoting never
   changes credentials.
-- An invalid email or a password shorter than 10 characters exits with code `2` before connecting to the database.
+- An invalid email, or a password shorter than 10 or longer than 128 characters, exits with code `2` before connecting
+  to the database. So does `--password-stdin` when stdin is a terminal (it would wait and echo the password): pipe
+  the password instead. Exactly one trailing newline is removed from a piped password.
+- If a sign-up for the same email lands between the command's existence check and its own sign-up, the stored user
+  is not the one the command created. The command then promotes nobody and exits with code `2`; running it again
+  promotes the existing user knowingly.
 - `/api/admin/*` requires a session of an instance admin (`403 forbidden` otherwise). `GET` and `PUT
   /api/admin/settings/registration` read and store the registration mode (`closed`, `invite`, `open`); a stored value
   overrides the edition config, and every change writes a `settings.updated` audit entry with the admin as actor.
 
 At startup `serve` logs, without values, setup problems that weaken sign-in: no instance admin (with the command to
-run), no SMTP (email-less personal mode), social sign-in without `OWLWIRE_PUBLIC_URL`, an `http://` public URL with
-`NODE_ENV=production` (no `Secure` cookies, passkeys only on localhost, no verification or reset emails) and the
-trusted-proxy case above. These are warnings: the server still starts.
+run), no SMTP (email-less personal mode), social sign-in without `OWLWIRE_PUBLIC_URL`, an `http://` or unset public
+URL with `NODE_ENV=production` (no `Secure` cookies, passkeys only on localhost, no verification or reset emails), an
+IP address as the public URL host (passkeys need a domain name), an `smtp://` `OWLWIRE_SMTP_URL` without
+`requireTLS=true` with `NODE_ENV=production` (STARTTLS is then optional, so a network attacker can strip it and read
+sign-in links and the SMTP password; `smtps://` or `?requireTLS=true` closes this) and the trusted-proxy case above.
+These are warnings: the server still starts. No warning prints a URL, so SMTP credentials never reach the log.
 
 ## Background jobs
 
