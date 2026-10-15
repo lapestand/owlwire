@@ -190,7 +190,8 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
 
 ### Client address and rate limiting
 
-Sign-in attempts are rate limited per client address, with counters in `auth_rate_limit` shared by every replica.
+Sign-in attempts are rate limited per client address, with counters in `auth_rate_limit` shared by every replica. A
+refused attempt gets `429` Problem Details (`rate_limited`) with `Retry-After` in seconds.
 The library only sees a `Request`, so the HTTP mount passes the address in an internal header
 (`x-owlwire-client-ip`); a value a client sends in that header is always dropped, and the library reads no other
 header. By default the address is the TCP peer of the connection and `X-Forwarded-For` is ignored, because any client
