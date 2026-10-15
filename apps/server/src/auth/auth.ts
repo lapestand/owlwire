@@ -296,7 +296,9 @@ export function createAuth(o: CreateAuthOptions) {
       ? {
           emailVerification: {
             sendOnSignUp: true,
-            autoSignInAfterVerification: true,
+            // Following the link only verifies the address. Signing in from it would skip the password and the
+            // second factor for whoever controls the mailbox, so the user signs in normally afterwards.
+            autoSignInAfterVerification: false,
             expiresIn: EMAIL_VERIFICATION_EXPIRES_IN_SECONDS,
             sendVerificationEmail: async (
               {

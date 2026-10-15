@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   type AuthHarness,
   cookieFrom,
   createAuthHarness,
+  extractUrl,
   TEST_PASSWORD,
   type TestUser,
 } from '../test/auth-harness.js';
@@ -132,6 +133,43 @@ describe('two factor and passkeys', () => {
       cookie: cookieFrom(third),
     });
     expect(reused.status).toBe(401);
+  });
+
+  it('opens no session from the email verification link, so TOTP is still asked at sign-in', async () => {
+    const u = await h.createUser();
+    const { secret } = await enableTotp(u);
+    // An account that signed up before SMTP was configured: its email is not verified yet.
+    await h.harness.ownerPool.query('update auth_user set email_verified = false where id = $1', [
+      u.id,
+    ]);
+    const outboxBefore = h.mailer.outbox.length;
+    const send = await h.request('/api/auth/send-verification-email', { body: { email: u.email } });
+    expect(send.status).toBe(200);
+    const mail = await vi.waitFor(() => {
+      const m = h.mailer.outbox.slice(outboxBefore).find((x) => x.to === u.email);
+      if (!m) throw new Error('mail not sent yet');
+      return m;
+    });
+    const link = new URL(extractUrl(mail.text));
+
+    const verify = await h.request(`${link.pathname}${link.search}`);
+    expect(verify.status).toBeLessThan(400);
+    expect(hasSessionCookie(verify)).toBe(false);
+    const { rows } = await h.harness.ownerPool.query<{ email_verified: boolean }>(
+      'select email_verified from auth_user where id = $1',
+      [u.id],
+    );
+    expect(rows[0]?.email_verified).toBe(true);
+
+    const signIn = await h.signInResponse(u.email);
+    expect(hasSessionCookie(signIn)).toBe(false);
+    expect(await signIn.json()).toMatchObject({ twoFactorRedirect: true });
+    const byTotp = await h.request('/api/auth/two-factor/verify-totp', {
+      body: { code: nextTotp(secret) },
+      cookie: cookieFrom(signIn),
+    });
+    expect(byTotp.status).toBe(200);
+    expect(hasSessionCookie(byTotp)).toBe(true);
   });
 
   it('refuses a wrong code and rate limits second-factor attempts per client', async () => {
