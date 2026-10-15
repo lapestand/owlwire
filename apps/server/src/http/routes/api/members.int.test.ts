@@ -444,9 +444,8 @@ describe('management api: members', () => {
       await released;
     });
     // A failing lock call rejects the transaction before `locked` runs; the race then fails fast instead of hanging.
-    // The race is the real guard and already surfaces that rejection (the `finally` awaits `holder` again). The
-    // `catch` only marks `holder` as handled while nothing awaits it yet, so the runner reports the test failure
-    // rather than an unhandled rejection.
+    // The race is the real guard: it subscribes to `holder` in this same tick and surfaces that rejection, and the
+    // `finally` awaits `holder` again. The `catch` is only defensive and changes nothing while the race is in place.
     holder.catch(() => undefined);
     try {
       await Promise.race([isLocked, holder]);
