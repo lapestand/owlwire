@@ -51,10 +51,12 @@ export const WorkspaceIdParams = z.object({ workspaceId: z.string() });
 export const MemberParams = z.object({ workspaceId: z.string(), userId: z.uuid() });
 export const InvitationParams = z.object({ workspaceId: z.string(), invitationId: z.uuid() });
 
+/** `email` is present only for owner and admin viewers; plain members see id, name, image and role. */
 export const MemberSchema = z.object({
   userId: z.uuid(),
   name: z.string(),
-  email: z.string(),
+  email: z.string().optional(),
+  image: z.string().nullable(),
   role: WorkspaceRoleSchema,
   joinedAt: z.string(),
 });
