@@ -114,8 +114,8 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   reason code; this tells nothing about other accounts, since the caller already controls that provider identity.
 - **Unverified provider addresses are refused.** A provider address that the provider reports as unverified never
   creates a user and is never linked to an existing one (`user.validateUserInfo`; the callback redirects with
-  `error=email_not_verified`). Otherwise someone could register a victim's address at a provider that does not
-  verify it, sign up here first, and keep that way into the account after the victim claims it.
+  `error=account_not_linked`, see the next items). Otherwise someone could register a victim's address at a provider
+  that does not verify it, sign up here first, and keep that way into the account after the victim claims it.
 - **Account linking only while signed in.** A social sign-in never joins an existing account on its own
   (`accountLinking.disableImplicitLinking`), even when the provider and the local account both have the address
   verified: the callback answers `error=account_not_linked`. Otherwise anyone who controls the mailbox for a while
@@ -124,14 +124,41 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   (`/api/auth/link-social`), which needs a verified provider address too. No provider is trusted blindly
   (`trustedProviders` is empty), and linking a provider account with a different address is off
   (`allowDifferentEmails: false`).
-- **Remaining channel: existing account behind an unverified provider address.** When the provider reports an
-  unverified address that belongs to an existing account, the callback answers `error=account_not_linked` rather
-  than `email_not_verified`, so someone who can put an arbitrary unverified address on a provider account learns
-  that an Owlwire account exists for it. Nothing is linked or created. It is the same kind of signal as the
-  unverified-email `403` above, and is accepted.
+- **One answer whether or not an account exists.** An unverified provider address fails differently in the library
+  depending on whether an account has it: with no account, user creation is refused (`email_not_verified`, with a
+  description); with one, linking is refused (`account_not_linked`). Some providers (Discord, for example) let anyone
+  put an arbitrary unverified address on their account, so the difference would tell anyone whether an Owlwire
+  account exists for an address. An after hook on `/api/auth/callback/*` (`apps/server/src/auth/second-factor-gate.ts`)
+  rewrites both to `error=account_not_linked` with no `error_description`, on the default error page and on an
+  `errorCallbackURL` alike. The library appends its code to that page's own query, so every `error` value is checked
+  and, when one of them is either code, all `error` and `error_description` values are replaced by the single
+  `error=account_not_linked`; a page that already carries `?error=` cannot push the library's code out of sight. The
+  two answers are equal in status, cookies and redirect, not in timing: the path with no account does a little more
+  database work, which is small next to the two provider requests every probe costs. This applies to an explicit link
+  while signed in too, where the code is then less specific. A refused social sign-up of a provider-verified address
+  still names its reason; that address belongs to the caller.
 - **Two-factor authentication.** TOTP (issuer `Owlwire`) with one-time backup codes; enabling it requires the account
   password. Every `/api/auth/two-factor/*` endpoint is limited to 3 requests per 10 seconds per client address, and an
-  account is locked for 15 minutes after 10 consecutive failed second-factor checks from any address.
+  account is locked for 15 minutes after 10 consecutive failed second-factor checks from any address; a pending
+  sign-in also ends after 5 failed codes. While locked, even the right TOTP or backup code is answered
+  `429 ACCOUNT_TEMPORARILY_LOCKED`. Turning it off (`/api/auth/two-factor/disable`) needs the account password and a
+  session that is still live in the database (a revoked or expired session is refused); it does not need a recently
+  created session, because the password is asked for again.
+- **Each TOTP code is accepted once.** The library accepts a code for about 90 seconds (the current 30-second step
+  and one step either side) and keeps no record of codes already used, so on its own a code seen by someone else
+  (over a shoulder, for example) would still work within that time. A before hook on
+  `/api/auth/two-factor/verify-totp` (`apps/server/src/auth/totp-single-use.ts`) finds the user as the plugin does
+  (the session, or the pending sign-in behind the signed `two_factor` cookie, which covers the social second-factor
+  step too) and checks the code against the user's secret. A wrong code is left to the plugin, which counts it. A
+  right code is recorded in `auth_verification` under a primary key derived from the user and the code's time step,
+  until the step stops being accepted. The insert is the gate: only the request whose insert succeeds goes on, and a
+  later or concurrent request with a code for that step gets `401 INVALID_CODE` before any session exists. That
+  includes the code that turned TOTP on. A refused reuse does not count towards the attempt cap or the lockout. The
+  code is recorded before the plugin runs, so a right code that the plugin then refuses for another reason (a locked
+  account, a challenge whose 5 attempts are used up, a failure while creating the session) is spent too; the user
+  waits up to 30 seconds for the next one. The hook relies on the plugin's TOTP defaults (SHA-1, 6 digits,
+  30 seconds, a window of one step) and on its internal `two_factor` cookie and `2fa-` challenge rows; the
+  integration tests fail if either changes.
 - **Where the second factor applies.** A user who has turned TOTP on is asked for it after an email and password
   sign-in (the library) and after a social sign-in (`apps/server/src/auth/second-factor-gate.ts`): the session the
   provider sign-in created is revoked and its cookies dropped, and the two-factor plugin's own challenge is issued

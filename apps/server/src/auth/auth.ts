@@ -14,6 +14,7 @@ import { isBootstrap } from './bootstrap-context.js';
 import { passkeyOptions, passkeyUserVerificationRequest } from './passkey.js';
 import { socialSecondFactorGate } from './second-factor-gate.js';
 import { buildSocialProviders } from './social.js';
+import { totpSingleUse } from './totp-single-use.js';
 
 export const AUTH_BASE_PATH = '/api/auth';
 export const AUTH_COOKIE_PREFIX = 'owlwire';
@@ -331,6 +332,8 @@ export function createAuth(o: CreateAuthOptions) {
       }),
       // Second factor after social sign-in too; listed after twoFactor, whose challenge it reuses.
       socialSecondFactorGate(),
+      // Each TOTP code is accepted once (the two-factor plugin would accept it again within its window).
+      totpSingleUse(),
       passkey(passkeyOptions(o.env.baseURL)),
       passkeyUserVerificationRequest(),
     ],
