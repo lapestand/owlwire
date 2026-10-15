@@ -68,8 +68,11 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
 ### Sign-in library hardening
 
 - Reset and verification identifiers are stored hashed (`verification.storeIdentifier: 'hashed'`), so a leaked
-  `auth_verification` row cannot be replayed as a reset link. Provider access, refresh and id tokens are encrypted
-  with `OWLWIRE_AUTH_SECRET` before they are stored (`account.encryptOAuthTokens`). 2FA secrets and backup codes are
+  `auth_verification` row cannot be replayed as a reset link. Provider access and refresh tokens are encrypted
+  with `OWLWIRE_AUTH_SECRET` before they are stored (`account.encryptOAuthTokens`). Id tokens (Google) are stored as
+  the provider sent them: the library does not encrypt them. They cannot be replayed to sign in, because id-token
+  sign-in (`POST /api/auth/sign-in/social` with an `idToken`) is turned off for Google (`disableIdTokenSignIn`), and
+  only the auth role can read `auth_account`. 2FA secrets and backup codes are
   stored encrypted (the library default, set explicitly). The email or SMS OTP method is not offered (no delivery
   function is configured); its codes are configured to be stored hashed (`otpOptions.storeOTP: 'hashed'`) should it
   ever be enabled.
@@ -109,12 +112,14 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   creates a user and is never linked to an existing one (`user.validateUserInfo`; the callback redirects with
   `error=email_not_verified`). Otherwise someone could register a victim's address at a provider that does not
   verify it, sign up here first, and keep that way into the account after the victim claims it.
-- **Account linking.** No provider is trusted blindly (`accountLinking.trustedProviders` is empty). A social sign-in
-  joins an existing account with the same address only when the provider has verified the address *and* the local
-  account's address is verified (the library's `requireLocalEmailVerified` default). Without SMTP no local address is
-  verified, so this implicit link never happens; the user links the provider explicitly while signed in
-  (`/api/auth/link-social`), which also requires a verified provider address. Linking a provider account with a
-  different address is off (`allowDifferentEmails: false`).
+- **Account linking only while signed in.** A social sign-in never joins an existing account on its own
+  (`accountLinking.disableImplicitLinking`), even when the provider and the local account both have the address
+  verified: the callback answers `error=account_not_linked`. Otherwise anyone who controls the mailbox for a while
+  could add the address to a provider account of their own, sign in through it past the password and the second
+  factor, and keep that link after the owner resets the password. A user links a provider only while signed in
+  (`/api/auth/link-social`), which needs a verified provider address too. No provider is trusted blindly
+  (`trustedProviders` is empty), and linking a provider account with a different address is off
+  (`allowDifferentEmails: false`).
 - **Remaining channel: existing account behind an unverified provider address.** When the provider reports an
   unverified address that belongs to an existing account, the callback answers `error=account_not_linked` rather
   than `email_not_verified`, so someone who can put an arbitrary unverified address on a provider account learns
@@ -123,13 +128,21 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
 - **Two-factor authentication.** TOTP (issuer `Owlwire`) with one-time backup codes; enabling it requires the account
   password. Every `/api/auth/two-factor/*` endpoint is limited to 3 requests per 10 seconds per client address, and an
   account is locked for 15 minutes after 10 consecutive failed second-factor checks from any address.
-- **Where the second factor applies.** The library asks for the second factor after an email and password sign-in.
-  A social sign-in or a passkey sign-in does not ask for it: the provider (with its own 2FA) or the passkey (a
-  possession factor bound to this site) is the proof. A user who wants every sign-in behind TOTP should not link a
-  provider account.
+- **Where the second factor applies.** A user who has turned TOTP on is asked for it after an email and password
+  sign-in (the library) and after a social sign-in (`apps/server/src/auth/second-factor-gate.ts`): the session the
+  provider sign-in created is revoked and its cookies dropped, and the two-factor plugin's own challenge is issued
+  instead, a signed `two_factor` cookie valid for 10 minutes. The callback then redirects to the web app's code step
+  (`/sign-in/two-factor?callbackURL=…`), and a TOTP or backup code posted to `/api/auth/two-factor/verify-totp` or
+  `/verify-backup-code` completes the sign-in, under the same attempt cap and account lockout. Whether the provider
+  account has a second factor of its own is not something Owlwire can know, so it is not relied on. Enabling TOTP
+  needs the account password, so it is available to accounts that have one. A passkey sign-in stands in for TOTP,
+  because the passkey must prove two factors itself (next item).
 - **Passkeys.** The relying party ID is the host of `OWLWIRE_PUBLIC_URL` and the expected origin is that URL's
   origin, configured on the server, so a response from another origin is refused (the origin a client sends is never
-  used). Registering a passkey requires a fresh session. A credential id can be registered once
+  used). User verification (the authenticator's PIN or biometric) is required: registration and sign-in options ask
+  for it (`userVerification: 'required'`), and the server refuses any registration or sign-in response whose
+  authenticator data does not report it (`USER_VERIFICATION_REQUIRED`), so a security key without a PIN cannot sign
+  in on possession alone. Registering a passkey requires a fresh session. A credential id can be registered once
   (`auth_passkey_credential_id_unique`). Changing `OWLWIRE_PUBLIC_URL` to another host invalidates every registered
   passkey.
 
