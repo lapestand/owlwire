@@ -37,6 +37,10 @@ The sign-in library (Better Auth) keeps its data in the `auth_*` tables. They be
 workspace, so they have no `workspace_id` and no tenant RLS: the library reads and writes them outside any
 `withTenant` or `withSystem` scope, and a system-only policy would break sign-up. Grants protect them instead.
 
+- **What the split protects against.** It limits what SQL running on the application connection can reach: a SQL
+  injection or a query bug in tenant code cannot read sessions, password hashes or tokens, or make a user an
+  instance admin. It does not protect against a compromised server process, which holds the URLs (and passwords) of
+  both roles.
 - **Three roles.** The owner (`owlwire`) runs migrations. The application role (`owlwire_app`) runs every request,
   job and system lookup. The auth role (`owlwire_auth`, `OWLWIRE_AUTH_DATABASE_URL`) is used only by the sign-in
   library's adapter and by the `auth_user` system functions (`apps/server/src/system/users.ts`). `owlwire migrate`
@@ -82,8 +86,16 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   logged. The page the user lands on after the link must be on our own origin. A mail that cannot be built or sent
   is logged with its kind and error class only (no link, address or message) and never fails the request.
 - Sign-in answers an unknown email and a wrong password with the same `401` body, and hashes the submitted password
-  in both cases. With email verification on, a sign-up for a taken email gets the same `200` shape as a new one, and
-  a password reset request gets the same answer whether or not the email exists.
+  in both cases. Sign-up never signs in (`autoSignIn: false`): a new email, a taken email and a registration the
+  registration rules refuse all get the same `200` with `token: null` and no cookie, with or without SMTP, and the
+  client signs in with a second request. A password reset request gets the same answer whether or not the email
+  exists. Verification and reset emails are sent in the background, after the response, so the mail server's round
+  trip does not show in the response time either. Small timing differences remain (a new user is inserted, a taken
+  email is not).
+- **Remaining channel: the unverified-email `403`.** With SMTP on, signing in to an account whose email is not yet
+  verified answers `403 EMAIL_NOT_VERIFIED` instead of `401`. It confirms that the account exists, but only to
+  someone who already knows its password, and the user needs it to understand why sign-in fails. It is kept on
+  purpose.
 
 ### Client address and rate limiting
 
