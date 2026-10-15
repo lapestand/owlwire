@@ -92,4 +92,5 @@ export const ProblemDetails = z.object({
 });
 export type ProblemDetails = z.infer<typeof ProblemDetails>;
 export * from './api/account.js';
+export * from './api/audit.js';
 export * from './api/workspaces.js';
