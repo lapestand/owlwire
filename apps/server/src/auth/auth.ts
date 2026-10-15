@@ -23,6 +23,11 @@ export const MIN_PASSWORD_LENGTH = 10;
  * socket (or a trusted proxy's forwarded header) and drops any value the client sent.
  */
 export const AUTH_CLIENT_IP_HEADER = 'x-owlwire-client-ip';
+/**
+ * Request header carrying an invitation token (`ow_inv_...`) on `POST /api/auth/sign-up/email`. In invite registration
+ * mode an email sign-up needs a pending invitation for the same address; the token proves it.
+ */
+export const INVITATION_HEADER = 'x-owlwire-invitation';
 
 /** Sessions live 30 days; Better Auth extends expiry at most once per day of activity. */
 export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 30;
@@ -57,8 +62,19 @@ export class RegistrationDeniedError extends Error {
   }
 }
 
+/** Where a user is being created, as the registration gate sees it. */
+export interface UserCreateContext {
+  /**
+   * The auth endpoint creating the user: '/sign-up/email', '/callback/:id' for a social sign-in, and so on. Null when
+   * no endpoint context is known.
+   */
+  path: string | null;
+  /** The invitation header of the request, if any. */
+  invitationToken: string | null;
+}
+
 export interface AuthHooks {
-  beforeUserCreate(email: string): Promise<void>;
+  beforeUserCreate(email: string, context: UserCreateContext): Promise<void>;
   afterUserCreate(user: { id: string; name: string; email: string }): Promise<void>;
 }
 
@@ -74,8 +90,8 @@ export interface CreateAuthOptions {
   mailer: Mailer | null;
   logger: Logger;
   hooks: AuthHooks;
-  /** Defaults to process.env.NODE_ENV. Outside 'production' mail links may use http (local development). */
-  nodeEnv?: string | undefined;
+  /** Whether emailed links may use an http public URL (ServerConfig.allowHttpLinks). */
+  allowHttpLinks: boolean;
 }
 
 type LinkKind = 'verify_email' | 'reset_password';
@@ -145,7 +161,7 @@ function mailFailure(kind: string, err: unknown): Record<string, unknown> {
 
 export function createAuth(o: CreateAuthOptions) {
   const emailEnabled = o.mailer !== null;
-  const allowHttpLinks = ('nodeEnv' in o ? o.nodeEnv : process.env.NODE_ENV) !== 'production';
+  const allowHttpLinks = o.allowHttpLinks;
   const log = o.logger.child({ component: 'auth' });
 
   /**
@@ -321,10 +337,18 @@ export function createAuth(o: CreateAuthOptions) {
     databaseHooks: {
       user: {
         create: {
-          before: async (user: { email: string } & Record<string, unknown>) => {
+          // The library passes the endpoint context of the request that creates the user (path and request headers),
+          // or null outside an endpoint.
+          before: async (
+            user: { email: string } & Record<string, unknown>,
+            ctx?: { path?: string; headers?: Headers | undefined } | null,
+          ) => {
             const email = user.email.trim().toLowerCase();
             try {
-              await o.hooks.beforeUserCreate(email);
+              await o.hooks.beforeUserCreate(email, {
+                path: ctx?.path ?? null,
+                invitationToken: ctx?.headers?.get(INVITATION_HEADER) ?? null,
+              });
             } catch (err) {
               if (err instanceof RegistrationDeniedError) {
                 // Stops the insert. Email sign-up answers it with the library's generic 200 (autoSignIn is off),

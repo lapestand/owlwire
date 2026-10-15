@@ -294,7 +294,12 @@ describe('auth email failures', () => {
     await h.close();
   });
 
-  const signUpWith = async (send: Mailer['send'], nodeEnv = 'test', baseURL = TEST_BASE_URL) => {
+  // allowHttpLinks false is what loadConfig sets under NODE_ENV=production.
+  const signUpWith = async (
+    send: Mailer['send'],
+    allowHttpLinks = true,
+    baseURL = TEST_BASE_URL,
+  ) => {
     const { lines, logger } = captureLogger();
     const auth = createAuth({
       db: h.deps.authDb,
@@ -305,7 +310,7 @@ describe('auth email failures', () => {
       mailer: { send },
       logger,
       hooks: noopAuthHooks,
-      nodeEnv,
+      allowHttpLinks,
     });
     const email = uniqueEmail('mailfail');
     const res = await auth.handler(
@@ -342,7 +347,7 @@ describe('auth email failures', () => {
 
   it('sends no http link in production', async () => {
     const sent: string[] = [];
-    const { res, lines } = await signUpWith(async () => void sent.push('sent'), 'production');
+    const { res, lines } = await signUpWith(async () => void sent.push('sent'), false);
     expect(res.status).toBe(200);
     const log = await logged(lines, '"reason":"AuthLinkError"');
     expect(sent).toEqual([]);
@@ -353,7 +358,7 @@ describe('auth email failures', () => {
     const outbox = createMemoryMailer();
     const { res, email } = await signUpWith(
       (msg) => outbox.send(msg),
-      'production',
+      false,
       'https://owlwire.example',
     );
     expect(res.status).toBe(200);
@@ -430,6 +435,7 @@ describe('better auth hardening', () => {
       mailer: null,
       logger: h.deps.logger,
       hooks: noopAuthHooks,
+      allowHttpLinks: true,
     });
     expect(secure.options.advanced?.useSecureCookies).toBe(true);
     const email = uniqueEmail('secure');
@@ -488,6 +494,7 @@ describe('better auth hardening', () => {
       mailer: null,
       logger: h.deps.logger,
       hooks: noopAuthHooks,
+      allowHttpLinks: true,
     });
     const viaReplica = await replica.handler(
       new Request(`${TEST_BASE_URL}/api/auth/sign-in/email`, {
@@ -523,6 +530,7 @@ describe('better auth hardening', () => {
       mailer: null,
       logger,
       hooks: noopAuthHooks,
+      allowHttpLinks: true,
     });
     const email = uniqueEmail('logged');
     const res = await auth.handler(
