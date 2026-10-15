@@ -1,5 +1,10 @@
 import { FakeClock } from '@owlwire/core';
-import { listAuditActions, seedCommunityWorkspace, seedMembership } from '@owlwire/db/fixtures';
+import {
+  listAuditActions,
+  seedCommunityWorkspace,
+  seedInvitation,
+  seedMembership,
+} from '@owlwire/db/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createLogger } from '../../../logger.js';
 import { MailMessageError } from '../../../mail/mailer.js';
@@ -11,6 +16,7 @@ import {
   uniqueEmail,
 } from '../../../test/auth-harness.js';
 import { type LockedChange, setRole, underWorkspaceLock } from '../../../test/workspace-lock.js';
+import { INVITATION_TTL_MS, newInvitationToken } from '../../../workspaces/invitation-token.js';
 
 interface Created {
   invitation: { id: string; email: string; role: string };
@@ -230,6 +236,31 @@ describe('management api: invitations', () => {
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ detail: 'email_not_verified' });
     expect(await pendingIds(ws, owner.cookie)).toContain(created.invitation.id);
+  });
+
+  it('refuses to accept an invitation of a personal workspace', async () => {
+    const owner = await h.createUser();
+    const personal = owner.personalWorkspaceId ?? '';
+    const email = uniqueEmail('into-personal');
+    const { token, tokenHash } = newInvitationToken();
+    // Creation refuses this; the row stands for one made before that rule.
+    await seedInvitation(h.deps.db, {
+      workspaceId: personal,
+      email,
+      tokenHash,
+      invitedBy: owner.id,
+      expiresAt: new Date(clock.now().getTime() + INVITATION_TTL_MS),
+    });
+    const joiner = await h.createUser(email);
+    const res = await accept(token, joiner.cookie);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ detail: 'personal_workspace' });
+    const { rows } = await h.harness.ownerPool.query(
+      'SELECT 1 FROM memberships WHERE workspace_id = $1 AND user_id = $2',
+      [personal, joiner.id],
+    );
+    expect(rows).toHaveLength(0);
+    expect(await listAuditActions(h.deps.db, personal)).not.toContain('invitation.accepted');
   });
 
   it('refuses acceptance by a different account', async () => {
