@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { systemClock } from '@owlwire/core';
 import { createKeyring } from '@owlwire/crypto';
 import { openDatabase } from '@owlwire/db';
-import { Command, Option } from 'commander';
+import { Command, CommanderError, Option } from 'commander';
 import { registerAdminCommands } from './cli/admin.js';
 import { ConfigError, loadConfig, ROLES, type Role, type ServerConfig } from './config/load.js';
 import { createLogger, safeErrorText } from './logger.js';
@@ -95,6 +95,8 @@ keys
 registerAdminCommands(program, () => readConfig());
 
 program.parseAsync(process.argv).catch((err: unknown) => {
+  // Raised only by commands with an exit override, after commander printed the usage error or the help.
+  if (err instanceof CommanderError) process.exit(err.exitCode);
   if (err instanceof ConfigError) {
     process.stderr.write(`configuration error: ${err.message}\n`);
     process.exit(2);

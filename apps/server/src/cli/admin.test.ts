@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { Command, CommanderError } from 'commander';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   type BootstrapInstanceAdminResult,
   ConcurrentAdminUserError,
@@ -8,6 +9,7 @@ import {
   type AdminCreateIo,
   formatAdminCreateResult,
   readPassword,
+  registerAdminCommands,
   runAdminCreate,
 } from './admin.js';
 
@@ -180,5 +182,58 @@ describe('runAdminCreate', () => {
     expect(await runAdminCreate({ email: 'root@x.test', passwordStdin: true }, f.io)).toBe(0);
     expect(f.err.join('\n')).toContain('password from stdin was ignored');
     expect([...f.out, ...f.err].join('\n')).not.toContain('a-very-long-password');
+  });
+});
+
+describe('owlwire admin create argument errors', () => {
+  afterEach(() => {
+    process.exitCode = undefined;
+  });
+
+  /** Parses `owlwire admin create <args>`; returns the exit code commander asks for and what it printed. */
+  async function parse(args: string[]): Promise<{ code: number | undefined; output: string }> {
+    const written: string[] = [];
+    const program = new Command().name('owlwire').exitOverride();
+    program.configureOutput({
+      writeOut: (s) => void written.push(s),
+      writeErr: (s) => void written.push(s),
+    });
+    registerAdminCommands(program, () => {
+      throw new Error('the database must not be touched');
+    });
+    try {
+      await program.parseAsync(['node', 'owlwire', 'admin', 'create', ...args]);
+      return {
+        code: process.exitCode === undefined ? undefined : Number(process.exitCode),
+        output: written.join(''),
+      };
+    } catch (err) {
+      if (!(err instanceof CommanderError)) throw err;
+      return { code: err.exitCode, output: written.join('') };
+    }
+  }
+
+  it('exits 2 without --email', async () => {
+    const r = await parse([]);
+    expect(r.code).toBe(2);
+    expect(r.output).toContain('--email');
+  });
+
+  it('exits 2 when --email has no value', async () => {
+    expect((await parse(['--email'])).code).toBe(2);
+  });
+
+  it('exits 2 on an empty --email', async () => {
+    expect((await parse(['--email', ''])).code).toBe(2);
+  });
+
+  it('exits 2 on an unknown option', async () => {
+    expect((await parse(['--email', 'a@example.com', '--admin'])).code).toBe(2);
+  });
+
+  it('exits 0 for --help', async () => {
+    const r = await parse(['--help']);
+    expect(r.code).toBe(0);
+    expect(r.output).toContain('--password-stdin');
   });
 });
