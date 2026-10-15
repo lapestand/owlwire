@@ -77,7 +77,8 @@ Registration is closed by default. Create the first instance admin; the generate
 
 ```sh
 docker compose exec owlwire owlwire admin create --email you@example.com
-# or choose the password yourself (read it into $PASSWORD first, so it stays out of the shell history):
+# or choose the password yourself; read prompts without echoing it, so it stays out of the shell history:
+read -rs PASSWORD
 printf '%s' "$PASSWORD" | docker compose exec -T owlwire owlwire admin create --email you@example.com --password-stdin
 ```
 
