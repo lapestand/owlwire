@@ -1,6 +1,7 @@
 import { FakeClock } from '@owlwire/core';
 import { listAuditActions, seedCommunityWorkspace, seedMembership } from '@owlwire/db/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createLogger } from '../../../logger.js';
 import { MailMessageError } from '../../../mail/mailer.js';
 import {
   type AuthHarness,
@@ -77,6 +78,36 @@ describe('management api: invitations', () => {
     const dup = await invite(ws, { email: member.email.toUpperCase() }, owner.cookie);
     expect(dup.status).toBe(409);
     expect(await dup.json()).toMatchObject({ detail: 'already_member' });
+  });
+
+  it('lets an admin invite and cancel, but not invite an owner', async () => {
+    const { ws, owner } = await setup();
+    const admin = await h.createUser();
+    await seedMembership(h.deps.db, ws, admin.id, 'admin');
+    expect((await invite(ws, { email: uniqueEmail(), role: 'owner' }, admin.cookie)).status).toBe(
+      422,
+    );
+    const res = await invite(ws, { email: uniqueEmail('by-admin'), role: 'admin' }, admin.cookie);
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as Created;
+    expect(created.invitation.role).toBe('admin');
+    const del = await h.request(`/api/workspaces/${ws}/invitations/${created.invitation.id}`, {
+      method: 'DELETE',
+      cookie: admin.cookie,
+    });
+    expect(del.status).toBe(204);
+    expect(await pendingIds(ws, owner.cookie)).not.toContain(created.invitation.id);
+    const actions = await listAuditActions(h.deps.db, ws);
+    expect(actions).toEqual(expect.arrayContaining(['invitation.created', 'invitation.revoked']));
+  });
+
+  it('refuses invitations into a personal workspace', async () => {
+    const owner = await h.createUser();
+    const personal = owner.personalWorkspaceId ?? '';
+    const res = await invite(personal, { email: uniqueEmail('personal') }, owner.cookie);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ detail: 'personal_workspace' });
+    expect(await listAuditActions(h.deps.db, personal)).not.toContain('invitation.created');
   });
 
   it('keeps the invitation list and cancellation from plain members', async () => {
@@ -160,6 +191,45 @@ describe('management api: invitations', () => {
     const actions = await listAuditActions(h.deps.db, ws);
     expect(actions.filter((a) => a === 'invitation.accepted')).toHaveLength(1);
     expect(actions).toContain('member.added');
+  });
+
+  it('lets an existing member accept without changing the role', async () => {
+    const { ws, owner } = await setup();
+    const email = uniqueEmail('already-in');
+    const created = (await (await invite(ws, { email }, owner.cookie)).json()) as Created;
+    // The address joined another way while the invitation was pending.
+    const joiner = await h.createUser(email);
+    await seedMembership(h.deps.db, ws, joiner.id, 'admin');
+    const addedBefore = (await listAuditActions(h.deps.db, ws)).filter(
+      (a) => a === 'member.added',
+    ).length;
+    const res = await accept(tokenOf(created), joiner.cookie);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ workspaceId: ws, role: 'admin' });
+    const { rows } = await h.harness.ownerPool.query(
+      'SELECT role FROM memberships WHERE workspace_id = $1 AND user_id = $2',
+      [ws, joiner.id],
+    );
+    expect(rows).toEqual([{ role: 'admin' }]);
+    const actions = await listAuditActions(h.deps.db, ws);
+    expect(actions.filter((a) => a === 'member.added')).toHaveLength(addedBefore);
+    expect(actions).toContain('invitation.accepted');
+    expect(await pendingIds(ws, owner.cookie)).toHaveLength(0);
+    expect((await lookup(tokenOf(created))).status).toBe(404);
+  });
+
+  it('refuses acceptance with an unverified email when SMTP is configured', async () => {
+    const { ws, owner } = await setup();
+    const email = uniqueEmail('unverified');
+    const created = (await (await invite(ws, { email }, owner.cookie)).json()) as Created;
+    const joiner = await h.createUser(email);
+    await h.harness.ownerPool.query('UPDATE auth_user SET email_verified = false WHERE id = $1', [
+      joiner.id,
+    ]);
+    const res = await accept(tokenOf(created), joiner.cookie);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ detail: 'email_not_verified' });
+    expect(await pendingIds(ws, owner.cookie)).toContain(created.invitation.id);
   });
 
   it('refuses acceptance by a different account', async () => {
@@ -290,8 +360,10 @@ describe('management api: invitations', () => {
 
 describe('management api: invitations with a failing smtp server', () => {
   let h: AuthHarness;
+  const lines: string[] = [];
   beforeAll(async () => {
     h = await createAuthHarness({
+      logger: createLogger('debug', { write: (line: string) => void lines.push(line) }),
       mailer: {
         async send(msg) {
           if (msg.to.startsWith('refused-')) throw new MailMessageError('refused');
@@ -315,6 +387,31 @@ describe('management api: invitations with a failing smtp server', () => {
     const body = (await res.json()) as Created;
     expect(body.emailSent).toBe(false);
     expect(body.acceptUrl).toContain('/invite/ow_inv_');
+  });
+
+  it('logs a failed invitation email without the token, link or address', async () => {
+    const owner = await h.createUser();
+    const ws = await seedCommunityWorkspace(h.deps.db, owner.id);
+    const email = uniqueEmail('quiet');
+    const from = lines.length;
+    const res = await h.request(`/api/workspaces/${ws}/invitations`, {
+      body: { email, locale: 'en' },
+      cookie: owner.cookie,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Created;
+    const logged = lines.slice(from).filter((l) => l.includes('invitation email not sent'));
+    expect(logged).toHaveLength(1);
+    expect(JSON.parse(logged[0] ?? '{}')).toMatchObject({
+      reason: 'transport',
+      workspaceId: ws,
+      invitationId: body.invitation.id,
+    });
+    for (const line of lines.slice(from)) {
+      expect(line).not.toContain('ow_inv_');
+      expect(line).not.toContain(tokenOf(body));
+      expect(line.toLowerCase()).not.toContain(email.toLowerCase());
+    }
   });
 
   it('reports a message the mailer refuses as not sent', async () => {

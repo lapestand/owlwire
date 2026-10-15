@@ -26,10 +26,10 @@ async function findLive(deps: Pick<BaseDeps, 'db'>, userId: string): Promise<str
 function create(
   deps: Pick<BaseDeps, 'db'>,
   user: { id: string; name: string },
+  actor: AuditActor,
   id: string,
   slug: string,
 ): Promise<string> {
-  const actor: AuditActor = { kind: 'user', userId: user.id };
   return withTenant(deps.db, tenantScope(id), async (t) => {
     const ws = await createWorkspace(
       t,
@@ -49,28 +49,29 @@ function create(
  *
  * The personal slug is derived from the user id. A deleted personal workspace keeps that slug (slugs stay taken after
  * a soft delete), so its replacement takes the personal slug derived from its own workspace id.
+ *
+ * The audit entries name `actor`: the user by default, the system when the command line or a repair creates it.
  */
 export async function ensurePersonalWorkspace(
   deps: Pick<BaseDeps, 'db'>,
   user: { id: string; name: string },
+  actor: AuditActor = { kind: 'user', userId: user.id },
 ): Promise<string> {
   const existing = await findLive(deps, user.id);
   if (existing) return existing;
-  let slugTaken = false;
   try {
-    return await create(deps, user, newId(), personalSlug(user.id));
+    return await create(deps, user, actor, newId(), personalSlug(user.id));
   } catch (err) {
     if (!(err instanceof RepoConflictError)) throw err;
     const winner = await findLive(deps, user.id);
     if (winner) return winner;
     if (err.constraint !== WORKSPACE_SLUG_UNIQUE) throw err;
-    slugTaken = true;
   }
   const id = newId();
   try {
-    return await create(deps, user, id, personalSlug(id));
+    return await create(deps, user, actor, id, personalSlug(id));
   } catch (err) {
-    if (!(err instanceof RepoConflictError) || !slugTaken) throw err;
+    if (!(err instanceof RepoConflictError)) throw err;
     const winner = await findLive(deps, user.id);
     if (winner) return winner;
     throw err;

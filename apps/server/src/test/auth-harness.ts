@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Clock, RegistrationMode } from '@owlwire/core';
 import { SYSTEM_ACTOR } from '@owlwire/db';
-import type { AuthHooks } from '../auth/auth.js';
+import type { Logger } from 'pino';
+import { type AuthHooks, INVITATION_HEADER } from '../auth/auth.js';
 import type { BaseDeps, Deps } from '../deps.js';
 import type { createApp } from '../http/app.js';
 import { createMemoryMailer, type Mailer, type MemoryMailer } from '../mail/mailer.js';
@@ -24,6 +25,8 @@ export interface HarnessOptions {
   trustedProxies?: string[];
   /** Stored registration mode; defaults to 'open' so tests can sign users up. */
   registration?: RegistrationMode;
+  /** Server logger, for tests that inspect what was logged. */
+  logger?: Logger;
 }
 /** @public Request options of AuthHarness.request. */
 export interface HarnessRequest {
@@ -47,16 +50,23 @@ export interface TestUser {
   /** Null when the post sign-up hook did not create one (a test hook that fails or skips it). */
   personalWorkspaceId: string | null;
 }
+/** @public Options of AuthHarness.signUp. */
+export interface SignUpOptions {
+  name?: string;
+  password?: string;
+  /** Sent in the invitation header; invite-mode email sign-up needs it. */
+  invitationToken?: string;
+}
 export interface AuthHarness {
   harness: Harness;
   deps: Deps;
   app: ReturnType<typeof createApp>;
   mailer: MemoryMailer;
   request(path: string, init?: HarnessRequest): Promise<Response>;
-  signUp(email: string, opts?: { name?: string; password?: string }): Promise<Response>;
+  signUp(email: string, opts?: SignUpOptions): Promise<Response>;
   signInResponse(email: string, password?: string): Promise<Response>;
   signIn(email: string, password?: string): Promise<string>;
-  createUser(email?: string, opts?: { name?: string }): Promise<TestUser>;
+  createUser(email?: string, opts?: { name?: string; invitationToken?: string }): Promise<TestUser>;
   close(): Promise<void>;
 }
 
@@ -91,6 +101,7 @@ export async function createAuthHarness(opts: HarnessOptions = {}): Promise<Auth
   const harness = await createHarness({
     ...(opts.clock ? { clock: opts.clock } : {}),
     ...(opts.trustedProxies ? { config: { trustedProxies: opts.trustedProxies } } : {}),
+    ...(opts.logger ? { logger: opts.logger } : {}),
     auth: {
       smtp,
       ...(opts.env ? { env: opts.env } : {}),
@@ -118,9 +129,10 @@ export async function createAuthHarness(opts: HarnessOptions = {}): Promise<Auth
     );
   };
 
-  const signUp = (email: string, o: { name?: string; password?: string } = {}) =>
+  const signUp = (email: string, o: SignUpOptions = {}) =>
     request('/api/auth/sign-up/email', {
       body: { email, password: o.password ?? TEST_PASSWORD, name: o.name ?? 'Test User' },
+      ...(o.invitationToken ? { headers: { [INVITATION_HEADER]: o.invitationToken } } : {}),
     });
 
   const signInResponse = (email: string, password = TEST_PASSWORD) =>
@@ -134,10 +146,13 @@ export async function createAuthHarness(opts: HarnessOptions = {}): Promise<Auth
 
   const createUser = async (
     email = uniqueEmail(),
-    o: { name?: string } = {},
+    o: { name?: string; invitationToken?: string } = {},
   ): Promise<TestUser> => {
     const name = o.name ?? 'Test User';
-    const res = await signUp(email, { name });
+    const res = await signUp(email, {
+      name,
+      ...(o.invitationToken ? { invitationToken: o.invitationToken } : {}),
+    });
     if (res.status !== 200) throw new Error(`sign-up failed: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as { user: { id: string } };
     if (deps.mailer) await markUserEmailVerified(deps, body.user.id);
