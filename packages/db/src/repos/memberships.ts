@@ -95,7 +95,16 @@ export async function getMembershipContext(
   return rows[0] ?? null;
 }
 
-export async function listMembers(t: TenantTx): Promise<MemberListItem[]> {
+/**
+ * The members of the scope's workspace, oldest first. `userIds` narrows the list to those users (a user who is not a
+ * member, and an id that is not a UUID, simply do not match; an empty list matches nobody).
+ */
+export async function listMembers(
+  t: TenantTx,
+  filter: { userIds?: readonly string[] } = {},
+): Promise<MemberListItem[]> {
+  const userIds = filter.userIds?.filter(isUuid);
+  if (userIds && userIds.length === 0) return [];
   return q(t)
     .select({
       userId: memberships.userId,
@@ -107,7 +116,12 @@ export async function listMembers(t: TenantTx): Promise<MemberListItem[]> {
     })
     .from(memberships)
     .innerJoin(authUser, eq(authUser.id, memberships.userId))
-    .where(eq(memberships.workspaceId, t.workspaceId))
+    .where(
+      and(
+        eq(memberships.workspaceId, t.workspaceId),
+        userIds ? inArray(memberships.userId, userIds) : undefined,
+      ),
+    )
     .orderBy(asc(memberships.createdAt), asc(authUser.email));
 }
 

@@ -27,13 +27,10 @@ export async function updateWorkspaceSettings(
   if (ws.kind === 'personal' && patch.slug !== undefined) {
     throw new ProblemError(409, 'conflict', 'personal_workspace');
   }
-  const set: { name?: string; slug?: string } = {};
-  if (patch.name !== undefined) set.name = patch.name;
-  if (patch.slug !== undefined) set.slug = patch.slug;
   try {
     return await withTenant(deps.db, tenantScope(ws.id), async (t) => {
       const { role } = await lockForActor(t, actorUserId, 'admin');
-      const updated = await updateWorkspace(t, set, { kind: 'user', userId: actorUserId });
+      const updated = await updateWorkspace(t, patch, { kind: 'user', userId: actorUserId });
       if (!updated) throw notFound();
       return { ...updated, role };
     });

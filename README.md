@@ -63,6 +63,8 @@ curl -X POST http://localhost:8080/v1/events \
   -d '{"type":"player.inactive","severity":"warning","title":"Inactive","body":"Player X went inactive","idempotencyKey":"evt-123"}'
 ```
 
+Installation tokens (`$OWLWIRE_TOKEN`) come with the apps and installations API, in a later release.
+
 ## Running with Docker Compose
 
 ```sh

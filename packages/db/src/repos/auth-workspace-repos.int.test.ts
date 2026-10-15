@@ -169,6 +169,25 @@ describe('memberships', () => {
     expect(member?.joinedAt).toBeInstanceOf(Date);
   });
 
+  it('narrows the member list to the asked user ids', async () => {
+    const a = await user();
+    const b = await user();
+    const outsider = await user();
+    const ws = await community(a);
+    await inTenant(ws, async (t) => {
+      await addMembership(t, { userId: b, role: 'member' }, as(a));
+      const ids = async (userIds: string[]) =>
+        (await listMembers(t, { userIds })).map((m) => m.userId);
+      expect(await ids([b])).toEqual([b]);
+      expect((await ids([a, b])).sort()).toEqual([a, b].sort());
+      // a non-member, a malformed id and an empty list match nobody
+      expect(await ids([outsider])).toEqual([]);
+      expect(await ids(['not-a-uuid'])).toEqual([]);
+      expect(await ids([])).toEqual([]);
+      expect((await listMembers(t)).length).toBe(2);
+    });
+  });
+
   it('refuses to demote or remove the last owner', async () => {
     const a = await user();
     const ws = await community(a);

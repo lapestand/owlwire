@@ -33,8 +33,9 @@ function toMemberDto(m: MemberListItem, viewerRole: WorkspaceRole): MemberDto {
 }
 
 /**
- * Members of a workspace: any member reads the list (emails only for owners and admins); role changes, removals and ownership transfers are decided in
- * workspaces/members.ts on the roles read under the workspace lock, so these handlers do no role check themselves.
+ * Members of a workspace: any member reads the list (emails only for owners and admins); role changes, removals and
+ * ownership transfers are decided in workspaces/members.ts on the roles read under the workspace lock, so these
+ * handlers do no role check themselves.
  */
 export function registerMemberRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void {
   api.openapi(

@@ -53,7 +53,10 @@ export function registerAuditRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void 
       assertRole(ws, 'admin');
       const workspaceId = ws.id;
       const page = await listWorkspaceAudit(deps, workspaceId, c.req.valid('query'));
-      const members = await listWorkspaceMembers(deps, workspaceId);
+      // Names of the actors on this page only, not of every member.
+      const actorIds = new Set<string>();
+      for (const r of page.items) if (r.actorUserId) actorIds.add(r.actorUserId);
+      const members = await listWorkspaceMembers(deps, workspaceId, { userIds: [...actorIds] });
       const names = new Map(members.map((m) => [m.userId, m.name] as const));
       return c.json(
         { items: page.items.map((r) => toAuditDto(r, names)), nextCursor: page.nextCursor },
