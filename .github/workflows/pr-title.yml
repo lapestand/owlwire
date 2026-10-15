@@ -1,10 +1,15 @@
 name: Pull request
 
-# Checks on the pull request itself rather than its code. ci.yml also runs on `edited`, so fixing the title or
-# the description re-runs them.
+# Checks on the pull request itself rather than its code. This workflow runs on its own (not through ci.yml) so
+# that editing the title or description re-runs only these two jobs. Both are required status checks next to
+# CI passed; they run on every pull request event, so they are never missing.
 on:
-  # Pull requests run this through ci.yml; the gate job there (CI passed) is the required check.
-  workflow_call:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
