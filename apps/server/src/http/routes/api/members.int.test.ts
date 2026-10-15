@@ -2,7 +2,12 @@ import { lockWorkspaceForUpdate, tenantScope, withTenant } from '@owlwire/db';
 import { listAuditActions, seedCommunityWorkspace, seedMembership } from '@owlwire/db/fixtures';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type AuthHarness, createAuthHarness, type TestUser } from '../../../test/auth-harness.js';
-import { waitFor } from '../../../test/wait.js';
+import {
+  dropMember,
+  type LockedChange,
+  setRole,
+  underWorkspaceLock as underLock,
+} from '../../../test/workspace-lock.js';
 
 interface MemberDto {
   userId: string;
@@ -74,56 +79,11 @@ describe('management api: members', () => {
     ).json()) as AuditPage;
   const count = (actions: string[], action: string) => actions.filter((a) => a === action).length;
 
-  /**
-   * Runs `fire` while another transaction holds the workspace row lock (in the same mode as the server's write lock)
-   * and has already made `change` (not yet
-   * committed). The request passes the access check on the committed state, then waits for the lock; the change is
-   * committed only once the request is seen waiting on it, so the write must decide on the state after the change.
-   */
-  async function underWorkspaceLock(
+  const underWorkspaceLock = (
     ws: string,
-    change: { sql: string; params: unknown[] },
+    change: LockedChange,
     fire: () => Promise<Response>,
-  ): Promise<Response> {
-    const pool = h.harness.ownerPool;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT id FROM workspaces WHERE id = $1 FOR NO KEY UPDATE', [ws]);
-      await client.query(change.sql, change.params);
-      const { rows } = await client.query<{ xid: string }>(
-        'SELECT pg_current_xact_id()::text AS xid',
-      );
-      const xid = rows[0]?.xid ?? '';
-      const pending = fire();
-      await waitFor(
-        async () => {
-          const waiting = await pool.query(
-            `SELECT 1 FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted AND transactionid::text = $1`,
-            [xid],
-          );
-          return (waiting.rowCount ?? 0) > 0;
-        },
-        10_000,
-        20,
-      );
-      await client.query('COMMIT');
-      return await pending;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-  const setRole = (ws: string, userId: string, role: string) => ({
-    sql: 'UPDATE memberships SET role = $3 WHERE workspace_id = $1 AND user_id = $2',
-    params: [ws, userId, role],
-  });
-  const dropMember = (ws: string, userId: string) => ({
-    sql: 'DELETE FROM memberships WHERE workspace_id = $1 AND user_id = $2',
-    params: [ws, userId],
-  });
+  ): Promise<Response> => underLock(h.harness.ownerPool, ws, change, fire);
 
   it('lists members for any member', async () => {
     const t = await team();
