@@ -200,6 +200,31 @@ member's email; nothing else from the user record is exposed. The workspace's au
 admins only (`403` for plain members), because entries carry member and invitee details such as invitation emails. The
 log shows only the workspace's own entries; an actor's name is shown only while that user is still a member.
 
+### Invitations
+
+Owners and admins invite by email (`POST /api/workspaces/{workspaceId}/invitations`, role `admin` or `member`), list
+the pending invitations with the invitee emails and revoke them; plain members get `403`. Inviting and revoking take
+the workspace lock and read the caller's role again, like the other role-dependent writes. An address that already
+belongs to a member is `409 already_member`; inviting an address again replaces its pending invitation.
+
+- The token is `ow_inv_` plus 256 random bits. Only its SHA-256 hash is stored; the plain token appears once, in the
+  link `<OWLWIRE_PUBLIC_URL>/invite/<token>` (percent-encoded) in the email and in the inviter's response, and is
+  never logged. Invitations expire after seven days.
+- The email is sent after the invitation is stored. If it cannot be sent (no SMTP, a refused message or a failing
+  server) the invitation stays and the response says `emailSent: false`, so the inviter can pass the link on. Links
+  are emailed only for an `https://` public URL; plain `http://` is accepted outside `NODE_ENV=production` only.
+- `POST /api/invitations/lookup` is public, because the invitee may not have an account yet; the token is the
+  credential. It answers the workspace name, the invited email, the role and the expiry, which the email already
+  says, and one identical `404` for unknown, revoked, accepted and expired tokens and for invitations of deleted
+  workspaces. Every token is hashed and looked up the same way.
+- `POST /api/invitations/accept` needs a session whose email is the invited one (`403 email_mismatch`), verified when
+  SMTP is configured (`403 email_not_verified`). Acceptance takes the workspace lock that deletion takes, so it never
+  joins a workspace deleted meanwhile, and locks the invitation row against a concurrent revoke. Accepting again is
+  answered `200` without new audit entries.
+- In `invite` registration mode, signing up with an address that has a pending invitation is allowed; the sign-up does
+  not need the token. Without SMTP nothing verifies that address, so on such an instance anyone who knows an invited
+  address can create an account with it and then needs the token to join the workspace.
+
 ## Instance administrators
 
 An instance admin is a user with `auth_user.is_instance_admin` set. Only the auth role can write that flag, and the
