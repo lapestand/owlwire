@@ -13,7 +13,15 @@ import {
 } from '../../../system/user-workspaces.js';
 import { deleteWorkspace, updateWorkspaceSettings } from '../../../workspaces/settings.js';
 import type { ApiEnv } from './env.js';
-import { assertRole, json, problems, SECURITY, TAGS, toWorkspaceDto } from './problems.js';
+import {
+  assertRole,
+  json,
+  problems,
+  problemWith,
+  SECURITY,
+  TAGS,
+  toWorkspaceDto,
+} from './problems.js';
 
 export function registerWorkspaceRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void {
   api.openapi(
@@ -44,7 +52,8 @@ export function registerWorkspaceRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): v
       },
       responses: {
         201: json(WorkspaceSchema, 'Created community workspace'),
-        ...problems(400, 401, 409, 422),
+        ...problems(400, 401, 422),
+        ...problemWith(409, 'slug_taken'),
       },
     }),
     async (c) => {
@@ -77,7 +86,8 @@ export function registerWorkspaceRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): v
       },
       responses: {
         200: json(WorkspaceSchema, 'Updated workspace'),
-        ...problems(400, 401, 403, 404, 409, 422),
+        ...problems(400, 401, 403, 404, 422),
+        ...problemWith(409, 'slug_taken', 'personal_workspace'),
       },
     }),
     async (c) => {
@@ -102,7 +112,8 @@ export function registerWorkspaceRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): v
       request: { params: WorkspaceIdParams },
       responses: {
         204: { description: 'Marked deleted; the data is purged later' },
-        ...problems(401, 403, 404, 409),
+        ...problems(401, 403, 404),
+        ...problemWith(409, 'personal_workspace'),
       },
     }),
     async (c) => {

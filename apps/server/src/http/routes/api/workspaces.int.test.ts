@@ -357,22 +357,37 @@ describe('management api: workspaces', () => {
     }
   });
 
-  it('lists the detail reasons of invitation conflicts and audit query errors', () => {
+  it('lists the snake_case detail reasons of every operation in OpenAPI', () => {
     const doc = createApiRouter(h.deps).getOpenAPI31Document({
       openapi: '3.1.0',
       info: { title: 'test', version: '0' },
     });
     type Op = { responses: Record<string, { description: string }> };
     const paths = doc.paths as Record<string, Record<string, Op>>;
-    const create = paths['/workspaces/{workspaceId}/invitations']?.post;
-    const accept = paths['/invitations/accept']?.post;
-    for (const detail of ['already_member', 'personal_workspace', 'registration_closed']) {
-      expect(create?.responses['409']?.description).toContain(detail);
-    }
-    expect(accept?.responses['409']?.description).toContain('personal_workspace');
-    const audit = paths['/workspaces/{workspaceId}/audit']?.get;
-    for (const detail of ['invalid_cursor', 'unknown_audit_action']) {
-      expect(audit?.responses['422']?.description).toContain(detail);
+    const ws = '/workspaces/{workspaceId}';
+    const expected: Array<[string, string, string, string[]]> = [
+      ['/workspaces', 'post', '409', ['slug_taken']],
+      [ws, 'patch', '409', ['slug_taken', 'personal_workspace']],
+      [ws, 'delete', '409', ['personal_workspace']],
+      [`${ws}/members/{userId}`, 'patch', '409', ['last_owner', 'personal_workspace']],
+      [`${ws}/members/{userId}`, 'delete', '409', ['last_owner', 'personal_workspace']],
+      [`${ws}/transfer-ownership`, 'post', '409', ['already_owner', 'personal_workspace']],
+      [`${ws}/transfer-ownership`, 'post', '422', ['target_is_self']],
+      [
+        `${ws}/invitations`,
+        'post',
+        '409',
+        ['already_member', 'personal_workspace', 'registration_closed'],
+      ],
+      ['/invitations/accept', 'post', '403', ['email_mismatch', 'email_not_verified']],
+      ['/invitations/accept', 'post', '409', ['personal_workspace']],
+      [`${ws}/audit`, 'get', '422', ['invalid_cursor', 'unknown_audit_action']],
+    ];
+    for (const [path, method, status, details] of expected) {
+      const description = paths[path]?.[method]?.responses[status]?.description ?? '';
+      // A schema validation error on the same status carries a generic detail, so the list only says "include".
+      expect(description, `${method} ${path} ${status}`).toContain('detail reasons include');
+      for (const d of details) expect(description, `${method} ${path} ${status}`).toContain(d);
     }
   });
 });

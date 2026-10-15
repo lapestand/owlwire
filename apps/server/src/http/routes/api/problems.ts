@@ -17,7 +17,7 @@ export function json<T extends z.ZodType>(schema: T, description: string) {
 const PROBLEM_DESCRIPTIONS = {
   400: 'Malformed JSON',
   401: 'No valid session',
-  403: 'Insufficient role',
+  403: 'Forbidden',
   404: 'Not found',
   409: 'Conflict',
   422: 'Validation failed',
@@ -30,9 +30,12 @@ export function problems(...codes: ProblemStatus[]) {
   ) as Record<ProblemStatus, ReturnType<typeof json<typeof ProblemDetails>>>;
 }
 
-/** One problem response whose description also lists the `detail` reasons the operation can answer it with. */
+/**
+ * One problem response whose description lists the snake_case `detail` reasons the operation can answer it with. The
+ * same status may also come with a generic detail (a schema validation 422, for example), so the list says "include".
+ */
 export function problemWith<S extends ProblemStatus>(status: S, ...details: string[]) {
-  const description = `${PROBLEM_DESCRIPTIONS[status]} (detail: ${details.join(', ')})`;
+  const description = `${PROBLEM_DESCRIPTIONS[status]} (detail reasons include: ${details.join(', ')})`;
   return { [status]: json(ProblemDetails, description) } as Record<
     S,
     ReturnType<typeof json<typeof ProblemDetails>>
