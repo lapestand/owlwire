@@ -230,10 +230,13 @@ belongs to a member is `409 already_member`; inviting an address again replaces 
   intent (it was handed over), with or without SMTP. A refusal gets the same `200` as any sign-up, the token is
   never logged, and the check costs the same as the public lookup. The header is a request header, not a body
   field, because the auth library validates the sign-up body.
-- A social sign-up in `invite` mode needs no token: the provider has verified the address, so a pending invitation
-  for it is enough. Signing up never accepts an invitation; the client signs in and calls
+- Only the provider redirect callback (`/api/auth/callback/<provider>`) skips the token in `invite` mode: the provider
+  has verified the address, so a pending invitation for it is enough. Every other path needs the token, including
+  other routes under `/callback/` and a social sign-in with an id token (`POST /api/auth/sign-in/social` with
+  `idToken`), which is refused. Signing up never accepts an invitation; the client signs in and calls
   `POST /api/invitations/accept`, which checks the token and the email again.
-- A personal workspace has only its owner and takes no invitations (`409 personal_workspace`).
+- A personal workspace has only its owner and takes no invitations: creating one and accepting one are both
+  `409 personal_workspace`.
 
 ## Instance administrators
 

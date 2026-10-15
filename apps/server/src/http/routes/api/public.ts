@@ -23,7 +23,8 @@ export function registerPublicRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
         `(\`ow_inv_...\`) in the \`${INVITATION_HEADER}\` header, and the invitation must be pending and addressed`,
         'to the signing-up email; otherwise no account is created (the answer is the same `200`). Signing up does not',
         'accept the invitation: the client signs in, then calls `POST /api/invitations/accept`. A social sign-up',
-        'needs a pending invitation for the address the provider verified, without the header.',
+        'through the provider redirect (`/api/auth/callback/<provider>`) needs a pending invitation for the address',
+        'the provider verified, without the header; a social sign-in with an id token is refused in `invite` mode.',
       ].join(' '),
       responses: {
         200: json(AuthConfigComponent, 'Public sign-in configuration for the sign-in page'),
