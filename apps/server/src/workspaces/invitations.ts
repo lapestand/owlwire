@@ -1,6 +1,5 @@
 import type { InvitableRole } from '@owlwire/core';
 import {
-  type AuditActor,
   createInvitation,
   deletePendingInvitationsForEmail,
   getMembership,
@@ -13,12 +12,12 @@ import {
 import type { SessionUser } from '../auth/session-user.js';
 import type { Deps } from '../deps.js';
 import { notFound, ProblemError } from '../errors.js';
+import { canEmailLinks, mailFailure } from '../mail/links.js';
 import { type MailLocale, pickLocale } from '../mail/locale.js';
-import { MailMessageError } from '../mail/mailer.js';
-import { MailTemplateError, renderMail } from '../mail/templates.js';
+import { renderMail } from '../mail/templates.js';
 import { getRegistrationMode } from '../system/registration.js';
 import { findUserByEmail } from '../system/users.js';
-import type { WorkspaceContext } from './context.js';
+import { userActor, type WorkspaceContext } from './context.js';
 import { INVITATION_TTL_MS, newInvitationToken } from './invitation-token.js';
 import { lockForActor } from './write-lock.js';
 
@@ -31,29 +30,9 @@ export interface CreatedInvitation {
 /** Path of the web page that previews and accepts an invitation; the token is its last segment. */
 const INVITE_PATH = '/invite/';
 
-const userActor = (userId: string): AuditActor => ({ kind: 'user', userId });
-
-/**
- * The link to the invitation page: the public URL plus the percent-encoded token. Emailing it needs an https public
- * URL; plain http only when `allowHttp` (outside production, like the sign-in emails).
- */
-function acceptLink(
-  baseURL: string,
-  token: string,
-  allowHttp: boolean,
-): { url: string; emailable: boolean } {
-  const url = `${baseURL}${INVITE_PATH}${encodeURIComponent(token)}`;
-  const protocol = new URL(baseURL).protocol;
-  return { url, emailable: protocol === 'https:' || (protocol === 'http:' && allowHttp) };
-}
-
-/** Log fields for a failed invitation email: the error's class and code, never the link, address or message. */
-function mailFailure(err: unknown): Record<string, unknown> {
-  const reason =
-    err instanceof MailTemplateError || err instanceof MailMessageError ? err.name : 'transport';
-  const code = (err as { code?: unknown } | null)?.code;
-  return { reason, ...(typeof code === 'string' ? { code } : {}) };
-}
+/** The link to the invitation page: the public URL plus the percent-encoded token. */
+const acceptLink = (baseURL: string, token: string): string =>
+  `${baseURL}${INVITE_PATH}${encodeURIComponent(token)}`;
 
 /**
  * Invites an email address (lower-cased) into the workspace. A personal workspace has only its owner and takes no
@@ -106,16 +85,16 @@ export async function inviteMember(
     );
   });
 
-  const link = acceptLink(deps.authEnv.baseURL, token, deps.config.allowHttpLinks);
+  const acceptUrl = acceptLink(deps.authEnv.baseURL, token);
   let emailSent = false;
-  if (deps.mailer && link.emailable) {
+  if (deps.mailer && canEmailLinks(deps.authEnv.baseURL, deps.config.allowHttpLinks)) {
     try {
       const rendered = renderMail(input.locale ?? pickLocale(acceptLanguage), {
         kind: 'invitation',
         workspaceName: ws.name,
         inviterName: actor.name,
         role: input.role,
-        url: link.url,
+        url: acceptUrl,
         expiresAt: invitation.expiresAt,
       });
       await deps.mailer.send({ to: email, ...rendered });
@@ -132,7 +111,7 @@ export async function inviteMember(
       'invitation email not sent',
     );
   }
-  return { invitation, acceptUrl: link.url, emailSent };
+  return { invitation, acceptUrl, emailSent };
 }
 
 /** Open invitations (not accepted, not expired), oldest first. The route allows owners and admins only. */

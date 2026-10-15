@@ -1,6 +1,5 @@
 import { canChangeRole, canRemoveMember, type WorkspaceRole } from '@owlwire/core';
 import {
-  type AuditActor,
   countOwners,
   getMembership,
   listMembers,
@@ -13,6 +12,7 @@ import {
 } from '@owlwire/db';
 import type { BaseDeps } from '../base-deps.js';
 import { decisionProblem, notFound, ProblemError } from '../errors.js';
+import { userActor } from './context.js';
 import { lockForActor } from './write-lock.js';
 
 /** Fixed detail of the 422 for a transfer to the caller themselves. */
@@ -20,8 +20,6 @@ const TARGET_IS_SELF = 'target_is_self';
 
 /** Fixed detail of the 409 for a transfer to a user who already owns the workspace. */
 const ALREADY_OWNER = 'already_owner';
-
-const userActor = (userId: string): AuditActor => ({ kind: 'user', userId });
 
 /** Every member with the name and email the workspace may see (the column-granted auth_user fields only). */
 export function listWorkspaceMembers(
