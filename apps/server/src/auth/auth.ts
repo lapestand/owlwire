@@ -207,6 +207,10 @@ export function createAuth(o: CreateAuthOptions) {
     },
     user: {
       modelName: 'auth_user',
+      // Must stay off unless the second factor is enforced on that path: the library signs the user in from a
+      // change-email verification link (a verify-email token with a new address) without asking for the second
+      // factor, whatever autoSignInAfterVerification says, so mailbox control would bypass TOTP.
+      changeEmail: { enabled: false },
       // Every user creation then needs an endpoint context and a provisioning source (the library refuses one without
       // them): create users through auth.api (for example signUpEmail), never internalAdapter.createUser directly.
       // A provider address the provider has not verified never creates a user or joins an existing one: otherwise
