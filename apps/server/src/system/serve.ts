@@ -4,6 +4,7 @@ import type { Role, ServerConfig } from '../config/load.js';
 import { closeDeps, createDeps, type Deps } from '../deps.js';
 import { createApp } from '../http/app.js';
 import { startWorker } from '../worker/runner.js';
+import { collectAuthStartupWarnings } from './auth-warnings.js';
 import { upgradeLegacySecrets } from './legacy-secrets.js';
 import { migrateDatabase } from './migrate.js';
 import { createShutdown } from './shutdown.js';
@@ -73,6 +74,7 @@ export interface ServeCommandHooks {
   migrate?: typeof migrateDatabase;
   startupChecks?: typeof runStartupChecks;
   upgrade?: typeof upgradeLegacySecrets;
+  authWarnings?: typeof collectAuthStartupWarnings;
   start?: typeof startServer;
   /** Defaults to process.env.NODE_ENV; OWLWIRE_ALLOW_INSECURE_DB_ROLE is ignored when it is 'production'. */
   nodeEnv?: string | undefined;
@@ -81,7 +83,7 @@ export interface ServeCommandHooks {
 /**
  * `owlwire serve`: signal handlers are registered BEFORE migrating. Order: migrateDatabase ->
  * createDeps -> runStartupChecks -> upgradeLegacySecrets (refuses to start when a legacy secret's KEK version is not
- * configured) -> startServer. Shutdown is createShutdown (25 s limit,
+ * configured) -> sign-in setup warnings (logged, never fatal) -> startServer. Shutdown is createShutdown (25 s limit,
  * exit 1 when the worker crashes) and calls `exit` exactly once.
  *
  * A signal during the migration shuts down at once (nothing is open yet; the migration transaction rolls back with
@@ -117,6 +119,7 @@ export async function runServeCommand(
   hooks.onSignal('SIGINT', () => void shutdown('SIGINT'));
   hooks.onSignal('SIGTERM', () => void shutdown('SIGTERM'));
 
+  const nodeEnv = 'nodeEnv' in hooks ? hooks.nodeEnv : process.env.NODE_ENV;
   try {
     await (hooks.migrate ?? migrateDatabase)(config, logger);
     if (stopping) return;
@@ -125,7 +128,7 @@ export async function runServeCommand(
     await step(
       (hooks.startupChecks ?? runStartupChecks)(created.db, created.authDb, {
         allowInsecureDbRole: config.allowInsecureDbRole,
-        nodeEnv: 'nodeEnv' in hooks ? hooks.nodeEnv : process.env.NODE_ENV,
+        nodeEnv,
         logger,
       }),
     );
@@ -135,6 +138,17 @@ export async function runServeCommand(
     );
     if (stopping) return;
     assertLegacySecretsCovered(legacy);
+    const warnings = await step(
+      (hooks.authWarnings ?? collectAuthStartupWarnings)(created, {
+        ...process.env,
+        NODE_ENV: nodeEnv,
+      }).catch((err: unknown) => {
+        logger.warn({ err }, 'sign-in setup warnings could not be collected');
+        return [];
+      }),
+    );
+    if (stopping) return;
+    for (const warning of warnings) logger.warn(warning);
     await step(
       (hooks.start ?? startServer)(created, config.role, { port: config.port, webDir }).then(
         (r) => {
