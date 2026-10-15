@@ -108,10 +108,12 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
 - **The verification link opens no session.** Following the emailed link only marks the address verified; the user
   then signs in with the password and, when it is on, the second factor. A session created from the link would let
   anyone who controls the mailbox skip both, because anyone can ask for a new verification email for any address.
-- **Turning SMTP on later.** Without SMTP, sign-up does not verify addresses. Once `OWLWIRE_SMTP_URL` is set, every
-  account created before then counts as unverified: signing in answers `403 EMAIL_NOT_VERIFIED` until the user asks
-  for a verification email (`POST /api/auth/send-verification-email`) and follows its link. Accepting an invitation
-  needs a verified address too. Accounts made with `owlwire admin create` are verified already.
+- **Turning SMTP on later.** Without SMTP, email and password sign-up does not verify addresses. Once
+  `OWLWIRE_SMTP_URL` is set, password sign-in to an account created that way answers `403 EMAIL_NOT_VERIFIED` until
+  the user asks for a verification email (`POST /api/auth/send-verification-email`) and follows its link. Passkey and
+  linked social sign-in keep working, and accounts that signed up through a provider are verified already (the
+  provider address must be verified). Accepting an invitation needs a verified address too. Accounts made with
+  `owlwire admin create` are verified already.
 
 ### Social sign-in, two-factor authentication and passkeys
 
@@ -145,6 +147,8 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   database work, which is small next to the two provider requests every probe costs. This applies to an explicit link
   while signed in too, where the code is then less specific. A refused social sign-up of a provider-verified address
   still names its reason; that address belongs to the caller.
+  The one deliberate exception is the closed-mode invitation refusal (see Invitations), which tells any signed-in
+  user whether an address has an account.
 - **Two-factor authentication.** TOTP (issuer `Owlwire`) with one-time backup codes; enabling it requires the account
   password. Every `/api/auth/two-factor/*` endpoint is limited to 3 requests per 10 seconds per client address, and an
   account is locked for 15 minutes after 10 consecutive failed second-factor checks from any address; a pending
@@ -293,8 +297,10 @@ belongs to a member is `409 already_member`; inviting an address again replaces 
   `409 personal_workspace`.
 - While registration is `closed`, an invitation can only be accepted by an existing account, since nobody can sign
   up. Inviting an address with no account is refused with `409 registration_closed`, and nothing is stored or sent.
-  This tells an owner or admin that the address has no account, which only the instance admin's choice of closed
-  mode exposes; in `invite` and `open` mode the answer does not depend on it.
+  This is an account-existence check open to any signed-in user: anyone can create a workspace, become its owner and
+  invite addresses one by one (no account: `409`; an account: `201` and a real invitation email). It is accepted on
+  purpose: on a closed instance every signed-in user was let in by an admin. In `invite` and `open` mode the answer
+  does not depend on whether the address has an account.
 
 ## Instance administrators
 
