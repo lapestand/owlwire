@@ -137,7 +137,7 @@ describe('registration modes', () => {
   /** Signs up in invite mode and answers whether a user row was created. */
   const signUpInInviteMode = async (email: string, invitationToken?: string) => {
     await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
-    const res = await h.signUp(email, invitationToken ? { invitationToken } : {});
+    const res = await h.signUp(email, invitationToken !== undefined ? { invitationToken } : {});
     expect(res.status).toBe(200);
     return (await findUserByEmail(h.deps, email)) !== null;
   };
@@ -160,6 +160,12 @@ describe('registration modes', () => {
     expect(
       (await listWorkspacesForUser(h.deps, user?.id ?? '')).map((w) => [w.kind, w.role]),
     ).toEqual([['personal', 'owner']]);
+  });
+
+  it('invite: an empty invitation header does not admit', async () => {
+    const email = uniqueEmail('empty-header');
+    await invitedWithToken(email);
+    expect(await signUpInInviteMode(email, '')).toBe(false);
   });
 
   it('invite: the token of another address does not admit', async () => {

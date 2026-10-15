@@ -54,7 +54,7 @@ export interface TestUser {
 export interface SignUpOptions {
   name?: string;
   password?: string;
-  /** Sent in the invitation header; invite-mode email sign-up needs it. */
+  /** Sent in the invitation header (an empty string sends an empty header); invite-mode email sign-up needs it. */
   invitationToken?: string;
 }
 export interface AuthHarness {
@@ -132,7 +132,9 @@ export async function createAuthHarness(opts: HarnessOptions = {}): Promise<Auth
   const signUp = (email: string, o: SignUpOptions = {}) =>
     request('/api/auth/sign-up/email', {
       body: { email, password: o.password ?? TEST_PASSWORD, name: o.name ?? 'Test User' },
-      ...(o.invitationToken ? { headers: { [INVITATION_HEADER]: o.invitationToken } } : {}),
+      ...(o.invitationToken !== undefined
+        ? { headers: { [INVITATION_HEADER]: o.invitationToken } }
+        : {}),
     });
 
   const signInResponse = (email: string, password = TEST_PASSWORD) =>
@@ -151,7 +153,7 @@ export async function createAuthHarness(opts: HarnessOptions = {}): Promise<Auth
     const name = o.name ?? 'Test User';
     const res = await signUp(email, {
       name,
-      ...(o.invitationToken ? { invitationToken: o.invitationToken } : {}),
+      ...(o.invitationToken !== undefined ? { invitationToken: o.invitationToken } : {}),
     });
     if (res.status !== 200) throw new Error(`sign-up failed: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as { user: { id: string } };

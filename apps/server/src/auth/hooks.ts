@@ -11,18 +11,26 @@ import { type AuthHooks, RegistrationDeniedError, type UserCreateContext } from 
 import { isBootstrap } from './bootstrap-context.js';
 
 /**
- * Whether an invitation admits the new user in invite mode. A social sign-up arrives on the OAuth callback with an
- * address the provider has verified, so a pending invitation for it is enough. Every other creation path (email
- * sign-up, a server-side call without a request, any path added later) must present the token of a pending
- * invitation for the same address: knowing an invited address proves nothing, the token proves the mailbox or the
- * inviter's intent.
+ * The auth library's OAuth redirect callback, by its route template. Only this exact path counts: other routes under
+ * `/callback/` (for example a proxy plugin's `/callback/:id/oauth-proxy`) are not the provider redirect.
+ */
+export function isProviderCallback(path: string | null): boolean {
+  return path === '/callback/:id';
+}
+
+/**
+ * Whether an invitation admits the new user in invite mode. A social sign-up through the provider redirect arrives on
+ * the OAuth callback with an address the provider has verified, so a pending invitation for it is enough. Every other
+ * creation path (email sign-up, an id-token social sign-in, a server-side call without a request, any path added
+ * later) must present the token of a pending invitation for the same address: knowing an invited address proves
+ * nothing, the token proves the mailbox or the inviter's intent.
  */
 function admittedByInvitation(
   deps: BaseDeps,
   email: string,
   context: UserCreateContext,
 ): Promise<boolean> {
-  if (context.path?.startsWith('/callback/')) return hasPendingInvitation(deps, email);
+  if (isProviderCallback(context.path)) return hasPendingInvitation(deps, email);
   return invitationAdmits(deps, email, context.invitationToken);
 }
 
