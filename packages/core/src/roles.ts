@@ -23,11 +23,18 @@ export interface RoleChangeInput {
   personal: boolean;
 }
 
+/**
+ * Only an owner touches an owner role; admins change admin and member roles. A change to the role the target already
+ * has (a no-op) needs the same permission, but is never refused for the personal workspace or the last owner, since
+ * nothing changes.
+ */
 export function canChangeRole(i: RoleChangeInput): MemberDecision {
   const touchesOwner = i.targetRole === 'owner' || i.newRole === 'owner';
-  if (i.personal && touchesOwner) return deny('personal_workspace');
+  const noop = i.targetRole === i.newRole;
+  if (i.personal && touchesOwner && !noop) return deny('personal_workspace');
   const permitted = touchesOwner ? i.actorRole === 'owner' : roleAtLeast(i.actorRole, 'admin');
   if (!permitted) return deny('forbidden');
+  if (noop) return allow;
   if (i.targetRole === 'owner' && i.newRole !== 'owner' && i.ownerCount <= 1)
     return deny('last_owner');
   return allow;

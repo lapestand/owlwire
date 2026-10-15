@@ -186,6 +186,20 @@ Errors are Problem Details with fixed details: framework client errors (malforme
 `415`) and data-layer errors never echo the request or a database value. An unknown, foreign, deleted or malformed
 workspace id gets one identical `404` body.
 
+Roles are checked twice. The access check runs before the handler, in its own transaction, so a demotion or removal
+can commit between that check and the write. Every write that depends on the caller's role (renaming or deleting the
+workspace, changing a role, removing a member, transferring ownership) therefore locks the workspace row first and
+reads the caller's membership again under that lock. The lock is `FOR NO KEY UPDATE`: it serialises these writes, but
+does not block inserts that only reference the workspace (audit entries, new memberships). Such writes run one after
+another per workspace, and each decides on the roles the previous one left: a caller demoted meanwhile gets `403`, one
+removed meanwhile gets `404`. The last owner of a workspace cannot be demoted or removed (`409`, detail `last_owner`);
+the data layer enforces this a second time under its own row lock.
+
+Any member can read the member list: user id, name, image, role and join date. Only owners and admins also see each
+member's email; nothing else from the user record is exposed. The workspace's audit log is readable by owners and
+admins only (`403` for plain members), because entries carry member and invitee details such as invitation emails. The
+log shows only the workspace's own entries; an actor's name is shown only while that user is still a member.
+
 ## Instance administrators
 
 An instance admin is a user with `auth_user.is_instance_admin` set. Only the auth role can write that flag, and the

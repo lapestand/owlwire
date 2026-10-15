@@ -23,6 +23,7 @@ export interface MemberListItem {
   userId: string;
   name: string;
   email: string;
+  image: string | null;
   role: WorkspaceRole;
   joinedAt: Date;
 }
@@ -100,6 +101,7 @@ export async function listMembers(t: TenantTx): Promise<MemberListItem[]> {
       userId: memberships.userId,
       name: authUser.name,
       email: authUser.email,
+      image: authUser.image,
       role: memberships.role,
       joinedAt: memberships.createdAt,
     })
@@ -115,7 +117,8 @@ export async function listMembers(t: TenantTx): Promise<MemberListItem[]> {
  *
  * Caller invariant: `userId` is the acting session user's own id (creating a workspace, accepting an invitation),
  * never an id taken from a client. Any instance user id is accepted here, and listMembers then shows that user's name
- * and email to the workspace, so an "add member by id" path would disclose other users' emails.
+ * to the workspace and their email to its owners and admins, so an "add member by id" path would disclose other
+ * users' emails.
  *
  * Like every membership mutator here, this does not check that the workspace is live. Callers run after the
  * workspace access check (getMembershipContext answers null for a soft-deleted workspace); to serialise against a

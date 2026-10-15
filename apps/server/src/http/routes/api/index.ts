@@ -8,8 +8,10 @@ import { sessionAuth } from '../../middleware/session-auth.js';
 import { workspaceAccess } from '../../middleware/workspace-access.js';
 import { ProblemError, problem, validationProblem } from '../../problem.js';
 import { registerAdminRoutes } from './admin.js';
+import { registerAuditRoutes } from './audit.js';
 import type { ApiEnv } from './env.js';
 import { registerMeRoutes } from './me.js';
+import { registerMemberRoutes } from './members.js';
 import { crossSiteGuard, httpProblem, repositoryProblem } from './problems.js';
 import { registerPublicRoutes } from './public.js';
 import { registerWorkspaceRoutes } from './workspaces.js';
@@ -79,6 +81,8 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   registerPublicRoutes(api, deps);
   registerMeRoutes(api, deps);
   registerWorkspaceRoutes(api, deps);
+  registerMemberRoutes(api, deps);
+  registerAuditRoutes(api, deps);
   registerAdminRoutes(api, deps);
   return api;
 }

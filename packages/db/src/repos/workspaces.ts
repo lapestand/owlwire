@@ -115,8 +115,11 @@ const liveWorkspace = (t: TenantTx) =>
   and(eq(workspaces.id, t.workspaceId), isNull(workspaces.deletedAt));
 
 /**
- * SELECT ... FOR UPDATE on the scope's workspace row: serializes concurrent changes to the same workspace (settings,
- * deletion, membership decisions) until the transaction ends. A soft-deleted workspace answers null.
+ * SELECT ... FOR NO KEY UPDATE on the scope's workspace row: serializes concurrent changes to the same workspace
+ * (settings, deletion, membership decisions) until the transaction ends, because this lock conflicts with itself and
+ * with the row updates of a rename or soft delete. It does not conflict with the KEY SHARE lock that foreign key checks
+ * take, so inserts that reference the workspace (audit entries, memberships, events) are not blocked while it is held.
+ * Take it as the first statement of the transaction. A soft-deleted workspace answers null.
  */
 export async function lockWorkspaceForUpdate(t: TenantTx): Promise<WorkspaceSummary | null> {
   const rows = await q(t)
@@ -124,7 +127,7 @@ export async function lockWorkspaceForUpdate(t: TenantTx): Promise<WorkspaceSumm
     .from(workspaces)
     .where(liveWorkspace(t))
     .limit(1)
-    .for('update');
+    .for('no key update');
   return rows[0] ?? null;
 }
 
