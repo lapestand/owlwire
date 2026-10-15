@@ -69,9 +69,10 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
 
 - Reset and verification identifiers are stored hashed (`verification.storeIdentifier: 'hashed'`), so a leaked
   `auth_verification` row cannot be replayed as a reset link. Provider access, refresh and id tokens are encrypted
-  with `OWLWIRE_AUTH_SECRET` before they are stored (`account.encryptOAuthTokens`). 2FA secrets and backup codes keep
-  the library's encrypted default; when the email or SMS OTP method is enabled, its codes must be stored hashed too
-  (`otpOptions.storeOTP: 'hashed'`).
+  with `OWLWIRE_AUTH_SECRET` before they are stored (`account.encryptOAuthTokens`). 2FA secrets and backup codes are
+  stored encrypted (the library default, set explicitly). The email or SMS OTP method is not offered (no delivery
+  function is configured); its codes are configured to be stored hashed (`otpOptions.storeOTP: 'hashed'`) should it
+  ever be enabled.
 - Session tokens are the exception: the library has no option to hash them, so `auth_session.token` holds the raw
   token. Only the auth role can read it.
 - Telemetry is off. The library's logger is routed through our pino logger (`apps/server/src/auth/auth-logger.ts`):
@@ -96,6 +97,41 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   verified answers `403 EMAIL_NOT_VERIFIED` instead of `401`. It confirms that the account exists, but only to
   someone who already knows its password, and the user needs it to understand why sign-in fails. It is kept on
   purpose.
+
+### Social sign-in, two-factor authentication and passkeys
+
+- **Providers.** Discord, Google and GitHub are enabled only when both `OWLWIRE_<PROVIDER>_CLIENT_ID` and
+  `OWLWIRE_<PROVIDER>_CLIENT_SECRET` are set; the callback is `<OWLWIRE_PUBLIC_URL>/api/auth/callback/<provider>`.
+  A social sign-up goes through the same registration rules as an email sign-up (closed, invite-only, open), in the
+  same hook, and gets the same personal workspace. A refused social sign-up is redirected to the error page with the
+  reason code; this tells nothing about other accounts, since the caller already controls that provider identity.
+- **Unverified provider addresses are refused.** A provider address that the provider reports as unverified never
+  creates a user and is never linked to an existing one (`user.validateUserInfo`; the callback redirects with
+  `error=email_not_verified`). Otherwise someone could register a victim's address at a provider that does not
+  verify it, sign up here first, and keep that way into the account after the victim claims it.
+- **Account linking.** No provider is trusted blindly (`accountLinking.trustedProviders` is empty). A social sign-in
+  joins an existing account with the same address only when the provider has verified the address *and* the local
+  account's address is verified (the library's `requireLocalEmailVerified` default). Without SMTP no local address is
+  verified, so this implicit link never happens; the user links the provider explicitly while signed in
+  (`/api/auth/link-social`), which also requires a verified provider address. Linking a provider account with a
+  different address is off (`allowDifferentEmails: false`).
+- **Remaining channel: existing account behind an unverified provider address.** When the provider reports an
+  unverified address that belongs to an existing account, the callback answers `error=account_not_linked` rather
+  than `email_not_verified`, so someone who can put an arbitrary unverified address on a provider account learns
+  that an Owlwire account exists for it. Nothing is linked or created. It is the same kind of signal as the
+  unverified-email `403` above, and is accepted.
+- **Two-factor authentication.** TOTP (issuer `Owlwire`) with one-time backup codes; enabling it requires the account
+  password. Every `/api/auth/two-factor/*` endpoint is limited to 3 requests per 10 seconds per client address, and an
+  account is locked for 15 minutes after 10 consecutive failed second-factor checks from any address.
+- **Where the second factor applies.** The library asks for the second factor after an email and password sign-in.
+  A social sign-in or a passkey sign-in does not ask for it: the provider (with its own 2FA) or the passkey (a
+  possession factor bound to this site) is the proof. A user who wants every sign-in behind TOTP should not link a
+  provider account.
+- **Passkeys.** The relying party ID is the host of `OWLWIRE_PUBLIC_URL` and the expected origin is that URL's
+  origin, configured on the server, so a response from another origin is refused (the origin a client sends is never
+  used). Registering a passkey requires a fresh session. A credential id can be registered once
+  (`auth_passkey_credential_id_unique`). Changing `OWLWIRE_PUBLIC_URL` to another host invalidates every registered
+  passkey.
 
 ### Client address and rate limiting
 
