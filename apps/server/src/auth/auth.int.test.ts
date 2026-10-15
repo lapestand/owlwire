@@ -360,7 +360,7 @@ describe('auth email failures', () => {
     const sent: string[] = [];
     const { res, lines } = await signUpWith(async () => void sent.push('sent'), false);
     expect(res.status).toBe(200);
-    const log = await logged(lines, '"reason":"AuthLinkError"');
+    const log = await logged(lines, '"reason":"InsecureLinkError"');
     expect(sent).toEqual([]);
     expect(log).not.toContain('token=');
   });

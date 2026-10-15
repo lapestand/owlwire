@@ -1,7 +1,6 @@
 import { REGISTRATION_MODES, type RegistrationMode } from '@owlwire/core';
 import type { AuditActor } from '@owlwire/db';
 import {
-  findInvitationByTokenHash,
   getInstanceSetting,
   hasPendingInvitationForEmail,
   SYSTEM,
@@ -10,7 +9,7 @@ import {
 } from '@owlwire/db/system';
 import { z } from 'zod';
 import type { BaseDeps } from '../base-deps.js';
-import { hashInvitationToken } from '../workspaces/invitation-token.js';
+import { findInvitationByToken } from './invitation-lookup.js';
 
 const KEY = 'registration';
 const ModeSchema = z.enum(REGISTRATION_MODES);
@@ -65,8 +64,7 @@ export async function invitationAdmits(
   token: string | null,
 ): Promise<boolean> {
   if (!token) return false;
-  const tokenHash = hashInvitationToken(token);
-  const inv = await withSystem(deps.db, SYSTEM, (s) => findInvitationByTokenHash(s, tokenHash));
+  const inv = await findInvitationByToken(deps, token);
   return (
     inv !== null &&
     inv.acceptedAt === null &&

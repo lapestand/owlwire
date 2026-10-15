@@ -10,6 +10,7 @@ import {
 } from '@owlwire/db';
 import { findPersonalWorkspaceByOwner, SYSTEM, withSystem } from '@owlwire/db/system';
 import type { BaseDeps } from '../base-deps.js';
+import { userActor } from '../workspaces/context.js';
 
 /** The user's name within the API's workspace name limit (same measure), or 'Personal' when blank. */
 function personalName(name: string): string {
@@ -55,7 +56,7 @@ function create(
 export async function ensurePersonalWorkspace(
   deps: Pick<BaseDeps, 'db'>,
   user: { id: string; name: string },
-  actor: AuditActor = { kind: 'user', userId: user.id },
+  actor: AuditActor = userActor(user.id),
 ): Promise<string> {
   const existing = await findLive(deps, user.id);
   if (existing) return existing;

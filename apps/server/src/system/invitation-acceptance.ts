@@ -8,11 +8,10 @@ import {
   tenantScope,
   withTenant,
 } from '@owlwire/db';
-import { findInvitationByTokenHash, SYSTEM, withSystem } from '@owlwire/db/system';
 import type { SessionUser } from '../auth/session-user.js';
 import type { Deps } from '../deps.js';
 import { notFound, ProblemError } from '../errors.js';
-import { hashInvitationToken } from '../workspaces/invitation-token.js';
+import { findInvitationByToken } from './invitation-lookup.js';
 
 /** What the invitation page may show before sign-in: nothing beyond what the invitation email already said. */
 export interface InvitationPreview {
@@ -22,22 +21,12 @@ export interface InvitationPreview {
   expiresAt: Date;
 }
 
-/**
- * The invitation behind a token, across workspaces (invitations of deleted workspaces are invisible). Every token,
- * well-formed or not, is hashed and looked up the same way, so an unknown token costs the same as a known one; the
- * lookup is an index match on the hash of a 256-bit token, which leaks nothing usable through timing.
- */
-function findByToken(deps: Pick<Deps, 'db'>, token: string) {
-  const tokenHash = hashInvitationToken(token);
-  return withSystem(deps.db, SYSTEM, (s) => findInvitationByTokenHash(s, tokenHash));
-}
-
 /** The preview of an open invitation; null for an unknown, revoked, accepted or expired one. */
 export async function lookupInvitation(
   deps: Pick<Deps, 'db' | 'clock'>,
   token: string,
 ): Promise<InvitationPreview | null> {
-  const inv = await findByToken(deps, token);
+  const inv = await findInvitationByToken(deps, token);
   if (!inv || inv.acceptedAt || inv.expiresAt <= deps.clock.now()) return null;
   return {
     workspaceName: inv.workspaceName,
@@ -65,7 +54,7 @@ export async function acceptInvitation(
   user: SessionUser,
   token: string,
 ): Promise<{ workspaceId: string; role: WorkspaceRole }> {
-  const found = await findByToken(deps, token);
+  const found = await findInvitationByToken(deps, token);
   if (!found) throw notFound();
   if (found.email !== user.email.trim().toLowerCase()) {
     throw new ProblemError(403, 'forbidden', 'email_mismatch');
