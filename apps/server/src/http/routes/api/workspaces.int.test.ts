@@ -1,9 +1,9 @@
-import { openDatabase } from '@owlwire/db';
 import { listAuditActions, seedMembership } from '@owlwire/db/fixtures';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SESSION_EXPIRES_IN_SECONDS } from '../../../auth/auth.js';
 import { createAuthHooks } from '../../../auth/hooks.js';
 import { createLogger } from '../../../logger.js';
+import { listWorkspacesForUser } from '../../../system/user-workspaces.js';
 import {
   type AuthHarness,
   createAuthHarness,
@@ -14,6 +14,14 @@ import { createApp } from '../../app.js';
 import { resolveWorkspaceContext } from '../../middleware/workspace-access.js';
 import { API_BASE_PATH, createApiRouter, PUBLIC_API_PATHS } from './index.js';
 import { CROSS_SITE_DETAIL, UNSUPPORTED_MEDIA_TYPE_DETAIL } from './problems.js';
+
+// A pass-through spy, so a single test can make the workspace list fail on its own.
+vi.mock('../../../system/user-workspaces.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../system/user-workspaces.js')>();
+  return { ...actual, listWorkspacesForUser: vi.fn(actual.listWorkspacesForUser) };
+});
+
+const LIST_FAILURE = 'stubbed workspace list failure';
 
 interface WorkspaceDto {
   id: string;
@@ -521,25 +529,22 @@ describe('management api: request hardening', () => {
     const u = await h.createUser();
     const lines: string[] = [];
     const logger = createLogger('debug', { write: (line: string) => void lines.push(line) });
-    // listWorkspacesForUser reaches the database through deps.db: a closed handle makes every query fail with a plain Error.
-    const db = openDatabase({
-      url: h.deps.config.databaseUrl,
-      keyring: h.deps.keyring,
-      clock: h.deps.clock,
-    });
-    await db.close();
-    const app = createApp({ ...h.deps, db, logger, webDir: null });
+    // The session lookup succeeds; only the workspace list fails, with an error no mapping knows.
+    vi.mocked(listWorkspacesForUser).mockRejectedValueOnce(new Error(LIST_FAILURE));
+    const app = createApp({ ...h.deps, logger, webDir: null });
     const res = await app.request(`${TEST_BASE_URL}/api/workspaces`, {
       headers: { cookie: u.cookie, origin: TEST_BASE_URL },
     });
+    expect(listWorkspacesForUser).toHaveBeenLastCalledWith(expect.anything(), u.id);
     expect(res.status).toBe(500);
     expect(res.headers.get('content-type')).toContain('application/problem+json');
     const body = await res.text();
+    expect(body).not.toContain(LIST_FAILURE);
     expect(JSON.parse(body)).toMatchObject({ code: 'internal', status: 500 });
     expect(JSON.parse(body).detail).toBeUndefined();
     const logged = lines.map((l) => JSON.parse(l)).filter((l) => l.msg === 'unhandled error');
     expect(logged).toHaveLength(1);
-    expect(logged[0].err).toBeDefined();
+    expect(logged[0].err).toMatchObject({ message: LIST_FAILURE });
   });
 });
 
