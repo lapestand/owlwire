@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ProblemError } from '../errors.js';
 import { sessionAuth } from '../http/middleware/session-auth.js';
-import { ProblemError, problem } from '../http/problem.js';
+import { problem } from '../http/problem.js';
 import type { ApiEnv } from '../http/routes/api/env.js';
 import { createLogger } from '../logger.js';
 import {

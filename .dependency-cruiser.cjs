@@ -129,6 +129,34 @@ module.exports = {
       to: { path: '^packages/db/(src|dist)/fixtures/' },
     },
     {
+      name: 'server-services-not-to-http',
+      comment:
+        'Server code outside src/http throws the errors in src/errors.ts and never imports the http layer, ' +
+        'which maps those errors to problem details. Tests and the test harness drive the app and are exempt.',
+      severity: 'error',
+      from: {
+        path: '^apps/server/src/',
+        pathNot: [
+          '^apps/server/src/(http|test)/',
+          '\\.test\\.ts$',
+          '^apps/server/src/(system/serve|config/load)\\.ts$',
+        ],
+      },
+      to: { path: '^apps/server/src/http/' },
+    },
+    {
+      name: 'server-entry-points-to-http',
+      comment:
+        'The serve command mounts the app (http/app.ts) and config loading parses the trusted proxy list ' +
+        '(http/client-ip.ts, which imports nothing from the server); nothing else under src/http.',
+      severity: 'error',
+      from: { path: '^apps/server/src/(system/serve|config/load)\\.ts$' },
+      to: {
+        path: '^apps/server/src/http/',
+        pathNot: '^apps/server/src/http/(app|client-ip)\\.ts$',
+      },
+    },
+    {
       name: 'db-internals-private',
       comment:
         'Only the public entry points of @owlwire/db may be imported from outside the package.',

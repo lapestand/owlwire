@@ -10,15 +10,14 @@ import {
   tenantScope,
   withTenant,
 } from '@owlwire/db';
+import type { SessionUser } from '../auth/session-user.js';
 import type { Deps } from '../deps.js';
-import type { SessionUser } from '../http/middleware/session-auth.js';
-import { ProblemError } from '../http/problem.js';
-import type { WorkspaceContext } from '../http/routes/api/env.js';
-import { notFound } from '../http/routes/api/problems.js';
+import { notFound, ProblemError } from '../errors.js';
 import { type MailLocale, pickLocale } from '../mail/locale.js';
 import { MailMessageError } from '../mail/mailer.js';
 import { MailTemplateError, renderMail } from '../mail/templates.js';
 import { findUserByEmail } from '../system/users.js';
+import type { WorkspaceContext } from './context.js';
 import { INVITATION_TTL_MS, newInvitationToken } from './invitation-token.js';
 import { lockForActor } from './write-lock.js';
 

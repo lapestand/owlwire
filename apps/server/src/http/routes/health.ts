@@ -1,6 +1,6 @@
 import { isQueueSchemaReady, type OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
-import { ProblemError } from '../problem.js';
+import { ProblemError } from '../../errors.js';
 import type { AppEnv } from '../types.js';
 
 export function dbReadiness(db: OwlwireDb): () => Promise<boolean> {

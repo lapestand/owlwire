@@ -7,11 +7,11 @@ import {
   withTenant,
 } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ProblemError } from '../../../errors.js';
 import { ingestEvent } from '../../../events/ingest.js';
 import { type SeedResult, seedDeliveryWorkspace } from '../../../test/fixtures.js';
 import { createHarness, type Harness } from '../../../test/harness.js';
 import { listJobs } from '../../../test/jobs.js';
-import { ProblemError } from '../../problem.js';
 
 let h: Harness;
 let seed: SeedResult;

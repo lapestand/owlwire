@@ -1,7 +1,8 @@
 import type { OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { ProblemError, problem } from '../../problem.js';
+import { ProblemError } from '../../../errors.js';
+import { problem } from '../../problem.js';
 import type { AppEnv } from '../../types.js';
 import { eventsRoutes } from './events.js';
 import { hooksRoutes } from './hooks.js';

@@ -7,9 +7,8 @@ import {
   withTenant,
 } from '@owlwire/db';
 import type { BaseDeps } from '../base-deps.js';
-import { ProblemError } from '../http/problem.js';
-import type { WorkspaceContext } from '../http/routes/api/env.js';
-import { notFound } from '../http/routes/api/problems.js';
+import { notFound, ProblemError } from '../errors.js';
+import type { WorkspaceContext } from './context.js';
 import { lockForActor } from './write-lock.js';
 
 /**

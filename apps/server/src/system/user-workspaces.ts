@@ -11,8 +11,8 @@ import {
 } from '@owlwire/db';
 import { listMembershipsForUser, SYSTEM, withSystem } from '@owlwire/db/system';
 import type { BaseDeps } from '../base-deps.js';
-import { ProblemError } from '../http/problem.js';
-import type { WorkspaceContext } from '../http/routes/api/env.js';
+import { ProblemError } from '../errors.js';
+import type { WorkspaceContext } from '../workspaces/context.js';
 
 /** Generated slugs carry a random 6 hex suffix; a collision is retried with a new suffix this many times. */
 const SLUG_ATTEMPTS = 5;

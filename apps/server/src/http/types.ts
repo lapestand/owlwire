@@ -1,11 +1,5 @@
 import type { Logger } from 'pino';
-
-export interface InstallationContext {
-  id: string;
-  appId: string;
-  workspaceId: string;
-  grantedTypes: string[] | null;
-}
+import type { InstallationContext } from '../auth/installation-context.js';
 
 export type AppEnv = {
   Variables: {

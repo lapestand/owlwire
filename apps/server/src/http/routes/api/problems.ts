@@ -1,25 +1,14 @@
 import { ProblemDetails, type WorkspaceDto } from '@owlwire/contracts';
 import { roleAtLeast, type WorkspaceRole } from '@owlwire/core';
-import {
-  AuditDataError,
-  InvalidScopeError,
-  LAST_OWNER,
-  RepoConflictError,
-  RepoInputError,
-  RepoNotFoundError,
-} from '@owlwire/db';
 import type { MiddlewareHandler } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { z } from 'zod';
-import { AUDIT_DATA_DETAIL, NOT_FOUND_DETAIL, ProblemError } from '../../problem.js';
-import type { WorkspaceContext } from './env.js';
+import { notFound, ProblemError } from '../../../errors.js';
+import type { WorkspaceContext } from '../../../workspaces/context.js';
 
 /** Every management route is internal: the web UI uses it, it is not a public integration API. */
 export const TAGS = ['internal'];
 export const SECURITY = [{ cookieAuth: [] as string[] }];
-
-/** Fixed detail of the 422 for repository input errors; the repository reason is not passed on. */
-export const INVALID_INPUT_DETAIL = 'The request contains invalid input.';
 
 export function json<T extends z.ZodType>(schema: T, description: string) {
   return { description, content: { 'application/json': { schema } } };
@@ -41,45 +30,9 @@ export function problems(...codes: ProblemStatus[]) {
   ) as Record<ProblemStatus, ReturnType<typeof json<typeof ProblemDetails>>>;
 }
 
-/** The same body as the repository not-found 404: unknown, foreign, deleted and malformed ids look alike. */
-export function notFound(): ProblemError {
-  return new ProblemError(404, 'not_found', NOT_FOUND_DETAIL);
-}
-
 /** 403 forbidden unless the caller's role in the workspace is at least `min`. */
 export function assertRole(ws: WorkspaceContext, min: WorkspaceRole): void {
   if (!roleAtLeast(ws.role, min)) throw new ProblemError(403, 'forbidden');
-}
-
-export function decisionProblem(d: {
-  ok: false;
-  reason: 'forbidden' | 'last_owner' | 'personal_workspace';
-}): ProblemError {
-  return d.reason === 'forbidden'
-    ? new ProblemError(403, 'forbidden')
-    : new ProblemError(409, 'conflict', d.reason);
-}
-
-/**
- * Problem for an error the data layer raised, or null when the error is not one of them. Every detail is a fixed
- * text or a known reason code; nothing from the request or the database row is echoed.
- */
-export function repositoryProblem(err: unknown): ProblemError | null {
-  if (err instanceof RepoNotFoundError || err instanceof InvalidScopeError) return notFound();
-  if (err instanceof RepoConflictError) {
-    return new ProblemError(
-      409,
-      'conflict',
-      err.constraint === LAST_OWNER ? LAST_OWNER : undefined,
-    );
-  }
-  if (err instanceof RepoInputError) {
-    return new ProblemError(422, 'validation_failed', INVALID_INPUT_DETAIL);
-  }
-  if (err instanceof AuditDataError) {
-    return new ProblemError(422, 'validation_failed', AUDIT_DATA_DETAIL);
-  }
-  return null;
 }
 
 /** Fixed details for client errors raised by the framework; the framework's own messages may quote the request. */

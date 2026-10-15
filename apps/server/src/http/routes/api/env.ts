@@ -1,20 +1,5 @@
-import type { WorkspaceRole } from '@owlwire/core';
-import type { WorkspaceSummary } from '@owlwire/db';
-
-/** The signed-in user as the API sees it; `sessionAuth` sets it. Defined here so the middleware can import ApiEnv. */
-export interface SessionUser {
-  id: string;
-  email: string;
-  name: string;
-  emailVerified: boolean;
-  isInstanceAdmin: boolean;
-  twoFactorEnabled: boolean;
-}
-
-/** Set by the workspace access middleware for workspace routes. */
-export interface WorkspaceContext extends WorkspaceSummary {
-  role: WorkspaceRole;
-}
+import type { SessionUser } from '../../../auth/session-user.js';
+import type { WorkspaceContext } from '../../../workspaces/context.js';
 
 export type ApiEnv = {
   Variables: {

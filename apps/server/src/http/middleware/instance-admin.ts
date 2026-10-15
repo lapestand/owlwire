@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from 'hono';
-import { ProblemError } from '../problem.js';
+import { ProblemError } from '../../errors.js';
 import type { ApiEnv } from '../routes/api/env.js';
 
 /**

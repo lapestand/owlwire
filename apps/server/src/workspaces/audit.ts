@@ -9,7 +9,7 @@ import {
   withTenant,
 } from '@owlwire/db';
 import type { BaseDeps } from '../base-deps.js';
-import { ProblemError } from '../http/problem.js';
+import { ProblemError } from '../errors.js';
 
 /** Fixed details of the 422s below; the rejected value is never echoed. */
 const INVALID_CURSOR_DETAIL = 'invalid cursor';

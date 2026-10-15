@@ -12,6 +12,7 @@ import {
 } from '@owlwire/contracts';
 import type { InvitationRow } from '@owlwire/db';
 import type { Deps } from '../../../deps.js';
+import { notFound } from '../../../errors.js';
 import { acceptInvitation, lookupInvitation } from '../../../system/invitation-acceptance.js';
 import {
   cancelInvitation,
@@ -19,7 +20,7 @@ import {
   listWorkspaceInvitations,
 } from '../../../workspaces/invitations.js';
 import type { ApiEnv } from './env.js';
-import { assertRole, json, notFound, problems, SECURITY, TAGS } from './problems.js';
+import { assertRole, json, problems, SECURITY, TAGS } from './problems.js';
 
 function toInvitationDto(i: InvitationRow): InvitationDto {
   return {
