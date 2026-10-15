@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const INSTALLATION_TOKEN_PREFIX = 'ow_inst_';
 export const APP_KEY_PREFIX = 'ow_app_';
+export const INVITATION_TOKEN_PREFIX = 'ow_inv_';
 const TOKEN_BYTES = 32;
 const TOKEN_BODY_LENGTH = 43; // ceil(256 / log2(62))
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
@@ -21,9 +22,15 @@ export function base62(bytes: Uint8Array, length: number): string {
   return out.padStart(length, '0');
 }
 
-export function generateToken(kind: 'inst' | 'app'): string {
-  const prefix = kind === 'inst' ? INSTALLATION_TOKEN_PREFIX : APP_KEY_PREFIX;
-  return prefix + base62(randomBytes(TOKEN_BYTES), TOKEN_BODY_LENGTH);
+const TOKEN_PREFIXES = {
+  inst: INSTALLATION_TOKEN_PREFIX,
+  app: APP_KEY_PREFIX,
+  inv: INVITATION_TOKEN_PREFIX,
+} as const;
+
+/** A prefixed token with a 256-bit random body (43 base62 characters). Store only `hashToken(token)`. */
+export function generateToken(kind: keyof typeof TOKEN_PREFIXES): string {
+  return TOKEN_PREFIXES[kind] + base62(randomBytes(TOKEN_BYTES), TOKEN_BODY_LENGTH);
 }
 
 export function hashToken(token: string): string {

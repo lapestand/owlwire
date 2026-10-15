@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { Clock } from '@owlwire/core';
+import type { Clock, RegistrationMode } from '@owlwire/core';
+import { SYSTEM_ACTOR } from '@owlwire/db';
 import type { AuthHooks } from '../auth/auth.js';
 import type { BaseDeps, Deps } from '../deps.js';
 import type { createApp } from '../http/app.js';
 import { createMemoryMailer, type Mailer, type MemoryMailer } from '../mail/mailer.js';
+import { setRegistrationMode } from '../system/registration.js';
+import { listWorkspacesForUser } from '../system/user-workspaces.js';
 import { markUserEmailVerified } from '../system/users.js';
 import { TEST_BASE_URL } from './config.js';
 import { createHarness, type Harness } from './harness.js';
@@ -19,6 +22,8 @@ export interface HarnessOptions {
   hooks?: (base: BaseDeps) => AuthHooks;
   /** OWLWIRE_TRUSTED_PROXIES as parsed config (addresses and CIDR ranges). */
   trustedProxies?: string[];
+  /** Stored registration mode; defaults to 'open' so tests can sign users up. */
+  registration?: RegistrationMode;
 }
 /** @public Request options of AuthHarness.request. */
 export interface HarnessRequest {
@@ -39,6 +44,8 @@ export interface TestUser {
   email: string;
   name: string;
   cookie: string;
+  /** Null when the post sign-up hook did not create one (a test hook that fails or skips it). */
+  personalWorkspaceId: string | null;
 }
 export interface AuthHarness {
   harness: Harness;
@@ -92,6 +99,7 @@ export async function createAuthHarness(opts: HarnessOptions = {}): Promise<Auth
     },
   });
   const { deps, app } = harness;
+  await setRegistrationMode(deps, opts.registration ?? 'open', SYSTEM_ACTOR);
 
   const request = async (path: string, init: HarnessRequest = {}): Promise<Response> => {
     const headers: Record<string, string> = { origin: TEST_BASE_URL, ...init.headers };
@@ -133,7 +141,16 @@ export async function createAuthHarness(opts: HarnessOptions = {}): Promise<Auth
     if (res.status !== 200) throw new Error(`sign-up failed: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as { user: { id: string } };
     if (deps.mailer) await markUserEmailVerified(deps, body.user.id);
-    return { id: body.user.id, email, name, cookie: await signIn(email) };
+    const personal = (await listWorkspacesForUser(deps, body.user.id)).find(
+      (w) => w.kind === 'personal',
+    );
+    return {
+      id: body.user.id,
+      email,
+      name,
+      cookie: await signIn(email),
+      personalWorkspaceId: personal?.id ?? null,
+    };
   };
 
   return {
