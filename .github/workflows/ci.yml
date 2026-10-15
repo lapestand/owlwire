@@ -7,8 +7,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    # edited: a fixed PR title or description re-runs the checks, including PR title and PR issue link.
-    types: [opened, synchronize, reopened, edited]
+    # Not on `edited`: changing the title or description must not re-run the code checks. The pull request
+    # checks (title, issue link) live in pr-title.yml, which does run on `edited` and is required separately.
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -211,11 +212,6 @@ jobs:
     name: Commits
     uses: ./.github/workflows/commits.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
 
-  pull-request:
-    name: Pull request
-    if: github.event_name == 'pull_request'
-    uses: ./.github/workflows/pr-title.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
-
   actionlint:
     name: Workflows
     uses: ./.github/workflows/actionlint.yml # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ form
@@ -264,7 +260,6 @@ jobs:
       - secrets
       - dependency-review
       - commits
-      - pull-request
       - actionlint
       - zizmor
       - spelling
