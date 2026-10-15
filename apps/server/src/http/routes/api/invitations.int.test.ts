@@ -1,4 +1,5 @@
 import { FakeClock } from '@owlwire/core';
+import { SYSTEM_ACTOR } from '@owlwire/db';
 import {
   listAuditActions,
   seedCommunityWorkspace,
@@ -8,6 +9,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createLogger } from '../../../logger.js';
 import { MailMessageError } from '../../../mail/mailer.js';
+import { setRegistrationMode } from '../../../system/registration.js';
 import {
   type AuthHarness,
   createAuthHarness,
@@ -483,5 +485,44 @@ describe('management api: invitations without smtp', () => {
       cookie: joiner.cookie,
     });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('management api: invitations while registration is closed', () => {
+  let h: AuthHarness;
+  let owner: TestUser;
+  let outsider: TestUser;
+  let ws: string;
+  beforeAll(async () => {
+    h = await createAuthHarness();
+    owner = await h.createUser();
+    outsider = await h.createUser();
+    ws = await seedCommunityWorkspace(h.deps.db, owner.id);
+    await setRegistrationMode(h.deps, 'closed', SYSTEM_ACTOR);
+  });
+  afterAll(async () => {
+    await h.close();
+  });
+
+  const invite = (email: string) =>
+    h.request(`/api/workspaces/${ws}/invitations`, { body: { email }, cookie: owner.cookie });
+
+  it('refuses to invite an address with no account, without storing or sending anything', async () => {
+    const email = uniqueEmail('closed-nobody');
+    const res = await invite(email.toUpperCase());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'conflict', detail: 'registration_closed' });
+    expect(h.mailer.outbox.some((m) => m.to === email)).toBe(false);
+    const { rows } = await h.harness.ownerPool.query(
+      'select 1 from invitations where workspace_id = $1 and email = $2',
+      [ws, email],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('still invites an existing account', async () => {
+    const res = await invite(outsider.email);
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as Created).emailSent).toBe(true);
   });
 });
