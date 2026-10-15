@@ -41,8 +41,10 @@ function collapsedErrorLocation(location: string, baseURL: string): string | nul
   } catch {
     return null;
   }
-  const error = url.searchParams.get('error');
-  if (error === null || !ACCOUNT_DEPENDENT_ERRORS.has(error)) return null;
+  // The library appends its code to the error page's own query, so a page that already has `error` carries the
+  // library's code as a later value: every value is checked, and all of them are replaced by one.
+  if (!url.searchParams.getAll('error').some((e) => ACCOUNT_DEPENDENT_ERRORS.has(e))) return null;
+  url.searchParams.delete('error');
   url.searchParams.delete('error_description');
   url.searchParams.set('error', COLLAPSED_ERROR);
   const absolute = /^[a-z][a-z\d+.-]*:/i.test(location);

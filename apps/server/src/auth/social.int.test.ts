@@ -332,42 +332,75 @@ describe('social sign-in', () => {
       expect(await githubAccountsOf(victim.id)).toBe(0);
     });
 
-    it('answers an unverified provider address the same whether or not an account has it', async () => {
-      // Anyone can put an arbitrary unverified address on some provider accounts; the callback must not reveal
-      // through its error code or description whether an Owlwire account exists for that address.
+    /**
+     * Signs in through GitHub with an unverified address, once for an address an account has and once for one no
+     * account has, and returns both callback answers.
+     */
+    const probeBoth = async (errorCallbackURL?: string): Promise<[Response, Response]> => {
       await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
       const existing = await h.createUser(uniqueEmail('probe-existing'));
-      mockGitHub({ email: existing.email, verified: false });
-      const forExisting = await githubRoundTrip(h);
-      vi.restoreAllMocks();
-      mockGitHub({ email: uniqueEmail('probe-absent'), verified: false });
-      const forAbsent = await githubRoundTrip(h);
-
-      for (const res of [forExisting, forAbsent]) {
-        expect(res.status).toBe(302);
-        expect(hasSessionCookie(res)).toBe(false);
+      const answers: Response[] = [];
+      for (const email of [existing.email, uniqueEmail('probe-absent')]) {
+        vi.restoreAllMocks();
+        mockGitHub({ email, verified: false });
+        const start = await h.request('/api/auth/sign-in/social', {
+          body: {
+            provider: 'github',
+            callbackURL: '/',
+            ...(errorCallbackURL ? { errorCallbackURL } : {}),
+          },
+        });
+        answers.push(await completeAtCallback(h, start.clone(), cookieFrom(start)));
       }
-      const location = (res: Response) => new URL(res.headers.get('location') ?? '', TEST_BASE_URL);
-      expect(location(forExisting).href).toBe(location(forAbsent).href);
-      expect([...location(forAbsent).searchParams.keys()]).toEqual(['error']);
+      return [answers[0] as Response, answers[1] as Response];
+    };
+
+    /** Everything a prober sees of the callback answer, cookie values aside (the state cookie is only expired). */
+    const visible = (res: Response) => ({
+      status: res.status,
+      location: new URL(res.headers.get('location') ?? '', TEST_BASE_URL).href,
+      setCookie: res.headers
+        .getSetCookie()
+        .map((c) => c.replace(/^([^=]+)=[^;]*/, '$1=<value>'))
+        .sort(),
+    });
+
+    it('answers an unverified provider address the same whether or not an account has it', async () => {
+      // Anyone can put an arbitrary unverified address on some provider accounts; the callback must not reveal
+      // through its status, cookies, error code or description whether an Owlwire account exists for that address.
+      const [forExisting, forAbsent] = await probeBoth();
+      expect(forAbsent.status).toBe(302);
+      expect(hasSessionCookie(forAbsent)).toBe(false);
+      expect(visible(forExisting)).toEqual(visible(forAbsent));
+      const location = new URL(forAbsent.headers.get('location') ?? '', TEST_BASE_URL);
+      expect([...location.searchParams.keys()]).toEqual(['error']);
       expect(errorOf(forAbsent)).toBe('account_not_linked');
     });
 
     it('collapses the code on the error page the client asked for, keeping that page', async () => {
-      await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
-      mockGitHub({ email: uniqueEmail('probe-page'), verified: false });
-      const start = await h.request('/api/auth/sign-in/social', {
-        body: { provider: 'github', callbackURL: '/', errorCallbackURL: '/sign-in?from=github' },
-      });
-      const res = await completeAtCallback(h, start.clone(), cookieFrom(start));
-      expect(res.status).toBe(302);
-      const location = new URL(res.headers.get('location') ?? '', TEST_BASE_URL);
+      const [forExisting, forAbsent] = await probeBoth('/sign-in?from=github');
+      expect(visible(forExisting)).toEqual(visible(forAbsent));
+      const location = new URL(forAbsent.headers.get('location') ?? '', TEST_BASE_URL);
       expect(location.origin).toBe(TEST_BASE_URL);
       expect(location.pathname).toBe('/sign-in');
       expect(Object.fromEntries(location.searchParams)).toEqual({
         from: 'github',
         error: 'account_not_linked',
       });
+    });
+
+    it('collapses the code when the client error page already carries an error parameter', async () => {
+      // The library appends its code to the page's query, so a page with its own `error` would otherwise put the
+      // account-dependent code second, where reading only the first value misses it.
+      const [forExisting, forAbsent] = await probeBoth('/sign-in?error=x&from=github');
+      expect(visible(forExisting)).toEqual(visible(forAbsent));
+      for (const res of [forExisting, forAbsent]) {
+        const location = new URL(res.headers.get('location') ?? '', TEST_BASE_URL);
+        expect(location.pathname).toBe('/sign-in');
+        expect(location.searchParams.getAll('error')).toEqual(['account_not_linked']);
+        expect(location.searchParams.has('error_description')).toBe(false);
+        expect(location.searchParams.get('from')).toBe('github');
+      }
     });
 
     it('does not link a verified provider address to an unverified local account', async () => {
