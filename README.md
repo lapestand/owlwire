@@ -71,6 +71,14 @@ cp .env.example .env   # fill in the passwords and OWLWIRE_KEK as described in t
 docker compose up -d
 ```
 
+Registration is closed by default. Create the first instance admin; the generated password is printed once:
+
+```sh
+docker compose exec owlwire owlwire admin create --email you@example.com
+# or choose the password yourself:
+echo 'your-long-password' | docker compose exec -T owlwire owlwire admin create --email you@example.com --password-stdin
+```
+
 Upgrading an existing install: [deploy/compose/UPGRADING.md](deploy/compose/UPGRADING.md).
 
 ## Development

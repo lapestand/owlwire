@@ -157,6 +157,10 @@ its hops are walked from the right, trusted proxies are skipped, and the first u
 is not an address stops the walk. Behind an unlisted proxy, every user shares the proxy's limit (a denial of service
 risk, not a bypass); listing a range that also contains clients would let those clients pick their own address.
 
+`serve` cannot see a proxy, so it guesses: the server itself speaks plain HTTP, and an `https://` public URL means TLS
+ends somewhere in front of it. With an `https://` `OWLWIRE_PUBLIC_URL` and an empty `OWLWIRE_TRUSTED_PROXIES` it logs a
+startup warning. A deployment that terminates TLS on the same host without a proxy can ignore it.
+
 ## Management API (`/api`)
 
 The web UI's API is authenticated with the session cookie. Every path under `/api` requires a session except an
@@ -179,6 +183,30 @@ Cross-site request forgery is refused in layers:
 Errors are Problem Details with fixed details: framework client errors (malformed JSON `400`, a body that is not JSON
 `415`) and data-layer errors never echo the request or a database value. An unknown, foreign, deleted or malformed
 workspace id gets one identical `404` body.
+
+## Instance administrators
+
+An instance admin is a user with `auth_user.is_instance_admin` set. Only the auth role can write that flag, and the
+API has no route that grants it: the only way in is the `owlwire admin create` command, which needs the server's
+database credentials, so shell access to the deployment is the trust boundary.
+
+- `owlwire admin create --email <email> [--name <name>] [--password-stdin]` migrates the database, then creates the
+  user (email marked verified, no verification email) or promotes an existing one. Creating the user bypasses the
+  registration mode, so a `closed` instance can get its first admin; nothing else can. The grant writes an
+  instance-level `instance.admin_granted` audit entry.
+- Without `--password-stdin` a random 24 character password is generated and printed once; it is never logged or
+  stored in clear. A password is never accepted as a command-line argument (it would land in shell history and the
+  process list). For an existing user, a password from stdin is ignored and the command says so: promoting never
+  changes credentials.
+- An invalid email or a password shorter than 10 characters exits with code `2` before connecting to the database.
+- `/api/admin/*` requires a session of an instance admin (`403 forbidden` otherwise). `GET` and `PUT
+  /api/admin/settings/registration` read and store the registration mode (`closed`, `invite`, `open`); a stored value
+  overrides the edition config, and every change writes a `settings.updated` audit entry with the admin as actor.
+
+At startup `serve` logs, without values, setup problems that weaken sign-in: no instance admin (with the command to
+run), no SMTP (email-less personal mode), social sign-in without `OWLWIRE_PUBLIC_URL`, an `http://` public URL with
+`NODE_ENV=production` (no `Secure` cookies, passkeys only on localhost, no verification or reset emails) and the
+trusted-proxy case above. These are warnings: the server still starts.
 
 ## Background jobs
 
