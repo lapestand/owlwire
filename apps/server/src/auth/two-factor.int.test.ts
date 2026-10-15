@@ -18,6 +18,10 @@ describe('two factor and passkeys', () => {
     await h.close();
   });
 
+  const secrets = new Map<string, string>();
+  const hasSessionCookie = (res: Response): boolean =>
+    res.headers.getSetCookie().some((c) => /session_token=[^;]+/.test(c));
+
   /** Enables TOTP for the user and confirms it with a first code; returns the base32 secret and backup codes. */
   const enableTotp = async (u: TestUser): Promise<{ secret: string; backupCodes: string[] }> => {
     const enable = await h.request('/api/auth/two-factor/enable', {
@@ -35,7 +39,19 @@ describe('two factor and passkeys', () => {
       cookie: u.cookie,
     });
     expect(verify.status).toBe(200);
+    secrets.set(u.id, secret);
     return { secret, backupCodes };
+  };
+
+  /** Signs a TOTP user in with the password and a current code; returns the session cookie. */
+  const signInWithTotp = async (u: TestUser): Promise<string> => {
+    const challenge = cookieFrom(await h.signInResponse(u.email));
+    const res = await h.request('/api/auth/two-factor/verify-totp', {
+      body: { code: totp(secrets.get(u.id) ?? '', new Date()) },
+      cookie: challenge,
+    });
+    expect(res.status).toBe(200);
+    return cookieFrom(res);
   };
 
   it('enables TOTP and then requires a second factor at sign-in', async () => {
@@ -144,6 +160,114 @@ describe('two factor and passkeys', () => {
       cookie,
     });
     expect(ok.status).toBe(200);
+  });
+
+  it('locks the account after 10 failed codes across challenges, even for the right code', async () => {
+    const u = await h.createUser();
+    const { secret, backupCodes } = await enableTotp(u);
+    const good = totp(secret, new Date());
+    const wrong = good === '000000' ? '111111' : '000000';
+    // Each challenge allows 5 attempts; two challenges reach the account limit of 10. Every request comes from a
+    // fresh client address, so the per-client rate limit is not what refuses them.
+    for (let challenge = 0; challenge < 2; challenge++) {
+      const cookie = cookieFrom(await h.signInResponse(u.email));
+      for (let i = 0; i < 5; i++) {
+        const res = await h.request('/api/auth/two-factor/verify-totp', {
+          body: { code: wrong },
+          cookie,
+        });
+        expect(res.status).toBe(401);
+      }
+    }
+    const { rows } = await h.harness.ownerPool.query<{ locked_until: Date | null }>(
+      'select locked_until from auth_two_factor where user_id = $1',
+      [u.id],
+    );
+    expect(rows[0]?.locked_until?.getTime()).toBeGreaterThan(Date.now());
+
+    const fresh = cookieFrom(await h.signInResponse(u.email));
+    const byTotp = await h.request('/api/auth/two-factor/verify-totp', {
+      body: { code: totp(secret, new Date()) },
+      cookie: fresh,
+    });
+    expect(byTotp.status).toBe(429);
+    expect(await byTotp.json()).toMatchObject({ code: 'ACCOUNT_TEMPORARILY_LOCKED' });
+    expect(hasSessionCookie(byTotp)).toBe(false);
+    const byBackup = await h.request('/api/auth/two-factor/verify-backup-code', {
+      body: { code: backupCodes[0] },
+      cookie: fresh,
+    });
+    expect(byBackup.status).toBe(429);
+    expect(hasSessionCookie(byBackup)).toBe(false);
+  });
+
+  describe('disabling TOTP', () => {
+    const totpEnabled = async (userId: string): Promise<boolean> => {
+      const { rows } = await h.harness.ownerPool.query<{ on: boolean; n: number }>(
+        `select u.two_factor_enabled as on,
+                (select count(*)::int from auth_two_factor t where t.user_id = u.id) as n
+           from auth_user u where u.id = $1`,
+        [userId],
+      );
+      return rows[0]?.on === true && rows[0]?.n === 1;
+    };
+
+    it('disables TOTP with the password and a live session', async () => {
+      const u = await h.createUser();
+      await enableTotp(u);
+      // Turning TOTP on replaced the session; sign in again with both factors for a live one.
+      const cookie = await signInWithTotp(u);
+      const res = await h.request('/api/auth/two-factor/disable', {
+        body: { password: TEST_PASSWORD },
+        cookie,
+      });
+      expect(res.status).toBe(200);
+      expect(await totpEnabled(u.id)).toBe(false);
+    });
+
+    it('refuses a wrong password', async () => {
+      const u = await h.createUser();
+      await enableTotp(u);
+      // Turning TOTP on replaced the session; sign in again with both factors for a live one.
+      const cookie = await signInWithTotp(u);
+      const res = await h.request('/api/auth/two-factor/disable', {
+        body: { password: 'not-the-password' },
+        cookie,
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: 'INVALID_PASSWORD' });
+      expect(await totpEnabled(u.id)).toBe(true);
+    });
+
+    it('refuses a session that was revoked', async () => {
+      const u = await h.createUser();
+      await enableTotp(u);
+      const cookie = await signInWithTotp(u);
+      const signOut = await h.request('/api/auth/sign-out', { method: 'POST', body: {}, cookie });
+      expect(signOut.status).toBe(200);
+      const res = await h.request('/api/auth/two-factor/disable', {
+        body: { password: TEST_PASSWORD },
+        cookie,
+      });
+      expect(res.status).toBe(401);
+      expect(await totpEnabled(u.id)).toBe(true);
+    });
+
+    it('refuses a session that has expired', async () => {
+      const u = await h.createUser();
+      await enableTotp(u);
+      const cookie = await signInWithTotp(u);
+      await h.harness.ownerPool.query(
+        "update auth_session set expires_at = now() - interval '1 minute' where user_id = $1",
+        [u.id],
+      );
+      const res = await h.request('/api/auth/two-factor/disable', {
+        body: { password: TEST_PASSWORD },
+        cookie,
+      });
+      expect(res.status).toBe(401);
+      expect(await totpEnabled(u.id)).toBe(true);
+    });
   });
 
   it('does not send OTP codes: no delivery channel is configured', async () => {
