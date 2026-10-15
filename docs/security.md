@@ -104,6 +104,13 @@ workspace, so they have no `workspace_id` and no tenant RLS: the library reads a
   verified answers `403 EMAIL_NOT_VERIFIED` instead of `401`. It confirms that the account exists, but only to
   someone who already knows its password, and the user needs it to understand why sign-in fails. It is kept on
   purpose.
+- **The verification link opens no session.** Following the emailed link only marks the address verified; the user
+  then signs in with the password and, when it is on, the second factor. A session created from the link would let
+  anyone who controls the mailbox skip both, because anyone can ask for a new verification email for any address.
+- **Turning SMTP on later.** Without SMTP, sign-up does not verify addresses. Once `OWLWIRE_SMTP_URL` is set, every
+  account created before then counts as unverified: signing in answers `403 EMAIL_NOT_VERIFIED` until the user asks
+  for a verification email (`POST /api/auth/send-verification-email`) and follows its link. Accepting an invitation
+  needs a verified address too. Accounts made with `owlwire admin create` are verified already.
 
 ### Social sign-in, two-factor authentication and passkeys
 

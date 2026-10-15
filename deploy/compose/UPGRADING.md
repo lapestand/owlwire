@@ -42,6 +42,12 @@
    warns about it. With `NODE_ENV=production`, `serve` also warns when `OWLWIRE_SMTP_URL` is `smtp://` without
    `?requireTLS=true`; use `smtps://` or add that flag so mail with sign-in links cannot be downgraded to clear text.
 
+   **Setting `OWLWIRE_SMTP_URL` on an instance that ran without it** turns on email verification for every account.
+   Accounts created without SMTP are unverified, so their sign-in answers `403 EMAIL_NOT_VERIFIED` until the user
+   requests a verification email and follows the link (the link verifies only; the user then signs in as usual, with
+   the second factor if it is on). Accounts created with `owlwire admin create` are already verified. Tell your users
+   before you turn SMTP on.
+
 5. **Create an instance admin.** Registration is `closed` by default (personal profile), so nobody can sign up
    until an admin exists or the mode is changed. Run
    `docker compose exec owlwire owlwire admin create --email you@example.com`; it creates the user with a verified
