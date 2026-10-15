@@ -26,12 +26,20 @@ export function toSessionUser(u: RawUser): SessionUser {
   };
 }
 
-/** Resolves the session cookie to the signed-in user; without a valid session the request ends with 401. */
+/**
+ * Resolves the session cookie to the signed-in user; without a valid session the request ends with 401. When the
+ * library extends the session (at most once a day of activity) it re-issues the cookie with the new lifetime; that
+ * Set-Cookie is forwarded on the response, so the browser's cookie keeps sliding with the session.
+ */
 export function sessionAuth(auth: Auth): MiddlewareHandler<ApiEnv> {
   return async (c, next) => {
-    const result = await auth.api.getSession({ headers: c.req.raw.headers });
-    if (!result) throw new ProblemError(401, 'unauthorized');
-    c.set('user', toSessionUser(result.user as RawUser));
+    const { headers, response } = await auth.api.getSession({
+      headers: c.req.raw.headers,
+      returnHeaders: true,
+    });
+    if (!response) throw new ProblemError(401, 'unauthorized');
+    c.set('user', toSessionUser(response.user as RawUser));
     await next();
+    for (const cookie of headers.getSetCookie()) c.res.headers.append('set-cookie', cookie);
   };
 }
