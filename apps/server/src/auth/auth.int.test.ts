@@ -350,7 +350,7 @@ describe('auth email failures', () => {
     });
     expect(res.status).toBe(200);
     expect(await findUserByEmail(h.deps, email)).not.toBeNull();
-    const log = await logged(lines, 'auth email not sent');
+    const log = await logged(lines, '"msg":"email not sent"');
     expect(log).toContain(`"reason":"${name}"`);
     expect(log).not.toContain('verify-email');
     expect(log).not.toContain(email);
@@ -360,7 +360,8 @@ describe('auth email failures', () => {
     const sent: string[] = [];
     const { res, lines } = await signUpWith(async () => void sent.push('sent'), false);
     expect(res.status).toBe(200);
-    const log = await logged(lines, '"reason":"InsecureLinkError"');
+    const log = await logged(lines, '"reason":"insecure_public_url"');
+    expect(log).toContain('"msg":"email not sent"');
     expect(sent).toEqual([]);
     expect(log).not.toContain('token=');
   });

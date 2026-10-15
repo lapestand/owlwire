@@ -18,14 +18,17 @@ export function canEmailLinks(baseURL: string, allowHttp: boolean): boolean {
   return protocol === 'https:' || (allowHttp && protocol === 'http:');
 }
 
-/** Log fields for a failed email: the error's class and code, never the link, address or message. */
+/** Log message of every email that was not sent (sign-in, reset and invitation emails); `kind` tells them apart. */
+export const MAIL_NOT_SENT = 'email not sent';
+
+/** Log reason of an email skipped because its link would travel over plain http in production. */
+export const INSECURE_LINK_REASON = 'insecure_public_url';
+
+/** Log fields for a failed email: the error's class or reason and code, never the link, address or message. */
 export function mailFailure(err: unknown): { reason: string; code?: string } {
+  if (err instanceof InsecureLinkError) return { reason: INSECURE_LINK_REASON };
   const reason =
-    err instanceof MailTemplateError ||
-    err instanceof MailMessageError ||
-    err instanceof InsecureLinkError
-      ? err.name
-      : 'transport';
+    err instanceof MailTemplateError || err instanceof MailMessageError ? err.name : 'transport';
   const code = (err as { code?: unknown } | null)?.code;
   return { reason, ...(typeof code === 'string' ? { code } : {}) };
 }
