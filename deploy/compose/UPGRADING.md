@@ -1,6 +1,6 @@
 # Upgrading the compose deployment
 
-## Unreleased: accounts and sign-in (auth database role)
+## To 0.36 (accounts and sign-in, auth database role)
 
 1. **New required variables `OWLWIRE_DB_AUTH_PASSWORD` and `OWLWIRE_AUTH_SECRET`.** Sign-in data (sessions, password
    hashes, sign-in and reset tokens) lives in tables that only a third database role, `owlwire_auth`, can read. The
