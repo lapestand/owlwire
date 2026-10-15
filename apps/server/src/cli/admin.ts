@@ -1,4 +1,4 @@
-import type { Command } from 'commander';
+import { type Command, CommanderError } from 'commander';
 import type { ServerConfig } from '../config/load.js';
 import { closeDeps, createDeps, type Deps } from '../deps.js';
 import { createLogger } from '../logger.js';
@@ -48,6 +48,14 @@ export function formatAdminCreateResult(email: string, r: BootstrapInstanceAdmin
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * A usage error of `admin create` (a missing or empty `--email`, an unknown option) is invalid input too: commander's
+ * own exit code 1 becomes 2. Help keeps 0. The error is rethrown for the entry point to exit with.
+ */
+function usageExit(err: CommanderError): never {
+  throw new CommanderError(err.exitCode === 0 ? 0 : 2, err.code, err.message);
 }
 
 /**
@@ -101,6 +109,7 @@ export function registerAdminCommands(
     .description(
       'create an instance admin, or promote an existing user (migrates the database first)',
     )
+    .exitOverride(usageExit)
     .requiredOption('--email <email>', 'admin email address')
     .option('--name <name>', 'display name (default: the local part of the email)')
     .option(
