@@ -20,12 +20,17 @@ export class AdminInputError extends Error {
 }
 
 /**
- * A sign-up for the same email ran between the command's existence check and its own sign-up, so the stored user is
- * not the one the command made. It is not promoted: running the command again promotes it knowingly.
+ * A sign-up for the same email ran between the command's existence check and its own sign-up, so the stored account
+ * is not the one the command made, and its password is someone else's. Nothing is changed. The message names the
+ * promote path and says to check ownership first; that path then says whether the account's email is verified.
  */
 export class ConcurrentAdminUserError extends Error {
-  constructor() {
-    super('a user with this email was created concurrently; run the command again');
+  constructor(email: string) {
+    super(
+      `an account with the email ${email} already exists and was not created by this command; nothing was ` +
+        'changed. Promoting an existing account makes whoever controls it an instance admin: only if you have ' +
+        `checked that it is yours, promote it with \`owlwire admin create --email ${email}\`.`,
+    );
     this.name = 'ConcurrentAdminUserError';
   }
 }
@@ -43,6 +48,11 @@ export interface BootstrapInstanceAdminResult {
   generatedPassword: string | null;
   /** An existing user keeps their password: a provided one is not applied. */
   passwordIgnored: boolean;
+  /**
+   * Whether the account's email is verified. A created admin always is; a promoted account may not be, and then
+   * nothing proves that the address owner made it.
+   */
+  emailVerified: boolean;
 }
 
 /** The sign-in library's default maxPasswordLength; a longer password would fail inside sign-up. */
@@ -96,6 +106,7 @@ export async function bootstrapInstanceAdmin(
       created: false,
       generatedPassword: null,
       passwordIgnored: input.password !== undefined,
+      emailVerified: existing.emailVerified,
     };
   }
 
@@ -112,10 +123,16 @@ export async function bootstrapInstanceAdmin(
   // belongs to whoever signed up first: it must not be promoted with a password the command never set.
   const created = await withSystem(deps.authDb, SYSTEM, (s) => findAuthUserByEmail(s, input.email));
   if (!created) throw new Error('the sign-in library did not create the admin user');
-  if (created.id !== signedUp.user.id) throw new ConcurrentAdminUserError();
+  if (created.id !== signedUp.user.id) throw new ConcurrentAdminUserError(input.email);
   await withSystem(deps.authDb, SYSTEM, async (s) => {
     await markEmailVerified(s, created.id);
     await grantInstanceAdmin(s, created.id, SYSTEM_ACTOR);
   });
-  return { userId: created.id, created: true, generatedPassword, passwordIgnored: false };
+  return {
+    userId: created.id,
+    created: true,
+    generatedPassword,
+    passwordIgnored: false,
+    emailVerified: true,
+  };
 }

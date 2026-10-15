@@ -51,9 +51,9 @@ export function formatAdminCreateResult(email: string, r: BootstrapInstanceAdmin
 }
 
 /**
- * Exit codes: 0 done, 2 invalid input (also a terminal as stdin for --password-stdin) or a user created concurrently
- * with the same email. The input is checked before any database access, so a typo never migrates or connects. The
- * password read from stdin is never printed.
+ * Exit codes: 0 done, 2 invalid input (also a terminal as stdin for --password-stdin) or an account that another
+ * sign-up created with the same email while the command ran (nothing is changed then). The input is checked before
+ * any database access, so a typo never migrates or connects. The password read from stdin is never printed.
  */
 export async function runAdminCreate(opts: AdminCreateOptions, io: AdminCreateIo): Promise<number> {
   if (opts.passwordStdin && io.stdinIsTty()) {
@@ -73,6 +73,12 @@ export async function runAdminCreate(opts: AdminCreateOptions, io: AdminCreateIo
     const result = await io.withDeps((deps) => bootstrapInstanceAdmin(deps, input));
     if (result.passwordIgnored) {
       io.err(`Warning: ${input.email} already exists; the password from stdin was ignored.`);
+    }
+    if (!result.created && !result.emailVerified) {
+      io.err(
+        `Warning: ${input.email} was an existing account with an unverified email, so nothing proves that the ` +
+          'owner of that address created it. Check that the account is yours.',
+      );
     }
     io.out(formatAdminCreateResult(input.email, result));
     return 0;

@@ -34,6 +34,7 @@ function fakeIo(
         created: true,
         generatedPassword: 'gen-pass',
         passwordIgnored: false,
+        emailVerified: true,
       }) as T;
     },
   };
@@ -47,6 +48,7 @@ describe('admin cli helpers', () => {
       created: true,
       generatedPassword: 'gen-pass',
       passwordIgnored: false,
+      emailVerified: true,
     });
     expect(out).toContain('root@x.test');
     expect(out.split('gen-pass')).toHaveLength(2);
@@ -59,6 +61,7 @@ describe('admin cli helpers', () => {
         created: false,
         generatedPassword: null,
         passwordIgnored: false,
+        emailVerified: true,
       }),
     ).toBe('Existing user a@x.test is now an instance admin.');
     expect(
@@ -67,6 +70,7 @@ describe('admin cli helpers', () => {
         created: true,
         generatedPassword: null,
         passwordIgnored: false,
+        emailVerified: true,
       }),
     ).not.toContain('password');
   });
@@ -122,13 +126,38 @@ describe('runAdminCreate', () => {
     expect(await runAdminCreate({ email: 'root@x.test' }, fakeIo({ tty: true }).io)).toBe(0);
   });
 
-  it('exits 2 when a concurrent sign-up took the email', async () => {
-    const f = fakeIo({ fail: new ConcurrentAdminUserError() });
+  it('exits 2 when a concurrent sign-up took the email, and names the promote path instead of a retry', async () => {
+    const f = fakeIo({ fail: new ConcurrentAdminUserError('root@x.test') });
     expect(await runAdminCreate({ email: 'root@x.test' }, f.io)).toBe(2);
-    expect(f.err).toEqual([
-      'a user with this email was created concurrently; run the command again',
-    ]);
     expect(f.out).toEqual([]);
+    const text = f.err.join('\n');
+    expect(text).toContain('an account with the email root@x.test already exists');
+    expect(text).toContain('was not created by this command; nothing was changed');
+    expect(text).toContain('`owlwire admin create --email root@x.test`');
+    expect(text).toMatch(/checked that it is yours/);
+    expect(text).not.toMatch(/run the command again/);
+  });
+
+  it('warns when the promoted existing account has an unverified email', async () => {
+    const promoted = (emailVerified: boolean) =>
+      fakeIo({
+        result: {
+          userId: 'u1',
+          created: false,
+          generatedPassword: null,
+          passwordIgnored: false,
+          emailVerified,
+        },
+      });
+    const unverified = promoted(false);
+    expect(await runAdminCreate({ email: 'root@x.test' }, unverified.io)).toBe(0);
+    expect(unverified.out).toEqual(['Existing user root@x.test is now an instance admin.']);
+    expect(unverified.err.join('\n')).toMatch(
+      /unverified email.*\n?.*Check that the account is yours/s,
+    );
+    const verified = promoted(true);
+    expect(await runAdminCreate({ email: 'root@x.test' }, verified.io)).toBe(0);
+    expect(verified.err).toEqual([]);
   });
 
   it('exits 0 and prints the result', async () => {
@@ -140,7 +169,13 @@ describe('runAdminCreate', () => {
   it('warns when the stdin password was ignored for an existing user', async () => {
     const f = fakeIo({
       stdin: 'a-very-long-password\n',
-      result: { userId: 'u1', created: false, generatedPassword: null, passwordIgnored: true },
+      result: {
+        userId: 'u1',
+        created: false,
+        generatedPassword: null,
+        passwordIgnored: true,
+        emailVerified: true,
+      },
     });
     expect(await runAdminCreate({ email: 'root@x.test', passwordStdin: true }, f.io)).toBe(0);
     expect(f.err.join('\n')).toContain('password from stdin was ignored');

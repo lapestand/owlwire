@@ -261,9 +261,12 @@ database credentials, so shell access to the deployment is the trust boundary.
 - An invalid email, or a password shorter than 10 or longer than 128 characters, exits with code `2` before connecting
   to the database. So does `--password-stdin` when stdin is a terminal (it would wait and echo the password): pipe
   the password instead. Exactly one trailing newline is removed from a piped password.
-- If a sign-up for the same email lands between the command's existence check and its own sign-up, the stored user
-  is not the one the command created. The command then promotes nobody and exits with code `2`; running it again
-  promotes the existing user knowingly.
+- If a sign-up for the same email lands between the command's existence check and its own sign-up, the stored account
+  is not the one the command created and its password is someone else's. The command then changes nothing and exits
+  with code `2`, saying the account was not created by it. It does not suggest a retry: it names the promote path
+  (`owlwire admin create --email <email>` on an existing account) and says to use it only after checking that the
+  account is yours. Promoting an existing account whose email is unverified prints a warning that nothing proves the
+  address owner created it.
 - `/api/admin/*` requires a session of an instance admin (`403 forbidden` otherwise). `GET` and `PUT
   /api/admin/settings/registration` read and store the registration mode (`closed`, `invite`, `open`); a stored value
   overrides the edition config, and every change writes a `settings.updated` audit entry with the admin as actor.

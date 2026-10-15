@@ -76,6 +76,7 @@ describe('instance admin bootstrap', () => {
       created: false,
       generatedPassword: null,
       passwordIgnored: true,
+      emailVerified: true,
     });
     expect((await findUserByEmail(h.deps, u.email))?.isInstanceAdmin).toBe(true);
     expect((await h.signInResponse(u.email)).status).toBe(200);
@@ -85,6 +86,7 @@ describe('instance admin bootstrap', () => {
       created: false,
       generatedPassword: null,
       passwordIgnored: false,
+      emailVerified: true,
     });
   });
 
@@ -121,7 +123,7 @@ describe('instance admin bootstrap', () => {
           },
           { email },
         ),
-      ).rejects.toBeInstanceOf(ConcurrentAdminUserError);
+      ).rejects.toThrow(new ConcurrentAdminUserError(email.toLowerCase()).message);
     } finally {
       await setRegistrationMode(h.deps, 'closed', SYSTEM_ACTOR);
     }
@@ -129,6 +131,15 @@ describe('instance admin bootstrap', () => {
     const user = await findUserByEmail(h.deps, email);
     expect(user?.id).toBe(stranger);
     expect(user?.isInstanceAdmin).toBe(false);
+    expect(user?.emailVerified).toBe(false);
+    // The promote path named in the message is explicit about whose account it is promoting.
+    expect(await bootstrapInstanceAdmin(h.deps, { email })).toEqual({
+      userId: stranger,
+      created: false,
+      generatedPassword: null,
+      passwordIgnored: false,
+      emailVerified: false,
+    });
   });
 
   it('refuses an invalid email', async () => {
