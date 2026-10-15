@@ -157,6 +157,29 @@ its hops are walked from the right, trusted proxies are skipped, and the first u
 is not an address stops the walk. Behind an unlisted proxy, every user shares the proxy's limit (a denial of service
 risk, not a bypass); listing a range that also contains clients would let those clients pick their own address.
 
+## Management API (`/api`)
+
+The web UI's API is authenticated with the session cookie. Every path under `/api` requires a session except an
+explicit allowlist of public routes (today only `GET /api/auth-config`), so a route added later is protected unless
+it is deliberately made public; a test walks every registered route and expects `401` without a session. The sign-in
+routes under `/api/auth/*` are served by the sign-in library and are not part of this router.
+
+Cross-site request forgery is refused in layers:
+
+- The session cookie is `SameSite=Lax`, so browsers do not send it on cross-site `POST`, `PUT`, `PATCH` or `DELETE`.
+- Request bodies must be `application/json`. A form, multipart, plain-text body or a body without a content type is
+  refused with `415`; an HTML form cannot produce a JSON body, and a cross-origin `fetch` with JSON needs a CORS
+  preflight, which the server never grants.
+- An explicit check on every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`): a request whose `Origin`
+  header is present and is not the origin of `OWLWIRE_PUBLIC_URL`, or whose `Sec-Fetch-Site` is `cross-site`, gets
+  `403 forbidden` with a fixed detail. This also covers a sibling subdomain (same site, other origin), where
+  `SameSite` does not help. Requests with neither header pass: browsers always send at least one of them on these
+  methods, so only non-browser clients, which cannot ride a victim's cookie, omit both.
+
+Errors are Problem Details with fixed details: framework client errors (malformed JSON `400`, a body that is not JSON
+`415`) and data-layer errors never echo the request or a database value. An unknown, foreign, deleted or malformed
+workspace id gets one identical `404` body.
+
 ## Background jobs
 
 - A job enqueued with a `TenantTx` is namespaced to its workspace. Its queue name and job key become
