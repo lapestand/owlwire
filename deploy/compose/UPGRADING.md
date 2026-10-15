@@ -35,6 +35,12 @@
    `http://` public URL the server skips those emails and logs a warning instead of sending a link that would expose
    its token in transit.
 
+5. **Create an instance admin.** Registration is `closed` by default (personal profile), so nobody can sign up
+   until an admin exists or the mode is changed. Run
+   `docker compose exec owlwire owlwire admin create --email you@example.com`; it creates the user with a verified
+   email and prints a generated password once (or reads one with `--password-stdin`), or promotes an existing user.
+   `serve` logs a warning on every start while no admin exists.
+
 ## To 0.35 (two database roles, row level security)
 
 1. **New required variable `OWLWIRE_DB_APP_PASSWORD`.** The server now connects as the application role `owlwire_app`,
