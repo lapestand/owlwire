@@ -222,9 +222,21 @@ belongs to a member is `409 already_member`; inviting an address again replaces 
   SMTP is configured (`403 email_not_verified`). Acceptance takes the workspace lock that deletion takes, so it never
   joins a workspace deleted meanwhile, and locks the invitation row against a concurrent revoke. Accepting again is
   answered `200` without new audit entries.
-- In `invite` registration mode, signing up with an address that has a pending invitation is allowed; the sign-up does
-  not need the token. Without SMTP nothing verifies that address, so on such an instance anyone who knows an invited
-  address can create an account with it and then needs the token to join the workspace.
+- In `invite` registration mode an email sign-up (`POST /api/auth/sign-up/email`) must carry the invitation token in
+  the `x-owlwire-invitation` request header. The sign-up hook admits it only when the token belongs to an open,
+  unexpired invitation of a live workspace addressed to the signing-up email (both lower-cased); anything
+  else, including a missing or malformed token and a server-side call without a request, fails closed. Knowing an
+  invited address is not enough: the token is the only proof of the mailbox (it was mailed) or of the inviter's
+  intent (it was handed over), with or without SMTP. A refusal gets the same `200` as any sign-up, the token is
+  never logged, and the check costs the same as the public lookup. The header is a request header, not a body
+  field, because the auth library validates the sign-up body.
+- Only the provider redirect callback (`/api/auth/callback/<provider>`) skips the token in `invite` mode: the provider
+  has verified the address, so a pending invitation for it is enough. Every other path needs the token, including
+  other routes under `/callback/` and a social sign-in with an id token (`POST /api/auth/sign-in/social` with
+  `idToken`), which is refused. Signing up never accepts an invitation; the client signs in and calls
+  `POST /api/invitations/accept`, which checks the token and the email again.
+- A personal workspace has only its owner and takes no invitations: creating one and accepting one are both
+  `409 personal_workspace`.
 
 ## Instance administrators
 
@@ -244,6 +256,8 @@ database credentials, so shell access to the deployment is the trust boundary.
 - `/api/admin/*` requires a session of an instance admin (`403 forbidden` otherwise). `GET` and `PUT
   /api/admin/settings/registration` read and store the registration mode (`closed`, `invite`, `open`); a stored value
   overrides the edition config, and every change writes a `settings.updated` audit entry with the admin as actor.
+  In `invite` mode an email sign-up needs the invitation token in the `x-owlwire-invitation` header (see
+  Invitations).
 
 At startup `serve` logs, without values, setup problems that weaken sign-in: no instance admin (with the command to
 run), no SMTP (email-less personal mode), social sign-in without `OWLWIRE_PUBLIC_URL`, an `http://` public URL with

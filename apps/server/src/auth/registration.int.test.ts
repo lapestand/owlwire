@@ -1,6 +1,13 @@
 import { PERSONAL_SLUG_PATTERN, personalSlug } from '@owlwire/core';
-import { SYSTEM_ACTOR, softDeleteWorkspace, tenantScope, withTenant } from '@owlwire/db';
+import {
+  revokeInvitation,
+  SYSTEM_ACTOR,
+  softDeleteWorkspace,
+  tenantScope,
+  withTenant,
+} from '@owlwire/db';
 import { listAuditActions, seedCommunityWorkspace, seedInvitation } from '@owlwire/db/fixtures';
+import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensurePersonalWorkspace } from '../system/personal-workspace.js';
 import {
@@ -30,6 +37,18 @@ import { createAuthHooks } from './hooks.js';
 // Sign-up answers every request with the same 200 and no session (a new email, a taken email, a refused
 // registration), so refusals are asserted by their effect: no user row.
 
+/** The actor user ids (null: the system) of the workspace's audit entries, by action. */
+async function auditActors(
+  ownerPool: pg.Pool,
+  workspaceId: string,
+): Promise<Record<string, string | null>> {
+  const { rows } = await ownerPool.query<{ action: string; actor_user_id: string | null }>(
+    'SELECT action, actor_user_id FROM audit_log WHERE workspace_id = $1',
+    [workspaceId],
+  );
+  return Object.fromEntries(rows.map((r) => [r.action, r.actor_user_id]));
+}
+
 describe('registration modes', () => {
   let h: AuthHarness;
   beforeAll(async () => {
@@ -38,20 +57,6 @@ describe('registration modes', () => {
   afterAll(async () => {
     await h.close();
   });
-
-  const pendingInvitation = (
-    workspaceId: string,
-    email: string,
-    invitedBy: string,
-    expiresAt: Date,
-  ) =>
-    seedInvitation(h.deps.db, {
-      workspaceId,
-      email,
-      invitedBy,
-      tokenHash: newInvitationToken().tokenHash,
-      expiresAt,
-    });
 
   const communityOwnedByNewUser = async () => {
     await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
@@ -76,6 +81,10 @@ describe('registration modes', () => {
       'member.added',
       'workspace.created',
     ]);
+    expect(await auditActors(h.harness.ownerPool, u.personalWorkspaceId ?? '')).toEqual({
+      'member.added': u.id,
+      'workspace.created': u.id,
+    });
   });
 
   it('closed: sign-up is refused and no user is created', async () => {
@@ -97,6 +106,11 @@ describe('registration modes', () => {
     expect(res.user.email).toBe(email);
     const personal = await listWorkspacesForUser(h.deps, res.user.id);
     expect(personal).toMatchObject([{ kind: 'personal', role: 'owner', name: 'Boot' }]);
+    // The command line made it, not the user.
+    expect(await auditActors(h.harness.ownerPool, personal[0]?.id ?? '')).toEqual({
+      'member.added': null,
+      'workspace.created': null,
+    });
     // Mail goes out in the background: let an ordinary sign-up's mail arrive first, then check the bootstrap one
     // never did.
     await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
@@ -106,21 +120,40 @@ describe('registration modes', () => {
     expect(h.mailer.outbox.some((m) => m.to === email)).toBe(false);
   });
 
-  it('invite: refuses without an invitation and accepts a pending one regardless of case', async () => {
+  /** A pending invitation for `email` in a fresh community workspace, with its plain token. */
+  const invitedWithToken = async (email: string, expiresAt?: Date) => {
     const { owner, workspaceId } = await communityOwnedByNewUser();
-    await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
-    const email = uniqueEmail('invitee');
-    expect((await h.signUp(email)).status).toBe(200);
-    expect(await findUserByEmail(h.deps, email)).toBeNull();
-
-    await pendingInvitation(
+    const { token, tokenHash } = newInvitationToken();
+    const { id } = await seedInvitation(h.deps.db, {
       workspaceId,
-      email.toUpperCase(),
-      owner.id,
-      new Date(h.deps.clock.now().getTime() + INVITATION_TTL_MS),
-    );
+      email,
+      invitedBy: owner.id,
+      tokenHash,
+      expiresAt: expiresAt ?? new Date(h.deps.clock.now().getTime() + INVITATION_TTL_MS),
+    });
+    return { token, workspaceId, invitationId: id };
+  };
+
+  /** Signs up in invite mode and answers whether a user row was created. */
+  const signUpInInviteMode = async (email: string, invitationToken?: string) => {
+    await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
+    const res = await h.signUp(email, invitationToken !== undefined ? { invitationToken } : {});
+    expect(res.status).toBe(200);
+    return (await findUserByEmail(h.deps, email)) !== null;
+  };
+
+  it('invite: email sign-up without the token is refused, even with a pending invitation', async () => {
+    const email = uniqueEmail('no-token');
+    await invitedWithToken(email);
     expect(await hasPendingInvitation(h.deps, email)).toBe(true);
-    expect((await h.signUp(email.toUpperCase())).status).toBe(200);
+    expect(await signUpInInviteMode(email)).toBe(false);
+  });
+
+  it('invite: email sign-up with the token of the address is admitted regardless of case', async () => {
+    const email = uniqueEmail('invitee');
+    const { token } = await invitedWithToken(email);
+    await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
+    expect((await h.signUp(email.toUpperCase(), { invitationToken: token })).status).toBe(200);
     const user = await findUserByEmail(h.deps, email);
     expect(user?.email).toBe(email);
     // Signing up does not accept the invitation; the new user gets only a personal workspace.
@@ -129,35 +162,86 @@ describe('registration modes', () => {
     ).toEqual([['personal', 'owner']]);
   });
 
-  it('invite: an expired invitation does not allow sign-up', async () => {
-    const { owner, workspaceId } = await communityOwnedByNewUser();
-    await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
+  it('invite: an empty invitation header does not admit', async () => {
+    const email = uniqueEmail('empty-header');
+    await invitedWithToken(email);
+    expect(await signUpInInviteMode(email, '')).toBe(false);
+  });
+
+  it('invite: the token of another address does not admit', async () => {
+    const { token } = await invitedWithToken(uniqueEmail('someone-else'));
+    expect(await signUpInInviteMode(uniqueEmail('squatter'), token)).toBe(false);
+  });
+
+  it('invite: an expired invitation does not admit', async () => {
     const email = uniqueEmail('expired');
-    await pendingInvitation(
-      workspaceId,
+    const { token } = await invitedWithToken(
       email,
-      owner.id,
       new Date(h.deps.clock.now().getTime() - 60_000),
     );
     expect(await hasPendingInvitation(h.deps, email)).toBe(false);
-    expect((await h.signUp(email)).status).toBe(200);
-    expect(await findUserByEmail(h.deps, email)).toBeNull();
+    expect(await signUpInInviteMode(email, token)).toBe(false);
   });
 
-  it('invite: an invitation of a deleted workspace does not allow sign-up', async () => {
-    const { owner, workspaceId } = await communityOwnedByNewUser();
+  it('invite: an accepted invitation does not admit', async () => {
+    const email = uniqueEmail('accepted');
+    const { token, invitationId } = await invitedWithToken(email);
+    await h.harness.ownerPool.query('UPDATE invitations SET accepted_at = now() WHERE id = $1', [
+      invitationId,
+    ]);
+    expect(await signUpInInviteMode(email, token)).toBe(false);
+  });
+
+  it('invite: a revoked invitation does not admit', async () => {
+    const email = uniqueEmail('revoked');
+    const { token, workspaceId, invitationId } = await invitedWithToken(email);
+    expect(
+      await withTenant(h.deps.db, tenantScope(workspaceId), (t) =>
+        revokeInvitation(t, invitationId, SYSTEM_ACTOR),
+      ),
+    ).toBe(true);
+    expect(await signUpInInviteMode(email, token)).toBe(false);
+  });
+
+  it('invite: an invitation of a deleted workspace does not admit', async () => {
     const email = uniqueEmail('deleted-ws');
-    await pendingInvitation(
-      workspaceId,
-      email,
-      owner.id,
-      new Date(h.deps.clock.now().getTime() + INVITATION_TTL_MS),
-    );
+    const { token, workspaceId } = await invitedWithToken(email);
     await withTenant(h.deps.db, tenantScope(workspaceId), (t) =>
       softDeleteWorkspace(t, SYSTEM_ACTOR),
     );
+    expect(await signUpInInviteMode(email, token)).toBe(false);
+  });
+
+  it('invite: a malformed token does not admit', async () => {
+    const email = uniqueEmail('malformed');
+    const { token } = await invitedWithToken(email);
+    for (const bad of ['garbage', INVITATION_TOKEN_PREFIX, `${token}x`, token.toUpperCase()]) {
+      expect(await signUpInInviteMode(email, bad)).toBe(false);
+    }
+  });
+
+  it('invite: a server-side sign-up without request headers is refused', async () => {
+    const email = uniqueEmail('server-side');
+    await invitedWithToken(email);
     await setRegistrationMode(h.deps, 'invite', SYSTEM_ACTOR);
-    expect((await h.signUp(email)).status).toBe(200);
+    await h.deps.auth.api
+      .signUpEmail({ body: { email, password: TEST_PASSWORD, name: 'Server' } })
+      .catch(() => undefined);
+    expect(await findUserByEmail(h.deps, email)).toBeNull();
+  });
+
+  it('open: the invitation header is ignored', async () => {
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    const email = uniqueEmail('open-header');
+    expect((await h.signUp(email, { invitationToken: 'garbage' })).status).toBe(200);
+    expect(await findUserByEmail(h.deps, email)).not.toBeNull();
+  });
+
+  it('closed: a valid invitation token does not admit', async () => {
+    const email = uniqueEmail('closed-token');
+    const { token } = await invitedWithToken(email);
+    await setRegistrationMode(h.deps, 'closed', SYSTEM_ACTOR);
+    expect((await h.signUp(email, { invitationToken: token })).status).toBe(200);
     expect(await findUserByEmail(h.deps, email)).toBeNull();
   });
 
@@ -167,7 +251,7 @@ describe('registration modes', () => {
     expect(await getRegistrationMode(h.deps)).toBe('invite');
   });
 
-  it('ensurePersonalWorkspace is idempotent under concurrency', async () => {
+  it('ensurePersonalWorkspace returns the existing workspace to concurrent callers', async () => {
     await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
     const u = await h.createUser();
     const [a, b] = await Promise.all([
@@ -201,6 +285,25 @@ describe('registration modes', () => {
     expect(list[0]?.slug).toMatch(PERSONAL_SLUG_PATTERN);
     expect(list[0]?.slug).not.toBe(personalSlug(u.id));
     expect(await ensurePersonalWorkspace(h.deps, { id: u.id, name: u.name })).toBe(fresh);
+  });
+
+  it('ensurePersonalWorkspace makes exactly one replacement when callers race after a soft delete', async () => {
+    await setRegistrationMode(h.deps, 'open', SYSTEM_ACTOR);
+    const u = await h.createUser();
+    const old = u.personalWorkspaceId ?? '';
+    await withTenant(h.deps.db, tenantScope(old), (t) => softDeleteWorkspace(t, SYSTEM_ACTOR));
+    // Every caller finds the personal slug taken by the deleted workspace and falls back to a fresh id; the unique
+    // index on the live personal workspace of an owner lets one of them win.
+    const ids = await Promise.all(
+      Array.from({ length: 5 }, () => ensurePersonalWorkspace(h.deps, { id: u.id, name: u.name })),
+    );
+    expect(new Set(ids).size).toBe(1);
+    expect(ids[0]).not.toBe(old);
+    const { rows } = await h.harness.ownerPool.query(
+      `SELECT id FROM workspaces WHERE owner_user_id = $1 AND kind = 'personal' AND deleted_at IS NULL`,
+      [u.id],
+    );
+    expect(rows).toEqual([{ id: ids[0] }]);
   });
 
   it('names the personal workspace after the user, within the workspace name limit', async () => {
@@ -282,5 +385,17 @@ describe('post sign-up hook failure', () => {
     expect(new Set(ids).size).toBe(1);
     const list = await listWorkspacesForUser(h.deps, u.id);
     expect(list).toMatchObject([{ id: ids[0], kind: 'personal', role: 'owner' }]);
+  });
+
+  it('repairs the personal workspace through /api/me as the system', async () => {
+    const u = await h.createUser();
+    expect(u.personalWorkspaceId).toBeNull();
+    const res = await h.request('/api/me', { cookie: u.cookie });
+    expect(res.status).toBe(200);
+    const { personalWorkspaceId } = (await res.json()) as { personalWorkspaceId: string };
+    expect(await auditActors(h.harness.ownerPool, personalWorkspaceId)).toEqual({
+      'member.added': null,
+      'workspace.created': null,
+    });
   });
 });

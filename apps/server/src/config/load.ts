@@ -42,6 +42,11 @@ export interface ServerConfig {
   trustedProxies: readonly string[];
   /** Sign-in settings (secret, public URL, SMTP, social providers); serialising it hides the secrets. */
   authEnv: AuthEnv;
+  /**
+   * Whether emailed links (verification, password reset, invitations) may use an http public URL: everywhere but
+   * NODE_ENV=production, so local development works without TLS. Read once here; nothing else reads NODE_ENV for it.
+   */
+  allowHttpLinks: boolean;
 }
 
 export class ConfigError extends Error {
@@ -164,5 +169,6 @@ export function loadConfig(
     edition,
     trustedProxies,
     authEnv,
+    allowHttpLinks: env.NODE_ENV !== 'production',
   };
 }
