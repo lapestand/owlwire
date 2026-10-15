@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import { TrieRouter } from 'hono/router/trie-router';
 import { AUTH_COOKIE_PREFIX, secureCookiesFor } from '../../../auth/auth.js';
 import type { Deps } from '../../../deps.js';
-import { ProblemError, repositoryProblem } from '../../../errors.js';
+import { notFound, ProblemError, repositoryProblem } from '../../../errors.js';
 import { requireInstanceAdmin } from '../../middleware/instance-admin.js';
 import { sessionAuth } from '../../middleware/session-auth.js';
 import { workspaceAccess } from '../../middleware/workspace-access.js';
@@ -87,7 +87,7 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   api.use('*', (c, next) => {
     if (PUBLIC_API_PATHS.has(c.req.path)) return next();
     hasRoute ??= routeMatcher(api);
-    if (!hasRoute(c.req.method, c.req.path)) throw new ProblemError(404, 'not_found');
+    if (!hasRoute(c.req.method, c.req.path)) throw notFound();
     return session(c, next);
   });
   api.use('/workspaces/:workspaceId', member);

@@ -486,17 +486,22 @@ describe('management api: members', () => {
     const added = await audit(t.ws, '?action=member.added', t.admin.cookie);
     expect(added.items).toHaveLength(3);
     expect(added.items.every((i) => i.action === 'member.added')).toBe(true);
-    expect(
-      (await h.request(`/api/workspaces/${t.ws}/audit?cursor=garbage`, { cookie: t.admin.cookie }))
-        .status,
-    ).toBe(422);
-    expect(
-      (
-        await h.request(`/api/workspaces/${t.ws}/audit?action=no.such_action`, {
-          cookie: t.admin.cookie,
-        })
-      ).status,
-    ).toBe(422);
+    const badCursor = await h.request(`/api/workspaces/${t.ws}/audit?cursor=garbage`, {
+      cookie: t.admin.cookie,
+    });
+    expect(badCursor.status).toBe(422);
+    expect(await badCursor.json()).toMatchObject({
+      code: 'validation_failed',
+      detail: 'invalid_cursor',
+    });
+    const badAction = await h.request(`/api/workspaces/${t.ws}/audit?action=no.such_action`, {
+      cookie: t.admin.cookie,
+    });
+    expect(badAction.status).toBe(422);
+    expect(await badAction.json()).toMatchObject({
+      code: 'validation_failed',
+      detail: 'unknown_audit_action',
+    });
     const outsider = await h.createUser();
     expect(
       (await h.request(`/api/workspaces/${t.ws}/audit`, { cookie: outsider.cookie })).status,

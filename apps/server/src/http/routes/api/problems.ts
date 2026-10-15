@@ -30,9 +30,13 @@ export function problems(...codes: ProblemStatus[]) {
   ) as Record<ProblemStatus, ReturnType<typeof json<typeof ProblemDetails>>>;
 }
 
-/** A 409 response whose description lists the `detail` values the operation can answer with. */
-export function conflicts(...details: string[]) {
-  return { 409: json(ProblemDetails, `Conflict (detail: ${details.join(', ')})`) };
+/** One problem response whose description also lists the `detail` reasons the operation can answer it with. */
+export function problemWith<S extends ProblemStatus>(status: S, ...details: string[]) {
+  const description = `${PROBLEM_DESCRIPTIONS[status]} (detail: ${details.join(', ')})`;
+  return { [status]: json(ProblemDetails, description) } as Record<
+    S,
+    ReturnType<typeof json<typeof ProblemDetails>>
+  >;
 }
 
 /** 403 forbidden unless the caller's role in the workspace is at least `min`. */

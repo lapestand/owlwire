@@ -20,7 +20,7 @@ import {
   listWorkspaceInvitations,
 } from '../../../workspaces/invitations.js';
 import type { ApiEnv } from './env.js';
-import { assertRole, conflicts, json, problems, SECURITY, TAGS } from './problems.js';
+import { assertRole, json, problems, problemWith, SECURITY, TAGS } from './problems.js';
 
 function toInvitationDto(i: InvitationRow): InvitationDto {
   return {
@@ -75,7 +75,7 @@ export function registerInvitationRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): 
       responses: {
         201: json(CreatedInvitationSchema, 'Invitation created'),
         ...problems(400, 401, 403, 404, 422),
-        ...conflicts('already_member', 'personal_workspace', 'registration_closed'),
+        ...problemWith(409, 'already_member', 'personal_workspace', 'registration_closed'),
       },
     }),
     async (c) => {
@@ -154,7 +154,7 @@ export function registerInvitationRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): 
       responses: {
         200: json(AcceptedInvitationSchema, 'Invitation accepted'),
         ...problems(400, 401, 403, 404, 422),
-        ...conflicts('personal_workspace'),
+        ...problemWith(409, 'personal_workspace'),
       },
     }),
     async (c) =>
