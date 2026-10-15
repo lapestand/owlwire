@@ -532,10 +532,20 @@ describe('management api: request hardening', () => {
     // The session lookup succeeds; only the workspace list fails, with an error no mapping knows.
     vi.mocked(listWorkspacesForUser).mockRejectedValueOnce(new Error(LIST_FAILURE));
     const app = createApp({ ...h.deps, logger, webDir: null });
-    const res = await app.request(`${TEST_BASE_URL}/api/workspaces`, {
-      headers: { cookie: u.cookie, origin: TEST_BASE_URL },
-    });
-    expect(listWorkspacesForUser).toHaveBeenLastCalledWith(expect.anything(), u.id);
+    let res: Response;
+    try {
+      res = await app.request(`${TEST_BASE_URL}/api/workspaces`, {
+        headers: { cookie: u.cookie, origin: TEST_BASE_URL },
+      });
+      expect(listWorkspacesForUser).toHaveBeenLastCalledWith(expect.anything(), u.id);
+    } finally {
+      // Drop the queued rejection if the route never consumed it, so it cannot reach a later test; the mock keeps
+      // calling through to the real function.
+      const { listWorkspacesForUser: real } = await vi.importActual<
+        typeof import('../../../system/user-workspaces.js')
+      >('../../../system/user-workspaces.js');
+      vi.mocked(listWorkspacesForUser).mockReset().mockImplementation(real);
+    }
     expect(res.status).toBe(500);
     expect(res.headers.get('content-type')).toContain('application/problem+json');
     const body = await res.text();
