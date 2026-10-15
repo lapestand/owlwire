@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
 import { TrieRouter } from 'hono/router/trie-router';
-import { AUTH_COOKIE_PREFIX } from '../../../auth/auth.js';
+import { AUTH_COOKIE_PREFIX, secureCookiesFor } from '../../../auth/auth.js';
 import type { Deps } from '../../../deps.js';
 import { ProblemError, repositoryProblem } from '../../../errors.js';
 import { requireInstanceAdmin } from '../../middleware/instance-admin.js';
@@ -68,10 +68,16 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
       return problem(c, httpProblem(err.status, err.res?.headers.get('retry-after')));
     throw err;
   });
+  // The library prefixes the cookie with __Secure- when the public URL is https: the scheme names the one this
+  // instance sets, and the description names both.
+  const sessionCookie = `${AUTH_COOKIE_PREFIX}.session_token`;
   api.openAPIRegistry.registerComponent('securitySchemes', 'cookieAuth', {
     type: 'apiKey',
     in: 'cookie',
-    name: `${AUTH_COOKIE_PREFIX}.session_token`,
+    name: secureCookiesFor(deps.authEnv.baseURL) ? `__Secure-${sessionCookie}` : sessionCookie,
+    description:
+      `Session cookie set by sign-in: \`__Secure-${sessionCookie}\` when OWLWIRE_PUBLIC_URL is https, ` +
+      `\`${sessionCookie}\` otherwise.`,
   });
 
   const session = sessionAuth(deps.auth);

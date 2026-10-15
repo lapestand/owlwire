@@ -337,6 +337,39 @@ describe('management api: workspaces', () => {
     expect(Object.keys(doc.components?.schemas ?? {})).toContain('AuthConfig');
     expect(Object.keys(doc.components?.securitySchemes ?? {})).toContain('cookieAuth');
   });
+
+  it('names the session cookie this instance sets and documents both cookie names', () => {
+    const scheme = (baseURL: string) => {
+      const doc = createApiRouter({
+        ...h.deps,
+        authEnv: { ...h.deps.authEnv, baseURL },
+      }).getOpenAPI31Document({ openapi: '3.1.0', info: { title: 'test', version: '0' } });
+      return doc.components?.securitySchemes?.cookieAuth as { name: string; description: string };
+    };
+    const plain = scheme('http://localhost:8080');
+    expect(plain.name).toBe('owlwire.session_token');
+    const secure = scheme('https://owl.example');
+    expect(secure.name).toBe('__Secure-owlwire.session_token');
+    for (const s of [plain, secure]) {
+      expect(s.description).toContain('owlwire.session_token');
+      expect(s.description).toContain('__Secure-owlwire.session_token');
+    }
+  });
+
+  it('documents the conflicts of creating and accepting an invitation', () => {
+    const doc = createApiRouter(h.deps).getOpenAPI31Document({
+      openapi: '3.1.0',
+      info: { title: 'test', version: '0' },
+    });
+    type Op = { responses: Record<string, { description: string }> };
+    const paths = doc.paths as Record<string, Record<string, Op>>;
+    const create = paths['/workspaces/{workspaceId}/invitations']?.post;
+    const accept = paths['/invitations/accept']?.post;
+    for (const detail of ['already_member', 'personal_workspace', 'registration_closed']) {
+      expect(create?.responses['409']?.description).toContain(detail);
+    }
+    expect(accept?.responses['409']?.description).toContain('personal_workspace');
+  });
 });
 
 describe('management api: request hardening', () => {
