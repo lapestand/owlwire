@@ -4,6 +4,7 @@ import { migrateAll } from '@owlwire/db/migrate';
 import { startTestDatabase } from '@owlwire/testing';
 import type { Hono } from 'hono';
 import pg from 'pg';
+import type { Logger } from 'pino';
 import { createAdapterRegistry } from '../adapters/registry.js';
 import type { AuthHooks } from '../auth/auth.js';
 import type { ServerConfig } from '../config/load.js';
@@ -33,6 +34,7 @@ export async function createHarness(
     adapters?: ChannelAdapter[];
     rand?: () => number;
     config?: Partial<ServerConfig>;
+    logger?: Logger;
     auth?: {
       smtp?: boolean;
       env?: Record<string, string>;
@@ -58,6 +60,7 @@ export async function createHarness(
     adapters: createAdapterRegistry(opts.adapters ?? [fake]),
     rand: opts.rand ?? (() => 0.5),
     mailer: opts.auth?.mailer ?? null,
+    ...(opts.logger ? { logger: opts.logger } : {}),
   });
   if (opts.auth?.hooks) deps = attachAuth(deps, config.authEnv, deps.mailer, opts.auth.hooks);
   const ownerPool = new pg.Pool({ connectionString: tdb.ownerUrl, max: 2 });

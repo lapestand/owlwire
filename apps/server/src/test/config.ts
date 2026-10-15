@@ -42,6 +42,7 @@ export function testConfig(
     edition: parseEditionConfig(undefined),
     trustedProxies: [],
     authEnv: testAuthEnv(),
+    allowHttpLinks: true,
     ...overrides,
   };
 }

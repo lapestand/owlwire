@@ -1,5 +1,6 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi';
 import { AuthConfigSchema } from '@owlwire/contracts';
+import { INVITATION_HEADER } from '../../../auth/auth.js';
 import { enabledSocialProviders } from '../../../auth/social.js';
 import type { Deps } from '../../../deps.js';
 import { getRegistrationMode } from '../../../system/registration.js';
@@ -16,6 +17,15 @@ export function registerPublicRoutes(api: OpenAPIHono<ApiEnv>, deps: Deps): void
       method: 'get',
       path: '/auth-config',
       tags: TAGS,
+      description: [
+        'The registration mode decides who may sign up.',
+        `In \`invite\` mode an email sign-up (\`POST /api/auth/sign-up/email\`) must send the invitation token`,
+        `(\`ow_inv_...\`) in the \`${INVITATION_HEADER}\` header, and the invitation must be pending and addressed`,
+        'to the signing-up email; otherwise no account is created (the answer is the same `200`). Signing up does not',
+        'accept the invitation: the client signs in, then calls `POST /api/invitations/accept`. A social sign-up',
+        'through the provider redirect (`/api/auth/callback/<provider>`) needs a pending invitation for the address',
+        'the provider verified, without the header; a social sign-in with an id token is refused in `invite` mode.',
+      ].join(' '),
       responses: {
         200: json(AuthConfigComponent, 'Public sign-in configuration for the sign-in page'),
       },
