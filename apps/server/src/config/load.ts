@@ -34,8 +34,6 @@ export interface ServerConfig {
   configPath: string;
   logLevel: string;
   telegramBotToken: string | null;
-  devAdminToken: string | null;
-  devFakeAdapter: boolean;
   edition: EditionConfig;
   /**
    * Proxy addresses and CIDR ranges (OWLWIRE_TRUSTED_PROXIES) whose X-Forwarded-For is believed when they are the
@@ -72,8 +70,6 @@ const envSchema = z.object({
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
   OWLWIRE_TELEGRAM_BOT_TOKEN: z.string().optional(),
-  OWLWIRE_DEV_ADMIN_TOKEN: z.string().min(16).optional(),
-  OWLWIRE_DEV_FAKE_ADAPTER: z.enum(['0', '1']).default('0'),
   OWLWIRE_TRUSTED_PROXIES: z.string().optional(),
 });
 
@@ -165,8 +161,6 @@ export function loadConfig(
     configPath,
     logLevel: e.OWLWIRE_LOG_LEVEL,
     telegramBotToken: e.OWLWIRE_TELEGRAM_BOT_TOKEN ?? null,
-    devAdminToken: e.OWLWIRE_DEV_ADMIN_TOKEN ?? null,
-    devFakeAdapter: e.OWLWIRE_DEV_FAKE_ADAPTER === '1',
     edition,
     trustedProxies,
     authEnv,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DevDeliveryList, EventInput, HookJsonInput, PROBLEM_CODES } from './index.js';
+import { EventInput, HookJsonInput, PROBLEM_CODES } from './index.js';
 
 describe('EventInput', () => {
   it('accepts a minimal event and leaves severity undefined', () => {
@@ -65,29 +65,6 @@ describe('HookJsonInput', () => {
   it('requires a body and allows a title', () => {
     expect(HookJsonInput.safeParse({ title: 't', body: 'b' }).success).toBe(true);
     expect(HookJsonInput.safeParse({ title: 't' }).success).toBe(false);
-  });
-});
-
-describe('DevDeliveryList', () => {
-  it('parses a delivery row', () => {
-    const parsed = DevDeliveryList.parse({
-      deliveries: [
-        {
-          id: 'd',
-          eventId: 'e',
-          eventType: 'generic',
-          eventTitle: null,
-          destinationName: 'telegram:-100',
-          platform: 'telegram',
-          status: 'delivered',
-          attempts: 1,
-          lastError: null,
-          createdAt: '2026-10-12T10:00:00.000Z',
-          deliveredAt: '2026-10-12T10:00:01.000Z',
-        },
-      ],
-    });
-    expect(parsed.deliveries).toHaveLength(1);
   });
 });
 

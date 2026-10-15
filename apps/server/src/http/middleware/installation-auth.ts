@@ -8,7 +8,7 @@ import type { AppEnv } from '../types.js';
 /** RFC 6750 challenge sent with every installation-token 401 (middleware and ingest). */
 export const CHALLENGE = { 'www-authenticate': 'Bearer' };
 
-export function extractToken(
+function extractToken(
   authorization: string | undefined,
   queryToken: string | undefined,
 ): string | null {

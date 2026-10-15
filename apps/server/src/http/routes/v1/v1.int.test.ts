@@ -8,7 +8,7 @@ import {
 } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ingestEvent } from '../../../events/ingest.js';
-import { type SeedResult, seedDevWorkspace } from '../../../system/dev-seed.js';
+import { type SeedResult, seedDeliveryWorkspace } from '../../../test/fixtures.js';
 import { createHarness, type Harness } from '../../../test/harness.js';
 import { listJobs } from '../../../test/jobs.js';
 import { ProblemError } from '../../problem.js';
@@ -18,7 +18,7 @@ let seed: SeedResult;
 
 beforeAll(async () => {
   h = await createHarness();
-  seed = await seedDevWorkspace(h.deps.db, {
+  seed = await seedDeliveryWorkspace(h.deps.db, {
     platform: 'webhook',
     chatId: 'v1',
   });
@@ -267,7 +267,7 @@ describe('POST /v1/hooks', () => {
   });
 
   it('reports a revoked installation as installation_revoked', async () => {
-    const other = await seedDevWorkspace(h.deps.db, {
+    const other = await seedDeliveryWorkspace(h.deps.db, {
       platform: 'webhook',
       chatId: 'revoked',
     });
@@ -287,7 +287,7 @@ describe('POST /v1/hooks', () => {
 
 describe('ingestEvent', () => {
   it('answers 401 installation_revoked when the installation is revoked after authentication', async () => {
-    const other = await seedDevWorkspace(h.deps.db, { platform: 'webhook', chatId: 'race' });
+    const other = await seedDeliveryWorkspace(h.deps.db, { platform: 'webhook', chatId: 'race' });
     // The middleware has already accepted the token; the revoke lands before the insert.
     await withTenant(h.deps.db, tenantScope(other.workspaceId), (t) =>
       revokeInstallation(t, other.installationId, SYSTEM_ACTOR),
