@@ -8,7 +8,8 @@ import {
 } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ProblemError } from '../../../errors.js';
-import { ingestEvent } from '../../../events/ingest.js';
+import { ingestEvents } from '../../../services/ingest.js';
+import { serviceDeps } from '../../../services/types.js';
 import { type SeedResult, seedDeliveryWorkspace } from '../../../test/fixtures.js';
 import { createHarness, type Harness } from '../../../test/harness.js';
 import { listJobs } from '../../../test/jobs.js';
@@ -229,7 +230,7 @@ describe('POST /v1/events', () => {
   });
 
   it('rejects types that are not in the app catalog', async () => {
-    const res = await postEvent({ type: 'player.inactive', body: 'x' });
+    const res = await postEvent({ type: 'not.in.catalog', body: 'x' });
     expect(res.status).toBe(422);
     expect(((await res.json()) as { code: string }).code).toBe('unknown_type');
   });
@@ -299,24 +300,24 @@ describe('POST /v1/hooks', () => {
   });
 });
 
-describe('ingestEvent', () => {
+describe('ingestEvents', () => {
   it('answers 401 installation_revoked when the installation is revoked after authentication', async () => {
     const other = await seedDeliveryWorkspace(h.deps.db, { platform: 'webhook', chatId: 'race' });
     // The middleware has already accepted the token; the revoke lands before the insert.
     await withTenant(h.deps.db, tenantScope(other.workspaceId), (t) =>
       revokeInstallation(t, other.installationId, SYSTEM_ACTOR),
     );
-    const err = await ingestEvent(h.deps.db, {
-      installation: {
+    const err = await ingestEvents(
+      serviceDeps(h.deps),
+      {
         installationId: other.installationId,
         workspaceId: other.workspaceId,
         appId: other.appId,
-        appVisibility: 'private',
         grantedTypes: null,
       },
-      input: { type: 'a', body: 'x' },
-      headerIdempotencyKey: undefined,
-    }).catch((e: unknown) => e);
+      [{ type: 'generic', body: 'x' }],
+      undefined,
+    ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ProblemError);
     expect(err).toMatchObject({
       status: 401,

@@ -71,12 +71,19 @@ export const postHooksRoute = createRoute({
   },
 });
 
+// Typed up front: as an inline literal, the two differently shaped alternatives widen createRoute's inferred
+// config to plain RouteConfig, and the handler would lose its typed body.
+const catalogSecurity: Array<Record<string, string[]>> = [
+  { appKey: [] },
+  { installationToken: [] },
+];
+
 export const putCatalogRoute = createRoute({
   method: 'put',
   path: '/v1/catalog',
   tags: ['catalog'],
   summary: 'Create or update notification types of the calling app (upsert, never deletes)',
-  security: [{ appKey: [] }, { installationToken: [] }],
+  security: catalogSecurity,
   request: {
     body: { required: true, content: { 'application/json': { schema: CatalogPutInput } } },
   },

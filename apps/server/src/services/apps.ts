@@ -7,6 +7,7 @@ import {
   type CatalogTypeRow,
   createApp,
   createInstallation,
+  getApp,
   type InstallationRow,
   listCatalog,
   setAppKey,
@@ -124,8 +125,10 @@ function parseTypes(types: CatalogTypeInput[]): CatalogTypeInput[] {
 }
 
 /**
- * Upserts catalog types of an own app (never deletes) and returns the whole catalog. Every payload schema is
- * checked before the transaction opens; a validator that cannot take the call is a retryable 503, not a 422.
+ * Upserts catalog types of an own app (never deletes) and returns the whole catalog. The cheap checks come first:
+ * the list itself, then a short read that the app belongs to the tenant, so a caller cannot make the server compile
+ * schemas for an app it does not own. Every payload schema is then checked before the write transaction opens; a
+ * validator that cannot take the call is a retryable 503, not a 422. The write re-checks ownership.
  */
 export async function putCatalog(
   d: ServiceDeps,
@@ -136,6 +139,11 @@ export async function putCatalog(
   opts: { via?: 'app_key' } = {},
 ): Promise<CatalogTypeRow[]> {
   const checked = parseTypes(types);
+  const owned = await withTenant(d.db, scope, async (t) => {
+    const app = await getApp(t, appId);
+    return app !== null && app.ownerWorkspaceId === t.workspaceId;
+  });
+  if (!owned) throw notFound();
   // One schema at a time: a large catalog must not take every validator worker from event ingest.
   for (const [i, type] of checked.entries()) {
     if (!type.payloadSchema) continue;

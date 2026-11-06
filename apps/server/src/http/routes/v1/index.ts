@@ -5,8 +5,9 @@ import type { Deps } from '../../../deps.js';
 import { ProblemError } from '../../../errors.js';
 import { problem } from '../../problem.js';
 import type { AppEnv } from '../../types.js';
+import { registerCatalogRoutes } from './catalog.js';
 import { registerEventRoutes } from './events.js';
-import { hooksRoutes } from './hooks.js';
+import { registerHookRoutes } from './hooks.js';
 
 export const V1_BODY_LIMIT_BYTES = 64 * 1024;
 
@@ -23,5 +24,6 @@ export function v1BodyLimit(): MiddlewareHandler<AppEnv> {
 export function registerV1Routes(app: OpenAPIHono<AppEnv>, deps: Deps): void {
   app.use('/v1/*', v1BodyLimit());
   registerEventRoutes(app, deps);
-  app.route('/v1', hooksRoutes({ db: deps.db }));
+  registerHookRoutes(app, deps);
+  registerCatalogRoutes(app, deps);
 }

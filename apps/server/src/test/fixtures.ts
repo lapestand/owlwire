@@ -13,10 +13,11 @@ import {
   SYSTEM_ACTOR,
   tenantScope,
   updateConnectionStatus,
+  upsertCatalogTypes,
   withTenant,
 } from '@owlwire/db';
-
-import { ingestEvent } from '../events/ingest.js';
+import { ingestEvents } from '../services/ingest.js';
+import { serviceDeps } from '../services/types.js';
 import type { Harness } from './harness.js';
 
 export interface SeedOptions {
@@ -24,6 +25,7 @@ export interface SeedOptions {
   chatId?: string;
   botToken?: string;
   threadId?: string;
+  /** Rule types (default ['*']); each one that is not a pattern is added to the app catalog as well. */
   types?: string[];
   name?: string;
 }
@@ -81,6 +83,23 @@ export async function seedDeliveryWorkspace(db: OwlwireDb, opts: SeedOptions): P
       { name: `${name} app`, slug: `seed-app-${suffix}`, visibility: 'private' },
       SYSTEM_ACTOR,
     );
+    // createApp adds `generic` itself. ingestFor sends player.inactive, and a rule type may be sent as well, so
+    // both are in the catalog (patterns are not type keys and are left out).
+    const catalogKeys = [
+      ...new Set(['player.inactive', ...(opts.types ?? [])].filter((key) => !key.includes('*'))),
+    ];
+    await upsertCatalogTypes(
+      t,
+      app.id,
+      catalogKeys.map((key) => ({
+        key,
+        name: key,
+        description: null,
+        defaultSeverity: 'info',
+        payloadSchema: null,
+      })),
+      SYSTEM_ACTOR,
+    );
     const inst = await createInstallation(
       t,
       { appId: app.id, tokenHash: hashToken(token), tokenPrefix: tokenPrefix(token) },
@@ -128,17 +147,22 @@ export async function ingestFor(
   seed: SeedResult,
   input: Partial<EventInput> = {},
 ): Promise<string> {
-  const { eventId } = await ingestEvent(h.deps.db, {
-    installation: {
+  const [result] = await ingestEvents(
+    serviceDeps(h.deps),
+    {
       installationId: seed.installationId,
       workspaceId: seed.workspaceId,
       appId: seed.appId,
-      appVisibility: 'private',
       grantedTypes: null,
     },
-    input: { type: 'player.inactive', body: 'Ali went idle', ...input },
-    headerIdempotencyKey: undefined,
-  });
+    [{ type: 'player.inactive', body: 'Ali went idle', ...input }],
+    undefined,
+  );
+  if (!result) throw new Error('ingestEvents returned no result');
+  if ('error' in result) {
+    throw new Error(`ingestFor: ${result.error.code}: ${result.error.detail}`);
+  }
+  const { eventId } = result;
   return eventId;
 }
 
