@@ -314,4 +314,26 @@ describe('putCatalog', () => {
       ]),
     ).rejects.toMatchObject({ status: 404, code: 'not_found' });
   });
+
+  it('checks ownership before compiling any payload schema', async () => {
+    const { app } = await createWorkspaceApp(
+      d,
+      tenantScope(wsA),
+      actor,
+      { name: 'Owned first', visibility: 'private' },
+      plain,
+    );
+    let compiled = 0;
+    const counting = Object.create(d.payloadSchemas) as PayloadSchemaRegistry;
+    counting.checkSchema = (schema) => {
+      compiled++;
+      return d.payloadSchemas.checkSchema(schema);
+    };
+    await expect(
+      putCatalog({ ...d, payloadSchemas: counting }, tenantScope(wsB), actor, app.id, [
+        { key: 'x', name: 'X', defaultSeverity: 'info', payloadSchema: { type: 'object' } },
+      ]),
+    ).rejects.toMatchObject({ status: 404, code: 'not_found' });
+    expect(compiled).toBe(0);
+  });
 });
