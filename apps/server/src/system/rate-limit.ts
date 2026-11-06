@@ -18,9 +18,9 @@ function ingestBucketSpec(edition: EditionConfig): BucketSpec | null {
 }
 
 /**
- * Takes `cost` tokens from the bucket in a short system transaction of its own, so the bucket row lock is released
- * before the caller writes anything. A cost above the capacity is clipped to it: a batch larger than the whole
- * budget passes on a full bucket and leaves it empty.
+ * Takes exactly `cost` tokens from the bucket in a short system transaction of its own, so the bucket row lock is
+ * released before the caller writes anything. A cost the bucket can never hold is the caller's to refuse first
+ * (see consumeIngestBatchRemainder); here it only waits.
  */
 export async function takeRateBudget(
   deps: Pick<Deps, 'db' | 'clock'>,
@@ -29,10 +29,9 @@ export async function takeRateBudget(
   cost: number,
 ): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
   if (cost <= 0) return { ok: true };
-  const effective = Math.min(cost, spec.capacity);
   const now = deps.clock.now();
   const result = await withSystem(deps.db, SYSTEM, (s) =>
-    takeBucketTokens(s, key, spec, now, effective),
+    takeBucketTokens(s, key, spec, now, cost),
   );
   return result.ok
     ? { ok: true }
@@ -56,6 +55,29 @@ export async function consumeIngestBudget(
       { 'Retry-After': String(result.retryAfterSeconds) },
     );
   }
+}
+
+export const BATCH_OVER_RATE_LIMIT_DETAIL = 'batch exceeds the per-minute rate limit';
+
+/**
+ * The handler's part of a batch of `batchSize` events, after ingestRateLimit took one token for the request: takes
+ * the remaining `batchSize - 1`. A batch larger than the bucket capacity could never pass, however long the client
+ * waits, so it is refused with 422 and the request's token is given back: retrying it never drains the budget.
+ */
+export async function consumeIngestBatchRemainder(
+  deps: Pick<Deps, 'db' | 'clock' | 'config'>,
+  key: string,
+  batchSize: number,
+): Promise<void> {
+  const spec = ingestBucketSpec(deps.config.edition);
+  if (!spec) return;
+  if (batchSize > spec.capacity) {
+    const now = deps.clock.now();
+    // A negative take returns the token; a refund above capacity is capped on the next take.
+    await withSystem(deps.db, SYSTEM, (s) => takeBucketTokens(s, key, spec, now, -1));
+    throw new ProblemError(422, 'validation_failed', BATCH_OVER_RATE_LIMIT_DETAIL);
+  }
+  await consumeIngestBudget(deps, key, batchSize - 1);
 }
 
 /**
