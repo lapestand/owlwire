@@ -24,6 +24,23 @@ const BOUNDS = /^\{(\d+)(?:,(\d*))?\}/;
 /** Raised while validating when a string is too long to be matched safely. */
 class PatternInputError extends Error {}
 
+/** Raised while validating when the call has used up its regex budget. */
+class BudgetExceededError extends Error {}
+
+const MAX_REFS_PER_SCHEMA = 16;
+
+/**
+ * Regex work allowed in one validate() call. The unit is (string length x the pattern's cost
+ * estimate) summed over every pattern test; the worst matching rate measured for patterns
+ * that pass the compile-time limits is about 65000 units per millisecond, so this is roughly
+ * 200 ms of matching. The compile-time limits bound one test; this bounds how often a schema
+ * can make the engine run one (arrays, many properties, shared definitions behind `$ref`).
+ */
+const MAX_VALIDATION_BUDGET = 13_000_000;
+
+// validate() is synchronous, so one module-level slot per call is not shared between calls.
+let activeBudget: { spent: number } | null = null;
+
 /**
  * Upper bound of a quantifier at the start of `rest`, with its length, or null. `{n}` counts
  * as n, `{n,}` as n and `{n,m}` as m; `*`, `+` and `?` do not enlarge the program.
@@ -103,6 +120,8 @@ function assertAffordable(pattern: string): number {
   if (pattern.length > MAX_PATTERN_LENGTH) {
     throw new Error(`pattern is longer than ${MAX_PATTERN_LENGTH} characters`);
   }
+  // Quoted text (Q..E) would hide repetitions from the scan below, so it is refused.
+  if (pattern.includes('\\Q')) throw new Error('pattern must not use \\Q');
   return assertNestedBounds(pattern);
 }
 
@@ -126,17 +145,23 @@ function linearRegExpFactory(): {
     if (count > MAX_PATTERNS_PER_SCHEMA) {
       throw new Error(`schema has more than ${MAX_PATTERNS_PER_SCHEMA} patterns`);
     }
+    const cost = assertAffordable(pattern);
     if (armed) {
-      totalCost += assertAffordable(pattern);
+      totalCost += cost;
       if (totalCost > MAX_PATTERN_COST) throw new Error('schema patterns are too complex');
-    } else {
-      assertAffordable(pattern);
     }
+    const unit = Math.max(1, cost);
     const re = RE2JS.compile(pattern);
     return {
       test: (s: string) => {
         if (s.length > MAX_STRING_FOR_PATTERN) {
           throw new PatternInputError('string too long for pattern');
+        }
+        if (activeBudget) {
+          activeBudget.spent += s.length * unit;
+          if (activeBudget.spent > MAX_VALIDATION_BUDGET) {
+            throw new BudgetExceededError('payload too expensive to validate');
+          }
         }
         return re.test(s);
       },
@@ -151,6 +176,82 @@ function linearRegExpFactory(): {
     armed = true;
   };
   return factory;
+}
+
+type SchemaNode = Record<string, unknown>;
+
+function isNode(v: unknown): v is SchemaNode {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function children(node: unknown): unknown[] {
+  if (Array.isArray(node)) return node;
+  return isNode(node) ? Object.values(node) : [];
+}
+
+/** Resolves a local `#/json/pointer` or `#anchor` reference, or undefined if it is not local. */
+function resolveLocalRef(root: unknown, anchors: Map<string, unknown>, ref: string): unknown {
+  if (!ref.startsWith('#')) return undefined;
+  const fragment = ref.slice(1);
+  if (fragment !== '' && !fragment.startsWith('/')) return anchors.get(fragment);
+  let node: unknown = root;
+  if (fragment === '') return node;
+  for (const raw of fragment.slice(1).split('/')) {
+    const key = decodeURIComponent(raw).replaceAll('~1', '/').replaceAll('~0', '~');
+    if (Array.isArray(node)) node = node[Number(key)];
+    else if (isNode(node)) node = node[key];
+    else return undefined;
+  }
+  return node;
+}
+
+/**
+ * Refuses schemas with more than MAX_REFS_PER_SCHEMA references, with dynamic references, or
+ * with a reference that can reach itself. Every `$ref` is a place where one validation can run
+ * the same subschema again, so the count and the absence of cycles keep that fan-out small.
+ */
+function assertRefsAffordable(root: unknown): void {
+  const refs = new Map<object, string>();
+  const anchors = new Map<string, unknown>();
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (isNode(node)) {
+      if ('$dynamicRef' in node || '$recursiveRef' in node) {
+        throw new Error('dynamic references are not supported');
+      }
+      if (typeof node.$ref === 'string') refs.set(node, node.$ref);
+      if (typeof node.$anchor === 'string') anchors.set(node.$anchor, node);
+    }
+    stack.push(...children(node));
+  }
+  if (refs.size > MAX_REFS_PER_SCHEMA) {
+    throw new Error(`schema has more than ${MAX_REFS_PER_SCHEMA} $ref references`);
+  }
+  const refsWithin = (start: unknown): object[] => {
+    const found: object[] = [];
+    const todo: unknown[] = [start];
+    while (todo.length > 0) {
+      const node = todo.pop();
+      if (isNode(node) && refs.has(node)) found.push(node);
+      todo.push(...children(node));
+    }
+    return found;
+  };
+  const edges = new Map<object, object[]>();
+  for (const [node, ref] of refs) {
+    const target = resolveLocalRef(root, anchors, ref);
+    edges.set(node, target === undefined ? [] : refsWithin(target));
+  }
+  const state = new Map<object, 'open' | 'done'>();
+  const visit = (node: object): void => {
+    if (state.get(node) === 'done') return;
+    if (state.get(node) === 'open') throw new Error('schema has a cyclic $ref');
+    state.set(node, 'open');
+    for (const next of edges.get(node) ?? []) visit(next);
+    state.set(node, 'done');
+  };
+  for (const node of refs.keys()) visit(node);
 }
 
 /**
@@ -177,6 +278,7 @@ export class PayloadSchemaRegistry {
    * registry's LRU as the only thing that keeps compiled validators alive.
    */
   #compile(schema: Record<string, unknown>): ValidateFunction {
+    assertRefsAffordable(schema);
     const regExp = linearRegExpFactory();
     const ajv = new Ajv2020({
       strict: false,
@@ -226,10 +328,13 @@ export class PayloadSchemaRegistry {
       if (oldest === undefined) break;
       this.#cache.delete(oldest);
     }
+    activeBudget = { spent: 0 };
     try {
       if (fn(data)) return { ok: true };
     } catch (err) {
-      if (err instanceof PatternInputError) return { ok: false, detail: err.message };
+      if (err instanceof PatternInputError || err instanceof BudgetExceededError) {
+        return { ok: false, detail: err.message };
+      }
       const deep = err instanceof RangeError;
       return {
         ok: false,
@@ -237,6 +342,8 @@ export class PayloadSchemaRegistry {
           ? 'payload is nested too deeply'
           : `payload cannot be validated: ${messageOf(err)}`,
       };
+    } finally {
+      activeBudget = null;
     }
     return { ok: false, detail: errorsText(fn.errors) };
   }
