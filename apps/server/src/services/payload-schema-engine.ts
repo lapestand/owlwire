@@ -317,8 +317,16 @@ export class PayloadSchemaEngine {
     }
   }
 
-  /** Never throws: any compile or runtime failure is reported as an invalid result. */
-  validate(cacheKey: string, schema: Record<string, unknown>, data: unknown): SchemaCheck {
+  /**
+   * Never throws: any compile or runtime failure is reported as an invalid result.
+   * `onCompiled` runs once a validator is ready (compiled or cached), before it runs on `data`.
+   */
+  validate(
+    cacheKey: string,
+    schema: Record<string, unknown>,
+    data: unknown,
+    onCompiled?: () => void,
+  ): SchemaCheck {
     let fn = this.#cache.get(cacheKey);
     if (fn) {
       this.#cache.delete(cacheKey);
@@ -335,6 +343,7 @@ export class PayloadSchemaEngine {
       if (oldest === undefined) break;
       this.#cache.delete(oldest);
     }
+    onCompiled?.();
     activeBudget = { spent: 0 };
     try {
       if (fn(data)) return { ok: true };
