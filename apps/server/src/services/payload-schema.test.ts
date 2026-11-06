@@ -163,4 +163,70 @@ describe('PayloadSchemaRegistry', () => {
       }
     });
   });
+
+  describe('regex cost bounds', () => {
+    const check = (pattern: string) =>
+      new PayloadSchemaRegistry().checkSchema({ type: 'string', pattern }).ok;
+
+    it('refuses nested repetition whose product exceeds 100', () => {
+      expect(check('(?:(?:a|aa|aaa|aaaa|aaaaa){10}){100}$')).toBe(false);
+      expect(check('(?:a{11}){10}')).toBe(false);
+      expect(check('(a{2,11}){10}')).toBe(false);
+    });
+
+    it('accepts a nested product of exactly 100 and flat repetitions', () => {
+      expect(check('(?:(?:a|aa){10}){10}')).toBe(true);
+      expect(check('(?:a{10}){10}')).toBe(true);
+      expect(check('a{100}b{100}')).toBe(true);
+      expect(check('((a){5}){5}(b){4}')).toBe(true);
+    });
+
+    it('refuses more than 32 regexes per schema, counting patternProperties', () => {
+      const props = (n: number) =>
+        Object.fromEntries(Array.from({ length: n }, (_, i) => [`p${i}`, { pattern: `^a${i}$` }]));
+      const reg = new PayloadSchemaRegistry();
+      expect(reg.checkSchema({ type: 'object', properties: props(32) }).ok).toBe(true);
+      expect(reg.checkSchema({ type: 'object', properties: props(33) }).ok).toBe(false);
+      const pp = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`^k${i}`, {}]));
+      expect(reg.checkSchema({ patternProperties: pp, properties: props(13) }).ok).toBe(false);
+      expect(reg.checkSchema({ patternProperties: pp, properties: props(12) }).ok).toBe(true);
+    });
+
+    it('fails validation for strings over 4096 characters checked against a pattern', () => {
+      const reg = new PayloadSchemaRegistry();
+      const s = { type: 'string', pattern: '^a+$' };
+      expect(reg.validate('long', s, 'a'.repeat(5000))).toEqual({
+        ok: false,
+        detail: 'string too long for pattern',
+      });
+      expect(reg.validate('long', s, 'a'.repeat(4096))).toEqual({ ok: true });
+      expect(reg.validate('free', { type: 'string' }, 'a'.repeat(5000))).toEqual({ ok: true });
+    });
+
+    it('refuses patterns whose estimated program size is too large', () => {
+      const alt = 'a|aa|aaa|aaaa|aaaaa|aaaaaa|aaaaaaa|aaaaaaaa';
+      expect(check(`(?:${alt}){100}$`)).toBe(false);
+      expect(check('[a-z]{100}'.repeat(40))).toBe(false);
+    });
+
+    it('keeps the worst allowed patterns fast on a 4096 character string', () => {
+      const alt = 'a|aa|aaa|aaaa';
+      const worst = [
+        `(?:(?:${alt}){10}){10}$`,
+        `(?:${alt}){100}$`,
+        `${'(?:a|aa){100}'.repeat(3)}$`,
+        `${'[a-z]{100}'.repeat(12)}$`,
+        `${'(?:a{1,100}b?)'.repeat(5)}$`,
+      ];
+      const input = `${'a'.repeat(4095)}b`;
+      for (const [i, pattern] of worst.entries()) {
+        const reg = new PayloadSchemaRegistry();
+        expect(reg.checkSchema({ type: 'string', pattern }).ok, pattern).toBe(true);
+        const started = performance.now();
+        reg.validate(`w${i}`, { type: 'string', pattern }, input);
+        const elapsed = performance.now() - started;
+        expect(elapsed, pattern).toBeLessThan(200);
+      }
+    });
+  });
 });
