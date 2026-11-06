@@ -164,6 +164,21 @@ const CASES: Record<string, Case> = {
     (v) => v.eventId,
     (t, v) => repos.markEventRouted(t, v.eventId),
   ),
+  getEventStatus: read((t, v) => repos.getEventStatus(t, v.installationId, v.eventId)),
+  insertEvents: denied(
+    'installation',
+    (v) => v.installationId,
+    (t, v) =>
+      repos.insertEvents(t, [
+        {
+          installationId: v.installationId,
+          idempotencyKey: 'evil-batch',
+          type: 'generic',
+          severity: 'info',
+          message: { type: 'generic', severity: 'info', body: 'evil' },
+        },
+      ]),
+  ),
   // invitations
   createInvitation: exempt(
     'workspace_id is always t.workspaceId; invitedBy names an instance-level auth_user row, not a tenant row',
@@ -194,6 +209,10 @@ const CASES: Record<string, Case> = {
     'installation',
     (v) => v.installationId,
     (t, v) => repos.revokeInstallation(t, v.installationId, SYSTEM_ACTOR),
+  ),
+  // rate buckets
+  takeBucketTokens: exempt(
+    'rate_buckets is an instance-level table with no workspace_id and no RLS; the caller chooses the scope key, so t.workspaceId is not involved',
   ),
   // jobs
   connectionQueue: exempt('pure string builder for a queue name; touches no table'),
