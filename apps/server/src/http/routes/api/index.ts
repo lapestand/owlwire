@@ -5,6 +5,7 @@ import { AUTH_COOKIE_PREFIX, secureCookiesFor } from '../../../auth/auth.js';
 import type { Deps } from '../../../deps.js';
 import { notFound, ProblemError, repositoryProblem } from '../../../errors.js';
 import { requireInstanceAdmin } from '../../middleware/instance-admin.js';
+import { invitationRateLimit } from '../../middleware/rate-limit.js';
 import { sessionAuth } from '../../middleware/session-auth.js';
 import { workspaceAccess } from '../../middleware/workspace-access.js';
 import { problem, validationProblem } from '../../problem.js';
@@ -83,6 +84,10 @@ export function createApiRouter(deps: Deps): OpenAPIHono<ApiEnv> {
   const session = sessionAuth(deps.auth);
   const member = workspaceAccess(deps);
   api.use('*', crossSiteGuard(deps.authEnv.baseURL));
+  // Before the session gate: the preview has no session, and accept is limited whether or not it has one.
+  const invitationLimit = invitationRateLimit(deps);
+  api.use('/invitations/lookup', invitationLimit);
+  api.use('/invitations/accept', invitationLimit);
   let hasRoute: ((method: string, path: string) => boolean) | undefined;
   api.use('*', (c, next) => {
     if (PUBLIC_API_PATHS.has(c.req.path)) return next();
