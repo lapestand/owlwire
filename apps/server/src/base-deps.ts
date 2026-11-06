@@ -5,6 +5,7 @@ import type pg from 'pg';
 import type { Logger } from 'pino';
 import type { AdapterRegistry } from './adapters/registry.js';
 import type { ServerConfig } from './config/load.js';
+import type { PayloadSchemaRegistry } from './services/payload-schema.js';
 
 /**
  * The dependencies every server part shares, without the auth library. Kept apart from deps.ts so that code the auth
@@ -25,4 +26,9 @@ export interface BaseDeps {
   logger: Logger;
   adapters: AdapterRegistry;
   rand: () => number;
+  /**
+   * Checks and runs the payload schemas of catalog types in worker threads; one per process, shared by every
+   * request and closed with the other dependencies.
+   */
+  payloadSchemas: PayloadSchemaRegistry;
 }

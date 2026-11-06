@@ -10,6 +10,7 @@ import type { AuthEnv } from './config/auth-env.js';
 import type { ServerConfig } from './config/load.js';
 import { createLogger, toAdapterLogger } from './logger.js';
 import { createMailerFromEnv, type Mailer } from './mail/mailer.js';
+import { PayloadSchemaRegistry } from './services/payload-schema.js';
 
 export type { BaseDeps };
 
@@ -36,8 +37,11 @@ export function attachAuth(
   return { ...base, authEnv, mailer, auth };
 }
 
-/** Close with `await closeDeps(deps)`. */
-export async function closeDeps(deps: Pick<BaseDeps, 'db' | 'authDb' | 'pool'>): Promise<void> {
+/** Close with `await closeDeps(deps)`; it also stops the payload schema workers. */
+export async function closeDeps(
+  deps: Pick<BaseDeps, 'db' | 'authDb' | 'pool' | 'payloadSchemas'>,
+): Promise<void> {
+  await deps.payloadSchemas.close();
   await deps.db.close();
   if (deps.authDb !== deps.db) await deps.authDb.close();
   await deps.pool.end();
@@ -105,6 +109,7 @@ export function createDeps(
     logger,
     adapters,
     rand: overrides.rand ?? Math.random,
+    payloadSchemas: overrides.payloadSchemas ?? new PayloadSchemaRegistry(),
   };
   const mailer =
     overrides.mailer !== undefined ? overrides.mailer : createMailerFromEnv(config.authEnv);
