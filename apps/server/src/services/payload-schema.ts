@@ -16,7 +16,7 @@ function messageOf(err: unknown): string {
 const MAX_PATTERN_LENGTH = 512;
 const MAX_REPEAT_BOUND = 100;
 const MAX_REPEAT_PRODUCT = 100;
-const MAX_PATTERN_COST = 2500;
+const MAX_PATTERN_COST = 2500; // estimated program size, summed over all patterns of a schema
 const MAX_PATTERNS_PER_SCHEMA = 32;
 const MAX_STRING_FOR_PATTERN = 4096;
 const BOUNDS = /^\{(\d+)(?:,(\d*))?\}/;
@@ -47,7 +47,7 @@ function quantifierAt(rest: string): { bound: number; length: number } | null {
  * repetitions around it) exceeds MAX_PATTERN_COST. Each frame tracks the largest repetition
  * product and the summed cost inside one group.
  */
-function assertNestedBounds(pattern: string): void {
+function assertNestedBounds(pattern: string): number {
   const frames = [{ product: 1, cost: 0 }];
   const top = () => frames[frames.length - 1] ?? { product: 1, cost: 0 };
   const note = (product: number, cost: number): void => {
@@ -91,6 +91,7 @@ function assertNestedBounds(pattern: string): void {
       i = atom(i + 1);
     }
   }
+  return frames[0]?.cost ?? 0;
 }
 
 /**
@@ -98,11 +99,11 @@ function assertNestedBounds(pattern: string): void {
  * the program up, so long patterns, big repeat bounds and nested repetitions are refused
  * outright. The scan is textual and fails closed.
  */
-function assertAffordable(pattern: string): void {
+function assertAffordable(pattern: string): number {
   if (pattern.length > MAX_PATTERN_LENGTH) {
     throw new Error(`pattern is longer than ${MAX_PATTERN_LENGTH} characters`);
   }
-  assertNestedBounds(pattern);
+  return assertNestedBounds(pattern);
 }
 
 /**
@@ -119,12 +120,18 @@ function linearRegExpFactory(): {
 } {
   let count = 0;
   let armed = false;
+  let totalCost = 0;
   const factory = (pattern: string) => {
     if (armed) count += 1;
     if (count > MAX_PATTERNS_PER_SCHEMA) {
       throw new Error(`schema has more than ${MAX_PATTERNS_PER_SCHEMA} patterns`);
     }
-    assertAffordable(pattern);
+    if (armed) {
+      totalCost += assertAffordable(pattern);
+      if (totalCost > MAX_PATTERN_COST) throw new Error('schema patterns are too complex');
+    } else {
+      assertAffordable(pattern);
+    }
     const re = RE2JS.compile(pattern);
     return {
       test: (s: string) => {
