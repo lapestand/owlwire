@@ -337,9 +337,15 @@ importers:
 
   packages/contracts:
     dependencies:
+      '@hono/zod-openapi':
+        specifier: ^1.6.3
+        version: 1.6.3(hono@4.13.16)(zod@4.6.6)
       '@owlwire/core':
         specifier: workspace:*
         version: link:../core
+      hono:
+        specifier: ^4.13.16
+        version: 4.13.16
       zod:
         specifier: ^4.6.6
         version: 4.6.6
@@ -2990,6 +2996,10 @@ packages:
     resolution: {integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==}
     engines: {node: '>=16.9.0'}
 
+  hono@4.13.16:
+    resolution: {integrity: sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==}
+    engines: {node: '>=16.9.0'}
+
   human-signals@8.0.1:
     resolution: {integrity: sha512-eKCa6bwnJhvxj14kZk5NCPc6Hb6BdsU9DZcOnmQKSnO1VKrfV0zCvtttPZUsBvjmNDn8rpcJfpwSYnHBjc95MQ==}
     engines: {node: '>=18.18.0'}
@@ -4701,9 +4711,22 @@ snapshots:
       openapi3-ts: 4.6.1
       zod: 4.6.6
 
+  '@hono/zod-openapi@1.6.3(hono@4.13.16)(zod@4.6.6)':
+    dependencies:
+      '@asteasolutions/zod-to-openapi': 9.1.0(zod@4.6.6)
+      '@hono/zod-validator': 0.9.1(hono@4.13.16)(zod@4.6.6)
+      hono: 4.13.16
+      openapi3-ts: 4.6.1
+      zod: 4.6.6
+
   '@hono/zod-validator@0.9.1(hono@4.13.13)(zod@4.6.6)':
     dependencies:
       hono: 4.13.13
+      zod: 4.6.6
+
+  '@hono/zod-validator@0.9.1(hono@4.13.16)(zod@4.6.6)':
+    dependencies:
+      hono: 4.13.16
       zod: 4.6.6
 
   '@inquirer/ansi@2.0.9': {}
@@ -6264,6 +6287,8 @@ snapshots:
       function-bind: 1.1.2
 
   hono@4.13.13: {}
+
+  hono@4.13.16: {}
 
   human-signals@8.0.1: {}
 
