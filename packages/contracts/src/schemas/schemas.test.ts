@@ -6,6 +6,7 @@ import {
   EventsPostBody,
   HookJsonInput,
   InstallationCreateInput,
+  InstallationUpdateInput,
   isReservedTypeKey,
   PROBLEM_CODES,
   PROBLEM_STATUS,
@@ -105,5 +106,24 @@ describe('problem codes', () => {
     expect(PROBLEM_STATUS.installation_revoked).toBe(401);
     expect(PROBLEM_STATUS.unavailable).toBe(503);
     expect(PROBLEM_STATUS.app_not_approved).toBe(403);
+  });
+});
+
+describe('url and strictness hardening', () => {
+  it('limits homepageUrl to http and https', () => {
+    const base = { name: 'Tracker', visibility: 'public' as const };
+    for (const homepageUrl of ['javascript:alert(1)', 'data:text/html,x', 'ftp://x.example/a']) {
+      expect(AppCreateInput.safeParse({ ...base, homepageUrl }).success).toBe(false);
+    }
+    expect(AppCreateInput.safeParse({ ...base, homepageUrl: 'https://x.example' }).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects unknown keys on installation inputs', () => {
+    const appId = '01920000-0000-7000-8000-000000000000';
+    expect(InstallationCreateInput.safeParse({ appId, grantedType: ['a'] }).success).toBe(false);
+    expect(InstallationUpdateInput.safeParse({ grantedTypes: null, extra: 1 }).success).toBe(false);
+    expect(InstallationUpdateInput.safeParse({ grantedTypes: ['a'] }).success).toBe(true);
   });
 });

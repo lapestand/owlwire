@@ -5,7 +5,7 @@ export const TYPE_KEY_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
 export const MAX_BATCH_EVENTS = 100;
 
 /** Links end up in chat messages and the web UI, so only http and https are allowed. */
-const HttpUrl = z.url({ protocol: /^https?$/ });
+export const HttpUrl = z.url({ protocol: /^https?$/ }).max(2048);
 
 export const TypeKey = z.string().regex(TYPE_KEY_PATTERN).openapi({ example: 'account.inactive' });
 export type TypeKey = z.infer<typeof TypeKey>;

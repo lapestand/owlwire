@@ -32,11 +32,13 @@ export const InstallationCreateInput = z
     grantedTypes: GrantedTypes.optional(),
     externalRef: z.string().min(1).max(256).optional(),
   })
+  .strict()
   .openapi('InstallationCreateInput');
 export type InstallationCreateInput = z.infer<typeof InstallationCreateInput>;
 
 export const InstallationUpdateInput = z
   .object({ grantedTypes: GrantedTypes })
+  .strict()
   .openapi('InstallationUpdateInput');
 export type InstallationUpdateInput = z.infer<typeof InstallationUpdateInput>;
 
