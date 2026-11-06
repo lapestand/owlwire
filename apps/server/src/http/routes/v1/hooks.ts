@@ -1,13 +1,23 @@
 import { EventInput, HookJsonInput } from '@owlwire/contracts';
 import type { OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
+import type { InstallationPrincipal } from '../../../auth/installation-context.js';
 import { ProblemError } from '../../../errors.js';
 import { ingestEvent } from '../../../events/ingest.js';
 import { idempotencyHeader, isJsonContentType, readJsonBody } from '../../body.js';
 import { installationAuth } from '../../middleware/installation-auth.js';
 import { validationProblem } from '../../problem.js';
 import type { AppEnv } from '../../types.js';
-import { assertTypeGranted } from './events.js';
+
+function assertTypeGranted(installation: InstallationPrincipal, type: string): void {
+  if (installation.grantedTypes && !installation.grantedTypes.includes(type)) {
+    throw new ProblemError(
+      422,
+      'unknown_type',
+      `type "${type}" is not granted to this installation`,
+    );
+  }
+}
 
 export function hooksRoutes(deps: { db: OwlwireDb }): Hono<AppEnv> {
   const r = new Hono<AppEnv>();

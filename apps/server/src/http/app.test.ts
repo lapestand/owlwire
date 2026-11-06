@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { systemClock } from '@owlwire/core';
+import { parseEditionConfig, systemClock } from '@owlwire/core';
 import { generateToken } from '@owlwire/crypto';
 import {
   AuditDataError,
@@ -14,8 +14,9 @@ import {
 import { HTTPException } from 'hono/http-exception';
 import { describe, expect, it, vi } from 'vitest';
 import { AUDIT_DATA_DETAIL, INVALID_INPUT_DETAIL, NOT_FOUND_DETAIL } from '../errors.js';
-import { ingestEvent } from '../events/ingest.js';
 import { createLogger } from '../logger.js';
+import { ingestEvents } from '../services/ingest.js';
+import type { PayloadSchemaRegistry } from '../services/payload-schema.js';
 import {
   authenticateInstallationToken,
   type InstallationAuthResult,
@@ -28,7 +29,7 @@ vi.mock('../system/installation-auth.js', () => ({
   authenticateInstallationToken: vi.fn(),
   authenticateAppKey: vi.fn(),
 }));
-vi.mock('../events/ingest.js', () => ({ ingestEvent: vi.fn() }));
+vi.mock('../services/ingest.js', () => ({ ingestEvents: vi.fn() }));
 
 const INSTALLATION = {
   id: '01900000-0000-7000-8000-000000000001',
@@ -46,13 +47,21 @@ const INSTALLATION = {
 
 const logger = createLogger('silent');
 
+/** The ingest rate limit needs a real database, so these tests turn it off. */
+function editionWithoutRateLimit() {
+  const edition = parseEditionConfig(undefined);
+  edition.ingest.ratePerMinutePerToken = 0;
+  return edition;
+}
+
 /** Only what the routes under test touch; the auth library is not reached by these requests. */
 function makeApp(over: Partial<AppDeps> = {}) {
   return createApp({
     db: {} as OwlwireDb,
     clock: systemClock,
     logger,
-    config: { trustedProxies: [] },
+    config: { trustedProxies: [], edition: editionWithoutRateLimit() },
+    payloadSchemas: {} as PayloadSchemaRegistry,
     authEnv: { baseURL: 'http://localhost:8080' },
     webDir: null,
     checkReady: async () => true,
@@ -126,7 +135,7 @@ describe('errors', () => {
       ok: true,
       installation: INSTALLATION,
     } as InstallationAuthResult);
-    vi.mocked(ingestEvent)
+    vi.mocked(ingestEvents)
       .mockRejectedValueOnce(
         new RepoInputError('event', 'idempotencyKey must be a non-empty string'),
       )
@@ -162,10 +171,10 @@ describe('errors', () => {
         status: 409,
         code: 'conflict',
       });
-      expect(ingestEvent).toHaveBeenCalledTimes(2);
+      expect(ingestEvents).toHaveBeenCalledTimes(2);
     } finally {
       vi.mocked(authenticateInstallationToken).mockReset();
-      vi.mocked(ingestEvent).mockReset();
+      vi.mocked(ingestEvents).mockReset();
     }
   });
 

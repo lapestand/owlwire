@@ -1,11 +1,11 @@
-import type { OwlwireDb } from '@owlwire/db';
+import type { OpenAPIHono } from '@hono/zod-openapi';
 import type { MiddlewareHandler } from 'hono';
-import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import type { Deps } from '../../../deps.js';
 import { ProblemError } from '../../../errors.js';
 import { problem } from '../../problem.js';
 import type { AppEnv } from '../../types.js';
-import { eventsRoutes } from './events.js';
+import { registerEventRoutes } from './events.js';
 import { hooksRoutes } from './hooks.js';
 
 export const V1_BODY_LIMIT_BYTES = 64 * 1024;
@@ -19,10 +19,9 @@ export function v1BodyLimit(): MiddlewareHandler<AppEnv> {
   });
 }
 
-export function v1Routes(deps: { db: OwlwireDb }): Hono<AppEnv> {
-  const r = new Hono<AppEnv>();
-  r.use('*', v1BodyLimit());
-  r.route('/', eventsRoutes(deps));
-  r.route('/', hooksRoutes(deps));
-  return r;
+/** Registers the public API on the root app, so every /v1 operation lands in its OpenAPI document. */
+export function registerV1Routes(app: OpenAPIHono<AppEnv>, deps: Deps): void {
+  app.use('/v1/*', v1BodyLimit());
+  registerEventRoutes(app, deps);
+  app.route('/v1', hooksRoutes({ db: deps.db }));
 }

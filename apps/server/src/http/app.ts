@@ -11,7 +11,7 @@ import { problem, validationProblem } from './problem.js';
 import { API_BASE_PATH, createApiRouter } from './routes/api/index.js';
 import { rateLimitedProblem } from './routes/api/problems.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
-import { v1Routes } from './routes/v1/index.js';
+import { registerV1Routes } from './routes/v1/index.js';
 import { staticHandler } from './static.js';
 import type { AppEnv } from './types.js';
 
@@ -59,6 +59,10 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     if (err instanceof HTTPException && err.status === 400) {
       return problem(c, new ProblemError(400, 'validation_failed', err.message || undefined));
     }
+    // OpenAPI routes refuse a body whose content type the operation does not declare (text/plain on a JSON body).
+    if (err instanceof HTTPException && err.status === 415) {
+      return problem(c, new ProblemError(422, 'validation_failed', 'unsupported content-type'));
+    }
     // Repository and audit guard errors get the same fixed details as on /api: never an id, a key or the input.
     const mapped = repositoryProblem(err);
     if (mapped) return problem(c, mapped);
@@ -83,7 +87,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
     );
   });
   app.route(API_BASE_PATH, createApiRouter(deps));
-  app.route('/v1', v1Routes({ db: deps.db }));
+  registerV1Routes(app, deps);
 
   if (deps.webDir) app.get('*', staticHandler(deps.webDir));
   return app;
