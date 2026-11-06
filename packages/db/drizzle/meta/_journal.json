@@ -64,6 +64,20 @@
       "when": 1792000912905,
       "tag": "0008_auth_rls_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793962996658,
+      "tag": "0009_app_key_rotation",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793962997652,
+      "tag": "0010_generic_catalog",
+      "breakpoints": true
     }
   ]
 }
