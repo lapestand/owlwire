@@ -59,6 +59,14 @@ export function notFound(): ProblemError {
   return new ProblemError(404, 'not_found', NOT_FOUND_DETAIL);
 }
 
+/**
+ * A retryable server condition that says nothing about the request (a busy payload validator, a transaction
+ * that kept losing deadlocks): 503 with Retry-After: 1. `detail` is one of the fixed sentences of the callers.
+ */
+export function unavailable(detail: string): ProblemError {
+  return new ProblemError(503, 'unavailable', detail, { 'retry-after': '1' });
+}
+
 export function decisionProblem(d: {
   ok: false;
   reason: 'forbidden' | 'last_owner' | 'personal_workspace';

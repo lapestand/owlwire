@@ -82,6 +82,9 @@ export function isValidatorUnavailable(check: SchemaCheck): boolean {
   return !check.ok && UNAVAILABLE.has(check.detail);
 }
 
+/** Fixed detail of the 503 a service answers when the validator cannot take a call. */
+export const VALIDATOR_BUSY_DETAIL = 'The payload validator is busy; try again.';
+
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }

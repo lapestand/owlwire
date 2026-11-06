@@ -1,8 +1,10 @@
+import { listCatalog, openDatabase, tenantScope, withTenant } from '@owlwire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ProblemError } from '../errors.js';
 import { type AppFixture, createAppFixture } from '../test/app-fixtures.js';
 import { listJobs } from '../test/jobs.js';
 import { type IngestPrincipal, ingestEvents } from './ingest.js';
+import type { PayloadSchemaRegistry } from './payload-schema.js';
 import { type ServiceDeps, serviceDeps } from './types.js';
 
 let fx: AppFixture;
@@ -40,6 +42,13 @@ async function storedKeys(installationId: string): Promise<string[]> {
     [installationId],
   );
   return rows.map((r) => r.idempotency_key);
+}
+
+async function routeJobCount(installationId: string): Promise<number> {
+  const queue = `w:${ws}:route:${installationId}`;
+  return (await listJobs(fx.owner)).filter(
+    (j) => j.task === 'route_event' && j.queue_name === queue,
+  ).length;
 }
 
 beforeAll(async () => {
@@ -97,6 +106,7 @@ describe('ingestEvents', () => {
   });
 
   it('does not deadlock when concurrent batches share keys in opposite orders', async () => {
+    // Retries are off, so a deadlock would fail the test: the key order alone must prevent it.
     const p = await principal();
     const keys = Array.from({ length: 20 }, (_, i) => `k-${String(i).padStart(2, '0')}`);
     const batch = (order: string[]) =>
@@ -105,6 +115,7 @@ describe('ingestEvents', () => {
         p,
         order.map((k) => ({ type: 'generic', body: k, idempotencyKey: k })),
         undefined,
+        { deadlockAttempts: 1 },
       );
     const [up, down] = await Promise.all([batch(keys), batch([...keys].reverse())]);
     const ids = (r: typeof up) => r.map((x) => ('eventId' in x ? x.eventId : 'error'));
@@ -112,6 +123,7 @@ describe('ingestEvents', () => {
     const duplicates = [...up, ...down].filter((x) => 'duplicate' in x && x.duplicate);
     expect(duplicates).toHaveLength(keys.length);
     expect(await storedKeys(p.installationId)).toEqual(keys);
+    expect(await routeJobCount(p.installationId)).toBe(keys.length);
   });
 
   it('retries a transaction aborted as a deadlock on the route queue of a new installation', async () => {
@@ -131,6 +143,72 @@ describe('ingestEvents', () => {
       const settled = await Promise.allSettled([send(long), send(['k'])]);
       expect(settled.map((s) => s.status)).toEqual(['fulfilled', 'fulfilled']);
       expect(await storedKeys(p.installationId)).toEqual(long);
+      // A rolled back attempt leaves no job behind: one route job per stored event.
+      expect(await routeJobCount(p.installationId)).toBe(long.length);
+    }
+  });
+
+  it('answers a deadlock that outlasts the retries with a retryable 503', async () => {
+    const rejected: unknown[] = [];
+    for (let i = 0; i < 10 && rejected.length === 0; i++) {
+      const p = await principal();
+      const send = (keys: string[]) =>
+        ingestEvents(
+          d,
+          p,
+          keys.map((k) => ({ type: 'generic', body: k, idempotencyKey: k })),
+          undefined,
+          { deadlockAttempts: 1 },
+        );
+      const settled = await Promise.allSettled([
+        send(['a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'k']),
+        send(['k']),
+      ]);
+      for (const s of settled) if (s.status === 'rejected') rejected.push(s.reason);
+    }
+    expect(rejected.length).toBeGreaterThan(0);
+    for (const err of rejected) {
+      expect(err).toBeInstanceOf(ProblemError);
+      expect(err).toMatchObject({
+        status: 503,
+        code: 'unavailable',
+        headers: { 'retry-after': '1' },
+      });
+    }
+  });
+
+  it('holds no database connection while payloads are validated', async () => {
+    const p = await principal();
+    // One connection only: if ingest held it during validation, the query below could not run and would
+    // fail after the pool's connection timeout.
+    const small = openDatabase({
+      url: fx.deps.config.databaseUrl,
+      keyring: fx.deps.keyring,
+      clock: fx.clock,
+      maxConnections: 1,
+    });
+    let queriedDuringValidation = false;
+    const slow = {
+      validate: async () => {
+        await withTenant(small, tenantScope(ws), (t) => listCatalog(t, p.appId));
+        queriedDuringValidation = true;
+        return { ok: true };
+      },
+    } as unknown as PayloadSchemaRegistry;
+    try {
+      const results = await ingestEvents(
+        { ...d, db: small, payloadSchemas: slow },
+        p,
+        [
+          { type: 'attack.incoming', body: 'x', data: { target: 'a' }, idempotencyKey: 's-1' },
+          { type: 'attack.incoming', body: 'y', data: { target: 'b' }, idempotencyKey: 's-2' },
+        ],
+        undefined,
+      );
+      expect(results).toMatchObject([{ duplicate: false }, { duplicate: false }]);
+      expect(queriedDuringValidation).toBe(true);
+    } finally {
+      await small.close();
     }
   });
 

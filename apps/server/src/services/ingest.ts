@@ -12,8 +12,12 @@ import {
   tenantScope,
   withTenant,
 } from '@owlwire/db';
-import { BEARER_CHALLENGE, ProblemError } from '../errors.js';
-import { isValidatorUnavailable, type PayloadSchemaRegistry } from './payload-schema.js';
+import { BEARER_CHALLENGE, ProblemError, unavailable } from '../errors.js';
+import {
+  isValidatorUnavailable,
+  type PayloadSchemaRegistry,
+  VALIDATOR_BUSY_DETAIL,
+} from './payload-schema.js';
 import type { ServiceDeps } from './types.js';
 
 /** The installation an event arrives for (the installation-token principal has this shape). */
@@ -85,9 +89,7 @@ export async function prepareEvent(
       input.data ?? {},
     );
     if (isValidatorUnavailable(check)) {
-      throw new ProblemError(503, 'unavailable', 'The payload validator is busy; try again.', {
-        'retry-after': '1',
-      });
+      throw unavailable(VALIDATOR_BUSY_DETAIL);
     }
     if (!check.ok) return { ok: false, code: 'validation_failed', detail: check.detail };
   }
@@ -110,31 +112,85 @@ export async function prepareEvent(
 }
 
 /**
- * Attempts for one ingest transaction that Postgres aborts as a deadlock victim. Sorting by key removes the
+ * Attempts for the write transaction when Postgres aborts it as a deadlock victim. Sorting by key removes the
  * deadlock between overlapping batches, but graphile_worker.add_job also creates the route queue row on the
  * first job of an installation, and that unique entry is locked until commit as well: two concurrent first
- * batches with partly overlapping keys can still wait on each other there. Postgres aborts one of them;
- * the whole transaction is rolled back, so running it again is safe and then finds the queue in place.
+ * batches with partly overlapping keys can still wait on each other there. Postgres aborts one of them; the
+ * transaction is rolled back whole (events and jobs), so running it again is safe and finds the queue in place.
  */
 const DEADLOCK_ATTEMPTS = 3;
 const DEADLOCK_DETECTED = '40P01';
+const DEADLOCK_DETAIL = 'The server is busy storing events; try again.';
 
 /**
- * Reads the catalog and stores the valid events in one tenant transaction (each with its route_event job).
+ * Prepares and stores a batch in three steps, so that no database connection is held while payloads are
+ * validated (a validator call can wait for a worker and take up to its deadlines):
+ * 1. a short tenant transaction reads the app catalog;
+ * 2. every event is checked against that snapshot with no connection held (a catalog change after the read
+ *    is not seen by this batch);
+ * 3. one write transaction stores the valid events with their route_event jobs, retried on a deadlock.
  * Results follow the order of `inputs`; an invalid event gets an error item and is not stored.
+ * `deadlockAttempts` exists for tests.
  */
 export async function ingestEvents(
   d: ServiceDeps,
   p: IngestPrincipal,
   inputs: EventInput[],
   headerKey: string | undefined,
+  opts: { deadlockAttempts?: number } = {},
 ): Promise<IngestResult[]> {
+  const scope = tenantScope(p.workspaceId);
+  const types = await withTenant(d.db, scope, (t) => listCatalog(t, p.appId));
+  const catalog = new Map(types.map((type) => [type.key, type]));
+
+  // One event at a time: a large batch must not take every validator worker from other requests.
+  const prepared: PrepareResult[] = [];
+  for (const input of inputs) {
+    prepared.push(await prepareEvent(input, p, catalog, d.payloadSchemas, headerKey));
+  }
+
+  // Each insert holds a lock on its (installation_id, idempotency_key) index entry until commit. Two
+  // concurrent batches that share keys in different orders would wait on each other and deadlock (40P01),
+  // so every batch inserts in idempotency-key order. The sort is stable: of two events with the same key in
+  // one batch the earlier one is stored and the later one is reported as its duplicate.
+  const valid = prepared.flatMap((r, index) => (r.ok ? [{ index, row: r.row }] : []));
+  valid.sort((a, b) => compareKeys(a.row.idempotencyKey, b.row.idempotencyKey));
+  const inserted =
+    valid.length > 0
+      ? await storeRows(
+          d,
+          p,
+          valid.map((v) => v.row),
+          opts.deadlockAttempts ?? DEADLOCK_ATTEMPTS,
+        )
+      : [];
+  if (inserted.length !== valid.length) {
+    throw new Error('ingestEvents: insert result count mismatch');
+  }
+  const byIndex = new Map(valid.map((v, i) => [v.index, inserted[i]]));
+  return prepared.map((r, index): IngestResult => {
+    if (!r.ok) return { error: { code: r.code, detail: r.detail } };
+    const result = byIndex.get(index);
+    if (!result) throw new Error('ingestEvents: missing insert result');
+    return result;
+  });
+}
+
+async function storeRows(
+  d: ServiceDeps,
+  p: IngestPrincipal,
+  rows: InsertEventInput[],
+  attempts: number,
+): Promise<InsertedEvent[]> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await storeEvents(d, p, inputs, headerKey);
+      return await withTenant(d.db, tenantScope(p.workspaceId), (t) => insertEvents(t, rows));
     } catch (err) {
-      if (pgErrorCode(err) === DEADLOCK_DETECTED && attempt < DEADLOCK_ATTEMPTS) continue;
-      // insertEvent re-checks status = 'active' in the tenant transaction, so an installation revoked after
+      if (pgErrorCode(err) === DEADLOCK_DETECTED) {
+        if (attempt < attempts) continue;
+        throw unavailable(DEADLOCK_DETAIL);
+      }
+      // insertEvent re-checks status = 'active' in the write transaction, so an installation revoked after
       // the auth middleware ran is answered the way the middleware would (and nothing is stored).
       if (err instanceof RepoNotFoundError && err.entity === 'installation') {
         throw new ProblemError(
@@ -147,45 +203,6 @@ export async function ingestEvents(
       throw err;
     }
   }
-}
-
-function storeEvents(
-  d: ServiceDeps,
-  p: IngestPrincipal,
-  inputs: EventInput[],
-  headerKey: string | undefined,
-): Promise<IngestResult[]> {
-  return withTenant(d.db, tenantScope(p.workspaceId), async (t) => {
-    const catalog = new Map((await listCatalog(t, p.appId)).map((type) => [type.key, type]));
-    // One event at a time: a large batch must not take every validator worker from other requests.
-    const prepared: PrepareResult[] = [];
-    for (const input of inputs) {
-      prepared.push(await prepareEvent(input, p, catalog, d.payloadSchemas, headerKey));
-    }
-    // Each insert holds a lock on its (installation_id, idempotency_key) index entry until commit. Two
-    // concurrent batches that share keys in different orders would wait on each other and deadlock (40P01),
-    // so every batch inserts in idempotency-key order. The sort is stable: of two events with the same key
-    // in one batch the earlier one is stored and the later one is reported as its duplicate.
-    const valid = prepared.flatMap((r, index) => (r.ok ? [{ index, row: r.row }] : []));
-    valid.sort((a, b) => compareKeys(a.row.idempotencyKey, b.row.idempotencyKey));
-    const inserted =
-      valid.length > 0
-        ? await insertEvents(
-            t,
-            valid.map((v) => v.row),
-          )
-        : [];
-    if (inserted.length !== valid.length) {
-      throw new Error('ingestEvents: insert result count mismatch');
-    }
-    const byIndex = new Map(valid.map((v, i) => [v.index, inserted[i]]));
-    return prepared.map((r, index): IngestResult => {
-      if (!r.ok) return { error: { code: r.code, detail: r.detail } };
-      const result = byIndex.get(index);
-      if (!result) throw new Error('ingestEvents: missing insert result');
-      return result;
-    });
-  });
 }
 
 /** Code-unit order: the same total order in every process, unlike a locale-aware comparison. */
