@@ -1,7 +1,12 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: { main: 'src/main.ts' },
+  // The payload schema worker is its own entry: PayloadSchemaRegistry starts it from dist/ by
+  // file name (payload-schema-worker.js next to main.js).
+  entry: {
+    main: 'src/main.ts',
+    'payload-schema-worker': 'src/services/payload-schema-worker.ts',
+  },
   format: ['esm'],
   platform: 'node',
   target: 'node24',

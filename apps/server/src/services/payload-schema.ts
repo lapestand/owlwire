@@ -1,354 +1,229 @@
+import { createRequire } from 'node:module';
+import { availableParallelism } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { MAX_PAYLOAD_SCHEMA_BYTES } from '@owlwire/contracts';
-import type { ValidateFunction } from 'ajv';
-import { Ajv2020 } from 'ajv/dist/2020.js';
-import { RE2JS } from 're2js';
+import type { SchemaCheck } from './payload-schema-engine.js';
+import type { WorkerRequest, WorkerResponse } from './payload-schema-worker.js';
 
-export type SchemaCheck = { ok: true } | { ok: false; detail: string };
+export type { SchemaCheck };
 
+/**
+ * Hard limit for one compile or validate call inside a worker, counted from the moment the
+ * call reaches an idle worker (queue wait is not included). Static limits cannot bound what
+ * an app's schema costs to evaluate (ref fan-out, repeated `uniqueItems`, ...), so a call that
+ * runs longer has its worker terminated and fails closed. Ordinary schemas take a few ms.
+ */
+const WORKER_DEADLINE_MS = 250;
+const DEFAULT_MAX_QUEUED = 256;
 const DEFAULT_MAX_ENTRIES = 500;
-// Only formats error text and never compiles a schema, so it retains nothing.
-const TEXT_FORMATTER = new Ajv2020({ logger: false });
+// Heap per worker; running out ends the worker like a timeout does.
+const WORKER_HEAP_MB = 128;
+
+const TOO_EXPENSIVE = 'payload too expensive to validate';
+const SCHEMA_TOO_EXPENSIVE = 'payloadSchema too expensive to compile';
+const BUSY = 'payload validator is busy';
+const CLOSED = 'payload validator is closed';
+const STOPPED = 'payload validator stopped unexpectedly';
+
+type Request =
+  | { op: 'check'; schema: unknown }
+  | { op: 'validate'; key: string; schema: Record<string, unknown>; data: unknown };
+
+interface Job {
+  request: Request;
+  /** Result used when the call misses its deadline. */
+  expensive: string;
+  resolve: (result: SchemaCheck) => void;
+}
+
+interface Running extends Job {
+  id: number;
+  timer: NodeJS.Timeout;
+}
+
+interface Slot {
+  worker: Worker;
+  ready: boolean;
+  job: Running | null;
+}
+
+/**
+ * The worker runs from source through the tsx loader in development and tests, and from the
+ * file tsup emits next to main.js in the built server (an entry in tsup.config.ts).
+ */
+function workerEntry(): { url: URL; execArgv: string[] } {
+  const here = import.meta.url;
+  if (here.endsWith('.ts')) {
+    const tsx = createRequire(here).resolve('tsx');
+    return {
+      url: new URL('./payload-schema-worker.ts', here),
+      execArgv: ['--import', pathToFileURL(tsx).href],
+    };
+  }
+  return { url: new URL('./payload-schema-worker.js', here), execArgv: [] };
+}
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-const MAX_PATTERN_LENGTH = 512;
-const MAX_REPEAT_BOUND = 100;
-const MAX_REPEAT_PRODUCT = 100;
-const MAX_PATTERN_COST = 2500; // estimated program size, summed over all patterns of a schema
-const MAX_PATTERNS_PER_SCHEMA = 32;
-const MAX_STRING_FOR_PATTERN = 4096;
-const BOUNDS = /^\{(\d+)(?:,(\d*))?\}/;
-
-/** Raised while validating when a string is too long to be matched safely. */
-class PatternInputError extends Error {}
-
-/** Raised while validating when the call has used up its regex budget. */
-class BudgetExceededError extends Error {}
-
-const MAX_REFS_PER_SCHEMA = 16;
-
 /**
- * Regex work allowed in one validate() call. The unit is (string length x the pattern's cost
- * estimate) summed over every pattern test; the worst matching rate measured for patterns
- * that pass the compile-time limits is about 65000 units per millisecond, so this is roughly
- * 200 ms of matching. The compile-time limits bound one test; this bounds how often a schema
- * can make the engine run one (arrays, many properties, shared definitions behind `$ref`).
- */
-const MAX_VALIDATION_BUDGET = 13_000_000;
-
-// validate() is synchronous, so one module-level slot per call is not shared between calls.
-let activeBudget: { spent: number } | null = null;
-
-/**
- * Upper bound of a quantifier at the start of `rest`, with its length, or null. `{n}` counts
- * as n, `{n,}` as n and `{n,m}` as m; `*`, `+` and `?` do not enlarge the program.
- */
-function quantifierAt(rest: string): { bound: number; length: number } | null {
-  const c = rest[0];
-  if (c === '*' || c === '+' || c === '?') return { bound: 1, length: 1 };
-  const m = BOUNDS.exec(rest);
-  if (!m) return null;
-  const [text, lo, hi] = m;
-  const bounds = [lo, hi].filter((v): v is string => !!v).map(Number);
-  if (bounds.some((n) => n > MAX_REPEAT_BOUND)) {
-    throw new Error(`pattern repetition bound exceeds ${MAX_REPEAT_BOUND}`);
-  }
-  return { bound: Math.max(1, hi ? Number(hi) : Number(lo)), length: text.length };
-}
-
-/**
- * Walks the pattern text and refuses it when nested counted repetitions multiply beyond
- * MAX_REPEAT_PRODUCT, or when the estimated program size (every atom weighted by the
- * repetitions around it) exceeds MAX_PATTERN_COST. Each frame tracks the largest repetition
- * product and the summed cost inside one group.
- */
-function assertNestedBounds(pattern: string): number {
-  const frames = [{ product: 1, cost: 0 }];
-  const top = () => frames[frames.length - 1] ?? { product: 1, cost: 0 };
-  const note = (product: number, cost: number): void => {
-    if (product > MAX_REPEAT_PRODUCT) {
-      throw new Error(`pattern nested repetition exceeds ${MAX_REPEAT_PRODUCT}`);
-    }
-    const frame = top();
-    frame.product = Math.max(frame.product, product);
-    frame.cost += cost;
-    if (frames.length === 1 && frame.cost > MAX_PATTERN_COST) {
-      throw new Error('pattern is too complex');
-    }
-  };
-  const atom = (at: number): number => {
-    const q = quantifierAt(pattern.slice(at));
-    note(q?.bound ?? 1, q?.bound ?? 1);
-    return at + (q?.length ?? 0);
-  };
-  let i = 0;
-  while (i < pattern.length) {
-    const c = pattern[i];
-    if (c === '\\') {
-      i = atom(i + 2);
-    } else if (c === '[') {
-      // Character class: skip to the closing bracket, honouring escapes and a leading ].
-      i += 1;
-      if (pattern[i] === '^') i += 1;
-      if (pattern[i] === ']') i += 1;
-      while (i < pattern.length && pattern[i] !== ']') i += pattern[i] === '\\' ? 2 : 1;
-      i = atom(i + 1);
-    } else if (c === '(') {
-      frames.push({ product: 1, cost: 0 });
-      i += 1;
-    } else if (c === ')') {
-      const inner = frames.length > 1 ? (frames.pop() ?? top()) : { product: 1, cost: 0 };
-      const q = quantifierAt(pattern.slice(i + 1));
-      const bound = q?.bound ?? 1;
-      i += 1 + (q?.length ?? 0);
-      note(inner.product * bound, Math.max(1, inner.cost) * bound);
-    } else {
-      i = atom(i + 1);
-    }
-  }
-  return frames[0]?.cost ?? 0;
-}
-
-/**
- * A linear-time engine is still O(input x program size), and large counted repetitions blow
- * the program up, so long patterns, big repeat bounds and nested repetitions are refused
- * outright. The scan is textual and fails closed.
- */
-function assertAffordable(pattern: string): number {
-  if (pattern.length > MAX_PATTERN_LENGTH) {
-    throw new Error(`pattern is longer than ${MAX_PATTERN_LENGTH} characters`);
-  }
-  // Quoted text (Q..E) would hide repetitions from the scan below, so it is refused.
-  if (pattern.includes('\\Q')) throw new Error('pattern must not use \\Q');
-  return assertNestedBounds(pattern);
-}
-
-/**
- * Builds the regex factory handed to Ajv for one compile. Schema patterns come from untrusted
- * apps and run against every ingested event, so they use a linear-time engine instead of the
- * backtracking native RegExp. Patterns it cannot express (backreferences, lookaround) throw
- * here, which makes the schema fail to compile, as does having too many patterns. Strings
- * longer than MAX_STRING_FOR_PATTERN are never matched: validation fails instead.
- */
-function linearRegExpFactory(): {
-  (pattern: string): { test: (s: string) => boolean; toString: () => string };
-  code: string;
-  arm: () => void;
-} {
-  let count = 0;
-  let armed = false;
-  let totalCost = 0;
-  const factory = (pattern: string) => {
-    if (armed) count += 1;
-    if (count > MAX_PATTERNS_PER_SCHEMA) {
-      throw new Error(`schema has more than ${MAX_PATTERNS_PER_SCHEMA} patterns`);
-    }
-    const cost = assertAffordable(pattern);
-    if (armed) {
-      totalCost += cost;
-      if (totalCost > MAX_PATTERN_COST) throw new Error('schema patterns are too complex');
-    }
-    const unit = Math.max(1, cost);
-    const re = RE2JS.compile(pattern);
-    return {
-      test: (s: string) => {
-        if (s.length > MAX_STRING_FOR_PATTERN) {
-          throw new PatternInputError('string too long for pattern');
-        }
-        if (activeBudget) {
-          activeBudget.spent += s.length * unit;
-          if (activeBudget.spent > MAX_VALIDATION_BUDGET) {
-            throw new BudgetExceededError('payload too expensive to validate');
-          }
-        }
-        return re.test(s);
-      },
-      // Ajv keys its compiled-pattern scope by toString(), so it must identify the pattern.
-      toString: () => pattern,
-    };
-  };
-  // Not 'new RegExp': that marker makes Ajv emit a native RegExp in generated code.
-  factory.code = 're2js-linear';
-  // Counting starts once Ajv has compiled its own meta-schemas, which contain patterns too.
-  factory.arm = () => {
-    armed = true;
-  };
-  return factory;
-}
-
-type SchemaNode = Record<string, unknown>;
-
-function isNode(v: unknown): v is SchemaNode {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function children(node: unknown): unknown[] {
-  if (Array.isArray(node)) return node;
-  return isNode(node) ? Object.values(node) : [];
-}
-
-/** Resolves a local `#/json/pointer` or `#anchor` reference, or undefined if it is not local. */
-function resolveLocalRef(root: unknown, anchors: Map<string, unknown>, ref: string): unknown {
-  if (!ref.startsWith('#')) return undefined;
-  const fragment = ref.slice(1);
-  if (fragment !== '' && !fragment.startsWith('/')) return anchors.get(fragment);
-  let node: unknown = root;
-  if (fragment === '') return node;
-  for (const raw of fragment.slice(1).split('/')) {
-    const key = decodeURIComponent(raw).replaceAll('~1', '/').replaceAll('~0', '~');
-    if (Array.isArray(node)) node = node[Number(key)];
-    else if (isNode(node)) node = node[key];
-    else return undefined;
-  }
-  return node;
-}
-
-/**
- * Refuses schemas with more than MAX_REFS_PER_SCHEMA references, with dynamic references, or
- * with a reference that can reach itself. Every `$ref` is a place where one validation can run
- * the same subschema again, so the count and the absence of cycles keep that fan-out small.
- */
-function assertRefsAffordable(root: unknown): void {
-  const refs = new Map<object, string>();
-  const anchors = new Map<string, unknown>();
-  const stack: unknown[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (isNode(node)) {
-      if ('$dynamicRef' in node || '$recursiveRef' in node) {
-        throw new Error('dynamic references are not supported');
-      }
-      if (typeof node.$ref === 'string') refs.set(node, node.$ref);
-      if (typeof node.$anchor === 'string') anchors.set(node.$anchor, node);
-    }
-    stack.push(...children(node));
-  }
-  if (refs.size > MAX_REFS_PER_SCHEMA) {
-    throw new Error(`schema has more than ${MAX_REFS_PER_SCHEMA} $ref references`);
-  }
-  const refsWithin = (start: unknown): object[] => {
-    const found: object[] = [];
-    const todo: unknown[] = [start];
-    while (todo.length > 0) {
-      const node = todo.pop();
-      if (isNode(node) && refs.has(node)) found.push(node);
-      todo.push(...children(node));
-    }
-    return found;
-  };
-  const edges = new Map<object, object[]>();
-  for (const [node, ref] of refs) {
-    const target = resolveLocalRef(root, anchors, ref);
-    edges.set(node, target === undefined ? [] : refsWithin(target));
-  }
-  const state = new Map<object, 'open' | 'done'>();
-  const visit = (node: object): void => {
-    if (state.get(node) === 'done') return;
-    if (state.get(node) === 'open') throw new Error('schema has a cyclic $ref');
-    state.set(node, 'open');
-    for (const next of edges.get(node) ?? []) visit(next);
-    state.set(node, 'done');
-  };
-  for (const node of refs.keys()) visit(node);
-}
-
-/**
- * Compiles and runs payload schemas registered by apps (untrusted input).
- * Remote references are never fetched (no `loadSchema`), so they surface as
- * compile errors, and schema size is capped before anything is compiled.
+ * Checks and runs payload schemas registered by apps (untrusted input). All compilation and
+ * validation happens in a small pool of worker threads, each with its own compiled-validator
+ * cache (keyed by the caller's cache key, at most `maxEntries` per worker), so a hostile
+ * schema can never block the main event loop: every call has a WORKER_DEADLINE_MS deadline.
+ *
+ * Calls never reject. Failures come back as `{ ok: false, detail }`:
+ * - the deadline passed: "payload too expensive to validate" (validate) or
+ *   "payloadSchema too expensive to compile" (checkSchema); the worker is replaced;
+ * - more than `maxQueued` calls are waiting for a worker: "payload validator is busy";
+ * - after close(): "payload validator is closed".
+ *
+ * Workers are unreferenced while idle, so they never keep the process alive on their own;
+ * close() terminates them.
  */
 export class PayloadSchemaRegistry {
-  readonly #cache = new Map<string, ValidateFunction>();
+  readonly #poolSize: number;
+  readonly #maxQueued: number;
   readonly #maxEntries: number;
+  readonly #slots: Slot[] = [];
+  readonly #queue: Job[] = [];
+  #nextId = 0;
+  #closed = false;
 
-  constructor(opts: { maxEntries?: number } = {}) {
+  constructor(opts: { maxEntries?: number; poolSize?: number; maxQueued?: number } = {}) {
     this.#maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.#poolSize = Math.max(1, opts.poolSize ?? Math.min(2, availableParallelism()));
+    this.#maxQueued = opts.maxQueued ?? DEFAULT_MAX_QUEUED;
   }
 
-  get size(): number {
-    return this.#cache.size;
-  }
-
-  /**
-   * Every compile gets its own Ajv instance. Ajv retains each compiled schema, pattern and
-   * program in instance-level caches that cannot be bounded, so a shared instance would grow
-   * forever; a throwaway instance is collected together with its caches, leaving this
-   * registry's LRU as the only thing that keeps compiled validators alive.
-   */
-  #compile(schema: Record<string, unknown>): ValidateFunction {
-    assertRefsAffordable(schema);
-    const regExp = linearRegExpFactory();
-    const ajv = new Ajv2020({
-      strict: false,
-      allErrors: false,
-      addUsedSchema: false,
-      validateSchema: true,
-      // Refs are never inlined: inlining a shared definition at every use multiplies the
-      // generated code and can stall the event loop for tens of seconds on a small schema.
-      inlineRefs: false,
-      // Schemas are untrusted and must not write to the console (unknown formats warn).
-      logger: false,
-      code: { regExp },
-    });
-    ajv.validateSchema({});
-    regExp.arm();
-    return ajv.compile(schema);
-  }
-
-  checkSchema(schema: unknown): SchemaCheck {
-    const bytes = new TextEncoder().encode(JSON.stringify(schema)).byteLength;
-    if (bytes > MAX_PAYLOAD_SCHEMA_BYTES) {
-      return { ok: false, detail: `payloadSchema exceeds ${MAX_PAYLOAD_SCHEMA_BYTES} bytes` };
-    }
+  checkSchema(schema: unknown): Promise<SchemaCheck> {
+    let json: string | undefined;
     try {
-      this.#compile(schema as Record<string, unknown>);
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, detail: messageOf(err) };
+      json = JSON.stringify(schema);
+    } catch {
+      json = undefined;
     }
-  }
-
-  /** Never throws: any compile or runtime failure is reported as an invalid result. */
-  validate(cacheKey: string, schema: Record<string, unknown>, data: unknown): SchemaCheck {
-    let fn = this.#cache.get(cacheKey);
-    if (fn) {
-      this.#cache.delete(cacheKey);
-    } else {
-      try {
-        fn = this.#compile(schema);
-      } catch (err) {
-        return { ok: false, detail: `payload schema cannot be compiled: ${messageOf(err)}` };
-      }
-    }
-    this.#cache.set(cacheKey, fn);
-    while (this.#cache.size > this.#maxEntries) {
-      const oldest = this.#cache.keys().next().value;
-      if (oldest === undefined) break;
-      this.#cache.delete(oldest);
-    }
-    activeBudget = { spent: 0 };
-    try {
-      if (fn(data)) return { ok: true };
-    } catch (err) {
-      if (err instanceof PatternInputError || err instanceof BudgetExceededError) {
-        return { ok: false, detail: err.message };
-      }
-      const deep = err instanceof RangeError;
-      return {
+    if (json === undefined)
+      return Promise.resolve({ ok: false, detail: 'payloadSchema is not JSON' });
+    if (Buffer.byteLength(json) > MAX_PAYLOAD_SCHEMA_BYTES) {
+      return Promise.resolve({
         ok: false,
-        detail: deep
-          ? 'payload is nested too deeply'
-          : `payload cannot be validated: ${messageOf(err)}`,
-      };
-    } finally {
-      activeBudget = null;
+        detail: `payloadSchema exceeds ${MAX_PAYLOAD_SCHEMA_BYTES} bytes`,
+      });
     }
-    return { ok: false, detail: errorsText(fn.errors) };
+    return this.#run({ op: 'check', schema }, SCHEMA_TOO_EXPENSIVE);
   }
-}
 
-function errorsText(errors: ValidateFunction['errors']): string {
-  return TEXT_FORMATTER.errorsText(errors, { dataVar: 'data', separator: '; ' });
+  validate(cacheKey: string, schema: Record<string, unknown>, data: unknown): Promise<SchemaCheck> {
+    return this.#run({ op: 'validate', key: cacheKey, schema, data }, TOO_EXPENSIVE);
+  }
+
+  /** Stops every worker; pending and later calls resolve with "payload validator is closed". */
+  async close(): Promise<void> {
+    this.#closed = true;
+    for (const job of this.#queue.splice(0)) job.resolve({ ok: false, detail: CLOSED });
+    const slots = this.#slots.splice(0);
+    await Promise.all(
+      slots.map((slot) => {
+        if (slot.job) this.#finish(slot, { ok: false, detail: CLOSED });
+        return slot.worker.terminate();
+      }),
+    );
+  }
+
+  #run(request: Request, expensive: string): Promise<SchemaCheck> {
+    if (this.#closed) return Promise.resolve({ ok: false, detail: CLOSED });
+    if (this.#queue.length >= this.#maxQueued) return Promise.resolve({ ok: false, detail: BUSY });
+    return new Promise((resolve) => {
+      this.#queue.push({ request, expensive, resolve });
+      this.#pump();
+    });
+  }
+
+  #pump(): void {
+    while (this.#queue.length > 0) {
+      const slot = this.#slots.find((s) => s.ready && !s.job);
+      if (!slot) break;
+      const job = this.#queue.shift();
+      if (job) this.#dispatch(slot, job);
+    }
+    // Work is waiting and no worker is free: fill the whole pool, so that a later timeout
+    // (which takes one worker down) still leaves another one ready.
+    if (this.#queue.length > 0) {
+      while (this.#slots.length < this.#poolSize) this.#spawn();
+    }
+  }
+
+  #dispatch(slot: Slot, job: Job): void {
+    const id = ++this.#nextId;
+    const timer = setTimeout(() => this.#expire(slot), WORKER_DEADLINE_MS);
+    slot.job = { ...job, id, timer };
+    slot.worker.ref();
+    try {
+      slot.worker.postMessage({ id, ...job.request } satisfies WorkerRequest);
+    } catch (err) {
+      // The payload could not be cloned for the worker (not plain JSON data).
+      this.#finish(slot, { ok: false, detail: `payload cannot be validated: ${messageOf(err)}` });
+    }
+  }
+
+  /** Resolves the slot's current call and marks the worker idle. */
+  #finish(slot: Slot, result: SchemaCheck): void {
+    const job = slot.job;
+    if (!job) return;
+    clearTimeout(job.timer);
+    slot.job = null;
+    slot.worker.unref();
+    job.resolve(result);
+  }
+
+  #expire(slot: Slot): void {
+    const expensive = slot.job?.expensive ?? TOO_EXPENSIVE;
+    this.#finish(slot, { ok: false, detail: expensive });
+    this.#retire(slot);
+    void slot.worker.terminate();
+    if (!this.#closed) this.#spawn();
+    this.#pump();
+  }
+
+  #retire(slot: Slot): void {
+    const i = this.#slots.indexOf(slot);
+    if (i >= 0) this.#slots.splice(i, 1);
+  }
+
+  #spawn(): void {
+    const { url, execArgv } = workerEntry();
+    const worker = new Worker(url, {
+      execArgv,
+      workerData: { maxEntries: this.#maxEntries },
+      resourceLimits: { maxOldGenerationSizeMb: WORKER_HEAP_MB },
+    });
+    const slot: Slot = { worker, ready: false, job: null };
+    this.#slots.push(slot);
+    worker.on('message', (msg: WorkerResponse) => {
+      if (msg.type === 'ready') {
+        slot.ready = true;
+        if (!this.#closed) this.#pump();
+        if (!slot.job) worker.unref();
+      } else if (slot.job?.id === msg.id) {
+        this.#finish(slot, msg.result);
+        this.#pump();
+      }
+    });
+    // An 'error' event is always followed by 'exit'; the listener keeps it from being thrown.
+    worker.on('error', () => {});
+    worker.on('exit', () => {
+      if (!this.#slots.includes(slot)) return; // retired or closed on purpose
+      this.#retire(slot);
+      this.#finish(slot, { ok: false, detail: STOPPED });
+      if (!slot.ready) {
+        // It never started (broken entry or loader): fail what is waiting instead of looping.
+        for (const job of this.#queue.splice(0)) job.resolve({ ok: false, detail: STOPPED });
+        return;
+      }
+      this.#pump();
+    });
+  }
 }
