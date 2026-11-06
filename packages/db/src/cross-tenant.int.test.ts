@@ -56,6 +56,34 @@ const CASES: Record<string, Case> = {
   createApp: exempt('owner_workspace_id is always t.workspaceId; no input names another workspace'),
   getApp: read((t, v) => repos.getApp(t, v.appId)),
   listOwnApps: read((t) => repos.listOwnApps(t)),
+  listInstallableApps: read((t) => repos.listInstallableApps(t)),
+  setAppKey: refused((t, v) =>
+    repos.setAppKey(
+      t,
+      v.appId,
+      { hash: 'evil-app-key-hash', prefix: 'ow_app_evil' },
+      new Date(0),
+      SYSTEM_ACTOR,
+    ),
+  ),
+  // catalog
+  listCatalog: read((t, v) => repos.listCatalog(t, v.appId)),
+  upsertCatalogTypes: refused((t, v) =>
+    repos.upsertCatalogTypes(
+      t,
+      v.appId,
+      [
+        {
+          key: 'evil',
+          name: 'evil',
+          description: null,
+          defaultSeverity: 'info',
+          payloadSchema: null,
+        },
+      ],
+      SYSTEM_ACTOR,
+    ),
+  ),
   // audiences
   createAudience: exempt('workspace_id is always t.workspaceId; the input is only a name'),
   deleteAudience: denied(
