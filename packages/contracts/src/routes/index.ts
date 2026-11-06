@@ -14,11 +14,20 @@ import {
   revokeInstallationRoute,
   updateInstallationRoute,
 } from './api-installations.js';
+import {
+  createSourceTemplateRoute,
+  deleteSourceTemplateRoute,
+  getSourceTemplateRoute,
+  listSourceTemplatesRoute,
+  previewSourceTemplateRoute,
+  updateSourceTemplateRoute,
+} from './api-source-templates.js';
 import { getEventRoute, postEventsRoute, postHooksRoute, putCatalogRoute } from './v1.js';
 
 export * from './api-app-approvals.js';
 export * from './api-apps.js';
 export * from './api-installations.js';
+export * from './api-source-templates.js';
 export * from './common.js';
 export * from './v1.js';
 
@@ -40,4 +49,10 @@ export const allRoutes: readonly RouteConfig[] = [
   revokeInstallationRoute,
   listAppApprovalsRoute,
   decideAppApprovalRoute,
+  listSourceTemplatesRoute,
+  createSourceTemplateRoute,
+  previewSourceTemplateRoute,
+  getSourceTemplateRoute,
+  updateSourceTemplateRoute,
+  deleteSourceTemplateRoute,
 ];

@@ -52,7 +52,7 @@ describe('buildOpenApiDocument', () => {
     const apiOps = Object.entries(paths)
       .filter(([p]) => p.startsWith('/api/'))
       .flatMap(([, ops]) => Object.values(ops));
-    expect(apiOps.length).toBe(12);
+    expect(apiOps.length).toBe(18);
     for (const op of apiOps) {
       expect(op.tags).toContain('internal');
       expect(op.security).toEqual([{ cookieAuth: [] }]);

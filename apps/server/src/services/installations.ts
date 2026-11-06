@@ -6,10 +6,12 @@ import {
   getApp,
   getInstallation,
   getInstallationWithApp,
+  getSourceTemplate,
   type InstallationWithApp,
   listCatalog,
   RepoNotFoundError,
   revokeInstallation,
+  setInstallationSourceTemplate,
   type TenantScope,
   type TenantTx,
   updateInstallationGrants,
@@ -20,6 +22,15 @@ import { type ServiceDeps, userIdOf } from './types.js';
 
 const UNKNOWN_TYPE_DETAIL = 'grantedTypes contains a type that is not in the app catalog.';
 const REVOKED_DETAIL = 'The installation is revoked.';
+const UNKNOWN_TEMPLATE_DETAIL = 'unknown source template';
+
+/** A template of another workspace and a missing one look the same. */
+async function assertTemplateExists(t: TenantTx, id: string | null | undefined): Promise<void> {
+  if (id === undefined || id === null) return;
+  if (!(await getSourceTemplate(t, id))) {
+    throw new ProblemError(422, 'validation_failed', UNKNOWN_TEMPLATE_DETAIL);
+  }
+}
 
 /** Deduplicated grants that all exist in the app's catalog; null (or absent) grants the whole catalog. */
 async function validateGrants(
@@ -69,6 +80,7 @@ export async function createWorkspaceInstallation(
       );
     }
     const grantedTypes = await validateGrants(t, app.id, input.grantedTypes);
+    await assertTemplateExists(t, input.sourceTemplateId);
     const issued = issueToken('inst');
     const created = await createInstallation(
       t,
@@ -78,6 +90,7 @@ export async function createWorkspaceInstallation(
         tokenPrefix: issued.prefix,
         externalRef: input.externalRef ?? null,
         grantedTypes,
+        sourceTemplateId: input.sourceTemplateId ?? null,
         createdByUserId: userIdOf(actor),
       },
       actor,
@@ -104,6 +117,29 @@ export async function changeInstallationGrants(
     const validated = await validateGrants(t, current.appId, grantedTypes);
     if (sameGrants(current.grantedTypes, validated)) return withApp(t, installationId);
     const updated = await updateInstallationGrants(t, installationId, validated, actor);
+    // Revoked by a concurrent request between the read and the update.
+    if (!updated) throw new ProblemError(409, 'conflict', REVOKED_DETAIL);
+    return withApp(t, installationId);
+  });
+}
+
+/**
+ * Binds an active installation to a source template of the same workspace, or unbinds it with null. A revoked
+ * installation is a 409; an unknown or foreign template is a 422. Binding the current template changes nothing.
+ */
+export async function changeInstallationSourceTemplate(
+  d: ServiceDeps,
+  scope: TenantScope,
+  actor: AuditActor,
+  installationId: string,
+  sourceTemplateId: string | null,
+): Promise<InstallationWithApp> {
+  return withTenant(d.db, scope, async (t) => {
+    const current = await getInstallation(t, installationId);
+    if (!current) throw notFound();
+    if (current.status === 'revoked') throw new ProblemError(409, 'conflict', REVOKED_DETAIL);
+    await assertTemplateExists(t, sourceTemplateId);
+    const updated = await setInstallationSourceTemplate(t, installationId, sourceTemplateId, actor);
     // Revoked by a concurrent request between the read and the update.
     if (!updated) throw new ProblemError(409, 'conflict', REVOKED_DETAIL);
     return withApp(t, installationId);

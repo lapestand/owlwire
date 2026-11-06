@@ -12,6 +12,7 @@ export const InstallationView = z
     status: z.enum(['active', 'revoked']),
     externalRef: z.string().nullable(),
     grantedTypes: z.array(z.string()).nullable(),
+    sourceTemplateId: z.string().uuid().nullable(),
     tokenPrefix: z.string(),
     createdAt: z.string(),
     revokedAt: z.string().nullable(),
@@ -31,14 +32,21 @@ export const InstallationCreateInput = z
     appId: z.string().uuid(),
     grantedTypes: GrantedTypes.optional(),
     externalRef: z.string().min(1).max(256).optional(),
+    sourceTemplateId: z.string().uuid().nullable().optional(),
   })
   .strict()
   .openapi('InstallationCreateInput');
 export type InstallationCreateInput = z.infer<typeof InstallationCreateInput>;
 
 export const InstallationUpdateInput = z
-  .object({ grantedTypes: GrantedTypes })
+  .object({
+    grantedTypes: GrantedTypes.optional(),
+    sourceTemplateId: z.string().uuid().nullable().optional(),
+  })
   .strict()
+  .refine((v) => v.grantedTypes !== undefined || v.sourceTemplateId !== undefined, {
+    message: 'at least one field is required',
+  })
   .openapi('InstallationUpdateInput');
 export type InstallationUpdateInput = z.infer<typeof InstallationUpdateInput>;
 
