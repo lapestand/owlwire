@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { check, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { bytea, tstz } from './types.js';
 import { workspaces } from './workspaces.js';
 
@@ -18,11 +18,16 @@ export const apps = pgTable(
     homepageUrl: text('homepage_url'),
     appKeyHash: text('app_key_hash'),
     appKeyPrefix: text('app_key_prefix'),
+    appKeyPrevHash: text('app_key_prev_hash'),
+    appKeyPrevPrefix: text('app_key_prev_prefix'),
+    appKeyPrevExpiresAt: tstz('app_key_prev_expires_at'),
     statusWebhookUrl: text('status_webhook_url'),
     statusWebhookSecretEnc: bytea('status_webhook_secret_enc'),
     createdAt: tstz('created_at').notNull().defaultNow(),
   },
   (t) => [
+    uniqueIndex('apps_app_key_hash_uq').on(t.appKeyHash),
+    uniqueIndex('apps_app_key_prev_hash_uq').on(t.appKeyPrevHash),
     check('apps_visibility_check', sql`${t.visibility} in ('private', 'public')`),
     check(
       'apps_approval_status_check',

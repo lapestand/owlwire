@@ -1,4 +1,5 @@
 export * from './backoff.js';
+export * from './catalog.js';
 export * from './clock.js';
 export * from './config/schema.js';
 export * from './ids.js';

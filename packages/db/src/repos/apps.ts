@@ -7,11 +7,12 @@ import { type AuditActor, writeAudit } from './audit.js';
 import { now, q } from './context.js';
 
 type AppSelect = typeof apps.$inferSelect;
-/** App anahtarı hash'i ve durum webhook sırrı satır tipinde yoktur. */
-export type AppRow = Omit<AppSelect, 'appKeyHash' | 'statusWebhookSecretEnc'>;
+/** App anahtarı hash'leri (güncel ve önceki) ve durum webhook sırrı satır tipinde yoktur. */
+export type AppRow = Omit<AppSelect, 'appKeyHash' | 'appKeyPrevHash' | 'statusWebhookSecretEnc'>;
 
 const {
   appKeyHash: _appKeyHash,
+  appKeyPrevHash: _appKeyPrevHash,
   statusWebhookSecretEnc: _statusWebhookSecretEnc,
   ...appColumns
 } = getTableColumns(apps);
