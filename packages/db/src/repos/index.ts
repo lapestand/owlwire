@@ -88,10 +88,14 @@ export {
   type CreateInstallationInput,
   createInstallation,
   getInstallation,
+  getInstallationWithApp,
   type InstallationRevokeReason,
   type InstallationRow,
+  type InstallationWithApp,
   listInstallations,
+  listInstallationsWithApp,
   revokeInstallation,
+  updateInstallationGrants,
 } from './installations.js';
 export {
   type CreateInvitationInput,

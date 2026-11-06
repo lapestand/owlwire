@@ -1,7 +1,7 @@
 import { isUuid, newId } from '@owlwire/core';
 import { and, asc, eq, getTableColumns } from 'drizzle-orm';
 import { mapPgErrors, RepoInputError, RepoNotFoundError } from '../errors.js';
-import { installations } from '../schema/index.js';
+import { apps, installations } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
 import { getApp } from './apps.js';
 import { type AuditActor, writeAudit } from './audit.js';
@@ -37,6 +37,9 @@ const byId = (t: TenantTx, id: string) =>
  * FK denetimi RLS'i yok saydığından başka workspace'in private (görünmez) app'ine kurulum satırı DB'de
  * yazılabilir; bu yüzden app önce `getApp` ile (kendi app'i ya da onaylı public app) görünürlük açısından
  * denetlenir. Görünmeyen app `RepoNotFoundError('app', appId)`.
+ * App satırı kilitlenmez (başka workspace'in public app'i için kiracı RLS'i `FOR SHARE`'e izin vermez):
+ * onay aynı anda geri çekilirse kurulum oluşabilir; token kullanımındaki onay denetimi bu kurulumun
+ * token'ını reddeder.
  */
 export async function createInstallation(
   t: TenantTx,
@@ -117,4 +120,64 @@ export async function revokeInstallation(
     targetId: id,
     data: { appId: row.appId, tokenPrefix: row.tokenPrefix, reason: opts.reason ?? 'workspace' },
   });
+}
+
+export type InstallationWithApp = InstallationRow & {
+  appName: string | null;
+  appVisibility: 'private' | 'public' | null;
+};
+
+const withAppColumns = {
+  ...installationColumns,
+  appName: apps.name,
+  appVisibility: apps.visibility,
+};
+
+/** Left join: an app that is no longer visible to this workspace (RLS) yields null app fields. */
+export async function listInstallationsWithApp(t: TenantTx): Promise<InstallationWithApp[]> {
+  const rows = await q(t)
+    .select(withAppColumns)
+    .from(installations)
+    .leftJoin(apps, eq(apps.id, installations.appId))
+    .where(eq(installations.workspaceId, t.workspaceId))
+    .orderBy(asc(installations.createdAt), asc(installations.id));
+  return rows as InstallationWithApp[];
+}
+
+export async function getInstallationWithApp(
+  t: TenantTx,
+  id: string,
+): Promise<InstallationWithApp | null> {
+  if (!isUuid(id)) return null;
+  const rows = await q(t)
+    .select(withAppColumns)
+    .from(installations)
+    .leftJoin(apps, eq(apps.id, installations.appId))
+    .where(byId(t, id));
+  return (rows[0] as InstallationWithApp | undefined) ?? null;
+}
+
+/** Changes the grants of an active installation; returns null when there is no active installation with this id. */
+export async function updateInstallationGrants(
+  t: TenantTx,
+  id: string,
+  grantedTypes: string[] | null,
+  actor: AuditActor,
+): Promise<InstallationRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await q(t)
+    .update(installations)
+    .set({ grantedTypes })
+    .where(and(byId(t, id), eq(installations.status, 'active')))
+    .returning(installationColumns);
+  const row = rows[0];
+  if (!row) return null;
+  await writeAudit(t, {
+    action: 'installation.updated',
+    actor,
+    targetType: 'installation',
+    targetId: id,
+    data: { grantedTypes },
+  });
+  return row;
 }
