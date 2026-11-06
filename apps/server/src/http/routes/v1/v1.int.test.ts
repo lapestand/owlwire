@@ -294,9 +294,10 @@ describe('ingestEvent', () => {
     );
     const err = await ingestEvent(h.deps.db, {
       installation: {
-        id: other.installationId,
-        appId: other.appId,
+        installationId: other.installationId,
         workspaceId: other.workspaceId,
+        appId: other.appId,
+        appVisibility: 'private',
         grantedTypes: null,
       },
       input: { type: 'a', body: 'x' },

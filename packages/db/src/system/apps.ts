@@ -1,24 +1,40 @@
 import { isUuid } from '@owlwire/core';
-import { and, asc, eq, gt, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import { type AppRow, appColumns } from '../repos/apps.js';
 import { type AuditActor, writeAudit } from '../repos/audit.js';
 import { now, q } from '../repos/context.js';
 import { apps, installations, workspaces } from '../schema/index.js';
 import type { SystemTx } from '../scope.js';
 
-/** App key lookup across workspaces: the current key, or the previous key until it expires. */
+/** What app key authentication needs: the app, the stored hash that matched and the owner workspace state. */
+export interface AppKeyAuthRecord {
+  app: AppRow;
+  /** The current or the previous key hash, whichever matched; callers compare it in constant time. */
+  keyHash: string;
+  ownerWorkspaceDeleted: boolean;
+}
+
+/**
+ * App key lookup across workspaces: the current key, or the previous key until it expires. Approval and the owner
+ * workspace state are returned, not filtered, so the caller decides how to answer them.
+ */
 export async function findAppByKeyHash(
   s: SystemTx,
   hash: string,
-  now: Date,
-): Promise<AppRow | null> {
+  at: Date,
+): Promise<AppKeyAuthRecord | null> {
   const rows = await q(s)
-    .select(appColumns)
+    .select({
+      app: appColumns,
+      keyHash: sql<string>`case when ${apps.appKeyHash} = ${hash} then ${apps.appKeyHash} else ${apps.appKeyPrevHash} end`,
+      ownerWorkspaceDeleted: sql<boolean>`${workspaces.deletedAt} is not null`,
+    })
     .from(apps)
+    .innerJoin(workspaces, eq(workspaces.id, apps.ownerWorkspaceId))
     .where(
       or(
         eq(apps.appKeyHash, hash),
-        and(eq(apps.appKeyPrevHash, hash), gt(apps.appKeyPrevExpiresAt, now)),
+        and(eq(apps.appKeyPrevHash, hash), gt(apps.appKeyPrevExpiresAt, at)),
       ),
     );
   return rows[0] ?? null;

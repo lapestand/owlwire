@@ -2,7 +2,6 @@ import { type ChannelAdapter, createFakeAdapter, type FakeAdapter } from '@owlwi
 import { type Clock, systemClock } from '@owlwire/core';
 import { migrateAll } from '@owlwire/db/migrate';
 import { startTestDatabase } from '@owlwire/testing';
-import type { Hono } from 'hono';
 import pg from 'pg';
 import type { Logger } from 'pino';
 import { createAdapterRegistry } from '../adapters/registry.js';
@@ -10,13 +9,12 @@ import type { AuthHooks } from '../auth/auth.js';
 import type { ServerConfig } from '../config/load.js';
 import { attachAuth, type BaseDeps, closeDeps, createDeps, type Deps } from '../deps.js';
 import { createApp } from '../http/app.js';
-import type { AppEnv } from '../http/types.js';
 import type { Mailer } from '../mail/mailer.js';
 import { testAuthEnv, testConfig } from './config.js';
 
 export interface Harness {
   deps: Deps;
-  app: Hono<AppEnv>;
+  app: ReturnType<typeof createApp>;
   fake: FakeAdapter;
   /** Owner role (owlwire) pool: raw SQL seeds and assertions outside RLS. Production code never uses it. */
   ownerPool: pg.Pool;

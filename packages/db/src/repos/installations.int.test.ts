@@ -89,6 +89,7 @@ describe('row types hide secrets', () => {
       appApprovalStatus: string;
       appOwnerWorkspaceId: string;
       workspaceDeleted: boolean;
+      appOwnerWorkspaceDeleted: boolean;
     }>();
   });
 });
@@ -279,6 +280,7 @@ describe('system lookups', () => {
       appApprovalStatus: 'approved',
       appOwnerWorkspaceId: B,
       workspaceDeleted: false,
+      appOwnerWorkspaceDeleted: false,
     });
     expect(await sys((s) => findInstallationByTokenHash(s, hashToken('unknown')))).toBeNull();
   });

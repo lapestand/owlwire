@@ -142,6 +142,36 @@ describe('installations repo: grants, app state and bulk revoke', () => {
     );
   });
 
+  it('reports a deleted owner workspace of a public app separately from the installer workspace', async () => {
+    const owner = await createTestWorkspace(env.db, 'owner-gone');
+    const app = await inWs(owner)((t) =>
+      createApp(
+        t,
+        { name: 'Owned', slug: `owned-${newId().slice(-12)}`, visibility: 'public' },
+        SYSTEM_ACTOR,
+      ),
+    );
+    await env.owner.query(`update apps set approval_status = 'approved' where id = $1`, [app.id]);
+    const issued = issueToken('inst');
+    await inWs(B)((t) =>
+      createInstallation(
+        t,
+        { appId: app.id, tokenHash: issued.hash, tokenPrefix: issued.prefix },
+        SYSTEM_ACTOR,
+      ),
+    );
+    expect(await sys((s) => findInstallationByTokenHash(s, issued.hash))).toMatchObject({
+      workspaceDeleted: false,
+      appOwnerWorkspaceDeleted: false,
+    });
+    await env.owner.query(`update workspaces set deleted_at = now() where id = $1`, [owner]);
+    expect(await sys((s) => findInstallationByTokenHash(s, issued.hash))).toMatchObject({
+      workspaceId: B,
+      workspaceDeleted: false,
+      appOwnerWorkspaceDeleted: true,
+    });
+  });
+
   it('updates granted types only while active and audits the change', async () => {
     const { inst } = await setup({ grantedTypes: ['generic'] });
     const updated = await inWs(A)((t) => updateInstallationGrants(t, inst.id, null, SYSTEM_ACTOR));

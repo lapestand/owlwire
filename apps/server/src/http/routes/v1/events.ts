@@ -1,7 +1,7 @@
 import { EventInput } from '@owlwire/contracts';
 import type { OwlwireDb } from '@owlwire/db';
 import { Hono } from 'hono';
-import type { InstallationContext } from '../../../auth/installation-context.js';
+import type { InstallationPrincipal } from '../../../auth/installation-context.js';
 import { ProblemError } from '../../../errors.js';
 import { ingestEvent } from '../../../events/ingest.js';
 import { idempotencyHeader, readJsonBody } from '../../body.js';
@@ -9,7 +9,7 @@ import { installationAuth } from '../../middleware/installation-auth.js';
 import { validationProblem } from '../../problem.js';
 import type { AppEnv } from '../../types.js';
 
-export function assertTypeGranted(installation: InstallationContext, type: string): void {
+export function assertTypeGranted(installation: InstallationPrincipal, type: string): void {
   if (installation.grantedTypes && !installation.grantedTypes.includes(type)) {
     throw new ProblemError(
       422,

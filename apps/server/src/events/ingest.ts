@@ -7,7 +7,7 @@ import {
   tenantScope,
   withTenant,
 } from '@owlwire/db';
-import type { InstallationContext } from '../auth/installation-context.js';
+import type { InstallationPrincipal } from '../auth/installation-context.js';
 import { BEARER_CHALLENGE, ProblemError } from '../errors.js';
 
 export interface IngestResult {
@@ -36,7 +36,7 @@ export function resolveIdempotencyKey(
 export async function ingestEvent(
   db: OwlwireDb,
   args: {
-    installation: InstallationContext;
+    installation: InstallationPrincipal;
     input: EventInput;
     headerIdempotencyKey: string | undefined;
   },
@@ -53,7 +53,7 @@ export async function ingestEvent(
   try {
     result = await withTenant(db, tenantScope(args.installation.workspaceId), (t) =>
       insertEvent(t, {
-        installationId: args.installation.id,
+        installationId: args.installation.installationId,
         idempotencyKey,
         type: message.type,
         severity: message.severity,

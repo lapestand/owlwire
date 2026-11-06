@@ -97,19 +97,24 @@ describe('apps repo: keys, approval and installable apps', () => {
 
     const first = await inA((t) => setAppKey(t, app.id, k1, exp, SYSTEM_ACTOR));
     expect(first).toEqual({ previousKeyExpiresAt: null });
-    expect((await sys((s) => findAppByKeyHash(s, k1.hash, now)))?.id).toBe(app.id);
+    expect((await sys((s) => findAppByKeyHash(s, k1.hash, now)))?.app.id).toBe(app.id);
 
     const second = await inA((t) => setAppKey(t, app.id, k2, exp, SYSTEM_ACTOR));
     expect(second?.previousKeyExpiresAt?.toISOString()).toBe(exp.toISOString());
-    expect((await sys((s) => findAppByKeyHash(s, k1.hash, now)))?.id).toBe(app.id);
+    expect((await sys((s) => findAppByKeyHash(s, k1.hash, now)))?.app.id).toBe(app.id);
     expect(await sys((s) => findAppByKeyHash(s, k1.hash, new Date(exp.getTime() + 1)))).toBeNull();
-    expect((await sys((s) => findAppByKeyHash(s, k2.hash, new Date(exp.getTime() + 1))))?.id).toBe(
-      app.id,
-    );
+    expect(
+      (await sys((s) => findAppByKeyHash(s, k2.hash, new Date(exp.getTime() + 1))))?.app.id,
+    ).toBe(app.id);
 
     await inA((t) => setAppKey(t, app.id, k3, exp, SYSTEM_ACTOR));
     expect(await sys((s) => findAppByKeyHash(s, k1.hash, now))).toBeNull();
-    expect((await sys((s) => findAppByKeyHash(s, k2.hash, now)))?.id).toBe(app.id);
+    expect(await sys((s) => findAppByKeyHash(s, k2.hash, now))).toMatchObject({
+      app: { id: app.id, approvalStatus: 'pending' },
+      keyHash: k2.hash,
+      ownerWorkspaceDeleted: false,
+    });
+    expect(await sys((s) => findAppByKeyHash(s, k3.hash, now))).toMatchObject({ keyHash: k3.hash });
     expect((await auditRows(app.id)).filter((r) => r.action === 'app.key_rotated')).toHaveLength(3);
   });
 
@@ -119,6 +124,19 @@ describe('apps repo: keys, approval and installable apps', () => {
       setAppKey(t, app.id, issueToken('app'), new Date('2026-10-13T10:00:00Z'), SYSTEM_ACTOR),
     );
     expect(r).toBeNull();
+  });
+
+  it('reports a soft-deleted owner workspace on app key lookups', async () => {
+    const gone = await createTestWorkspace(env.db, 'key-owner-gone');
+    const inGone = <T>(fn: (t: TenantTx) => Promise<T>) =>
+      withTenant(env.db, tenantScope(gone), fn);
+    const app = await makeApp(inGone, { visibility: 'public' });
+    const key = issueToken('app');
+    await inGone((t) => setAppKey(t, app.id, key, new Date('2026-10-13T10:00:00Z'), SYSTEM_ACTOR));
+    await env.owner.query(`update workspaces set deleted_at = now() where id = $1`, [gone]);
+    const found = await sys((s) => findAppByKeyHash(s, key.hash, new Date('2026-10-12T10:00:00Z')));
+    expect(found).toMatchObject({ app: { id: app.id }, ownerWorkspaceDeleted: true });
+    expect(found?.app).not.toHaveProperty('appKeyHash');
   });
 
   it('approves pending public apps through the system scope and audits the change', async () => {
