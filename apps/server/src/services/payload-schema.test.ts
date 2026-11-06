@@ -228,5 +228,40 @@ describe('PayloadSchemaRegistry', () => {
         expect(elapsed, pattern).toBeLessThan(200);
       }
     });
+
+    it('applies the complexity budget to the whole schema', () => {
+      const reg = new PayloadSchemaRegistry();
+      const heavy = (n: number) => ({ type: 'string', pattern: `${'[a-z]{100}'.repeat(n)}$` });
+      // Each pattern estimates to about 1500; together they pass the 2500 budget.
+      expect(reg.checkSchema(heavy(15)).ok).toBe(true);
+      const both = { type: 'object', properties: { a: heavy(15), b: heavy(15) } };
+      expect(reg.checkSchema(both).ok).toBe(false);
+      const patternPropsToo = {
+        properties: { a: heavy(15) },
+        patternProperties: { [`${'[a-z]{100}'.repeat(15)}$`]: {} },
+      };
+      expect(reg.checkSchema(patternPropsToo).ok).toBe(false);
+    });
+
+    it('keeps the worst whole schema fast with every string at 4096 characters', () => {
+      // 11 x [a-z]{100} = 1100 per pattern, two of them plus a small one fit within 2500.
+      const worst = `${'[a-z]{100}'.repeat(11)}$`;
+      const schema = {
+        type: 'object',
+        properties: {
+          a: { type: 'string', pattern: worst },
+          b: { type: 'string', pattern: worst },
+        },
+        patternProperties: { '^k': { type: 'string', pattern: 'x{100}$' } },
+        additionalProperties: { type: 'string' },
+      };
+      const reg = new PayloadSchemaRegistry();
+      expect(reg.checkSchema(schema)).toEqual({ ok: true });
+      const long = `${'a'.repeat(4095)}b`;
+      const data = { a: long, b: long, kk: long };
+      const started = performance.now();
+      reg.validate('whole', schema, data);
+      expect(performance.now() - started).toBeLessThan(300);
+    });
   });
 });
