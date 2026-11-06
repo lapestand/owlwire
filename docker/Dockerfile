@@ -2,7 +2,7 @@
 
 # The build stage runs on the build host's platform even for a multi-arch build: its output is plain JavaScript
 # (the server's production dependencies have no native code), so arm64 images do not compile under emulation.
-FROM --platform=$BUILDPLATFORM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build
+FROM --platform=$BUILDPLATFORM node:26-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS build
 # Fail a RUN when any command in a pipe fails, not only the last one (the checksum check below pipes into sha512sum).
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV PNPM_HOME=/pnpm
@@ -25,7 +25,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lo
 RUN pnpm turbo run build --filter=@owlwire/server... \
   && pnpm --filter @owlwire/server deploy --prod --legacy /out
 
-FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS runtime
+FROM node:26-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /out /app
