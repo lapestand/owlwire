@@ -12,6 +12,14 @@ const alias = [
   { find: /^@owlwire\/db\/system$/, replacement: r('./packages/db/src/system/index.ts') },
   { find: /^@owlwire\/db$/, replacement: r('./packages/db/src/index.ts') },
   { find: /^@owlwire\/testing$/, replacement: r('./packages/testing/src/index.ts') },
+  {
+    find: /^@owlwire\/contracts\/routes$/,
+    replacement: r('./packages/contracts/src/routes/index.ts'),
+  },
+  {
+    find: /^@owlwire\/contracts\/openapi$/,
+    replacement: r('./packages/contracts/src/openapi/index.ts'),
+  },
   { find: /^@owlwire\/contracts$/, replacement: r('./packages/contracts/src/index.ts') },
   { find: /^@owlwire\/adapter-sdk$/, replacement: r('./packages/adapter-sdk/src/index.ts') },
   {
