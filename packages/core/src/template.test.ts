@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createRenderBudget,
   MAX_TEMPLATE_LENGTH,
   parseTemplate,
   renderTemplateString,
@@ -165,5 +166,47 @@ describe('renderTemplateString', () => {
     expect(parseTemplate('x'.repeat(MAX_TEMPLATE_LENGTH)).ok).toBe(true);
     const err = errorOf('x'.repeat(MAX_TEMPLATE_LENGTH + 1));
     expect(err.position).toBe(MAX_TEMPLATE_LENGTH);
+  });
+
+  it('marks template errors as invalid_template', () => {
+    expect(errorOf('{{ a + b }}').code).toBe('invalid_template');
+    expect(errorOf('x'.repeat(MAX_TEMPLATE_LENGTH + 1)).code).toBe('invalid_template');
+  });
+});
+
+describe('renderTemplateString output budget', () => {
+  it('stops with output_too_large at the part that passes the budget', () => {
+    let caught: unknown;
+    try {
+      renderTemplateString('ab{{ v }}{{ v }}', { v: 'xyz' }, { budget: createRenderBudget(6) });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(TemplateError);
+    expect((caught as TemplateError).code).toBe('output_too_large');
+    expect((caught as TemplateError).position).toBe(9);
+  });
+
+  it('renders up to exactly the budget and shares it between calls', () => {
+    const budget = createRenderBudget(6);
+    expect(renderTemplateString('{{ v }}', { v: 'abc' }, { budget })).toBe('abc');
+    expect(renderTemplateString('d{{ w }}', { w: 'ef' }, { budget })).toBe('def');
+    expect(() => renderTemplateString('g', {}, { budget })).toThrow(TemplateError);
+  });
+
+  it('looks each path up once per render', () => {
+    let reads = 0;
+    const data = {
+      get v() {
+        reads += 1;
+        return 'a';
+      },
+    };
+    expect(renderTemplateString('{{ v }}{{v}}{{ v }}', data)).toBe('aaa');
+    expect(reads).toBe(1);
+  });
+
+  it('is unbounded without a budget', () => {
+    expect(renderTemplateString('{{ v }}{{ v }}', { v: 'x'.repeat(70_000) })).toHaveLength(140_000);
   });
 });

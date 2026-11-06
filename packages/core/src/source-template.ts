@@ -4,12 +4,20 @@
  */
 import { z } from 'zod';
 import { isSeverity, SEVERITIES, type Severity } from './message.js';
-import { parseTemplate, renderTemplateString, TemplateError } from './template.js';
+import {
+  createRenderBudget,
+  parseTemplate,
+  renderTemplateString,
+  TemplateError,
+} from './template.js';
 
 export const SOURCE_TEMPLATE_ROOTS = ['payload', 'headers'] as const;
 
 /** The most fields an event may carry; matches the event input limit. */
 const MAX_FIELDS = 20;
+
+/** The most characters one mapping may render across all its fields, so a template cannot amplify a payload. */
+const MAX_RENDERED_OUTPUT = 65536;
 
 const templateText = z.string().superRefine((text, ctx) => {
   const parsed = parseTemplate(text);
@@ -89,11 +97,20 @@ const SECRET_HEADERS: ReadonlySet<string> = new Set([
   'cookie',
   'proxy-authorization',
 ]);
-const SECRET_HEADER_PARTS = ['token', 'secret', 'signature', 'key'] as const;
+const SECRET_HEADER_PARTS = [
+  'token',
+  'secret',
+  'signature',
+  'key',
+  'auth',
+  'password',
+  'credential',
+  'hmac',
+] as const;
 
 /**
  * Picks the request headers templates may see: names lower-cased, credentials and anything whose name mentions a
- * token, secret, signature or key left out, repeated names joined with `, `.
+ * token, secret, signature, key, auth, password, credential or hmac left out, repeated names joined with `, `.
  */
 export function selectTemplateHeaders(
   entries: Iterable<readonly [string, string]>,
@@ -126,6 +143,10 @@ const OPTIONAL_TEXT_KEYS: readonly OptionalTextKey[] = [
   'idempotencyKey',
 ];
 
+/**
+ * Renders `mapping` on `ctx` and collects every problem by path. Throws `TemplateError` with code `output_too_large`
+ * once the rendered fields together pass the output limit.
+ */
 export function applySourceTemplate(
   mapping: SourceTemplateMapping,
   ctx: SourceTemplateContext,
@@ -134,11 +155,13 @@ export function applySourceTemplate(
   | { ok: false; errors: Array<{ path: string; message: string }> } {
   const errors: Array<{ path: string; message: string }> = [];
   const root = { payload: ctx.payload, headers: ctx.headers };
+  const budget = createRenderBudget(MAX_RENDERED_OUTPUT);
   const render = (tpl: string, path: string): string => {
     try {
-      return renderTemplateString(tpl, root);
+      return renderTemplateString(tpl, root, { budget });
     } catch (err) {
-      if (!(err instanceof TemplateError)) throw err;
+      // Running out of output budget aborts the whole mapping; only invalid templates are collected.
+      if (!(err instanceof TemplateError) || err.code === 'output_too_large') throw err;
       errors.push({ path, message: err.message });
       return '';
     }
