@@ -1,5 +1,6 @@
 import { isUuid } from '@owlwire/core';
 import { asc, eq, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { q } from '../repos/context.js';
 import type { WorkspaceRow } from '../repos/workspaces.js';
 import {
@@ -23,7 +24,11 @@ export type InstallationAuthRecord = Pick<
   appApprovalStatus: AppSelect['approvalStatus'];
   appOwnerWorkspaceId: string;
   workspaceDeleted: boolean;
+  /** The app's owner workspace is soft-deleted: the app is gone for every workspace that installed it. */
+  appOwnerWorkspaceDeleted: boolean;
 };
+const ownerWorkspaces = alias(workspaces, 'owner_workspaces');
+
 export type TenantEntityKind = 'event' | 'delivery' | 'digest' | 'connection' | 'installation';
 
 /**
@@ -47,10 +52,12 @@ export async function findInstallationByTokenHash(
       appApprovalStatus: apps.approvalStatus,
       appOwnerWorkspaceId: apps.ownerWorkspaceId,
       workspaceDeleted: sql<boolean>`${workspaces.deletedAt} is not null`,
+      appOwnerWorkspaceDeleted: sql<boolean>`${ownerWorkspaces.deletedAt} is not null`,
     })
     .from(installations)
     .innerJoin(apps, eq(apps.id, installations.appId))
     .innerJoin(workspaces, eq(workspaces.id, installations.workspaceId))
+    .innerJoin(ownerWorkspaces, eq(ownerWorkspaces.id, apps.ownerWorkspaceId))
     .where(eq(installations.tokenHash, tokenHash));
   return rows[0] ?? null;
 }

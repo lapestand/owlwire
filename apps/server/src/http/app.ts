@@ -1,12 +1,13 @@
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { type Context, Hono } from 'hono';
+import { OpenAPIHono } from '@hono/zod-openapi';
+import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { AUTH_BASE_PATH, AUTH_CLIENT_IP_HEADER } from '../auth/auth.js';
 import type { Deps } from '../deps.js';
 import { notFound, ProblemError, repositoryProblem } from '../errors.js';
 import { type ClientIpResolver, createClientIpResolver } from './client-ip.js';
 import { requestId } from './middleware/request-id.js';
-import { problem } from './problem.js';
+import { problem, validationProblem } from './problem.js';
 import { API_BASE_PATH, createApiRouter } from './routes/api/index.js';
 import { rateLimitedProblem } from './routes/api/problems.js';
 import { dbReadiness, healthRoutes } from './routes/health.js';
@@ -35,7 +36,7 @@ function withClientIp(c: Context, resolve: ClientIpResolver): Request {
   return new Request(c.req.raw, { headers });
 }
 
-export function createApp(deps: AppDeps): Hono<AppEnv> {
+export function createApp(deps: AppDeps): OpenAPIHono<AppEnv> {
   const resolveClientIp = createClientIpResolver(deps.config.trustedProxies, {
     onUntrustedForwarded: () =>
       deps.logger.warn(
@@ -43,7 +44,12 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
           'peer address, so clients behind an unlisted proxy share one limit',
       ),
   });
-  const app = new Hono<AppEnv>();
+  const app = new OpenAPIHono<AppEnv>({
+    // Request validation failures of OpenAPI routes answer like every other validation error (422).
+    defaultHook: (result) => {
+      if (!result.success) throw validationProblem(result.error.issues);
+    },
+  });
   app.use('*', requestId(deps.logger));
   app.onError((err, c) => {
     if (err instanceof ProblemError) return problem(c, err);

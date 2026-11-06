@@ -24,7 +24,10 @@ import { type AppDeps, createApp } from './app.js';
 
 // The /v1 router runs for real; only the installation lookup and the event write below it are stubbed, so a
 // repository error reaches the app's error handler the way a real one would.
-vi.mock('../system/installation-auth.js', () => ({ authenticateInstallationToken: vi.fn() }));
+vi.mock('../system/installation-auth.js', () => ({
+  authenticateInstallationToken: vi.fn(),
+  authenticateAppKey: vi.fn(),
+}));
 vi.mock('../events/ingest.js', () => ({ ingestEvent: vi.fn() }));
 
 const INSTALLATION = {
@@ -32,7 +35,14 @@ const INSTALLATION = {
   appId: '01900000-0000-7000-8000-000000000002',
   workspaceId: '01900000-0000-7000-8000-000000000003',
   grantedTypes: null,
-};
+  tokenHash: 'stubbed',
+  status: 'active',
+  appVisibility: 'private',
+  appApprovalStatus: 'approved',
+  appOwnerWorkspaceId: '01900000-0000-7000-8000-000000000003',
+  workspaceDeleted: false,
+  appOwnerWorkspaceDeleted: false,
+} satisfies Extract<InstallationAuthResult, { ok: true }>['installation'];
 
 const logger = createLogger('silent');
 

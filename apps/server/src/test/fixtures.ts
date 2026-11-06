@@ -130,9 +130,10 @@ export async function ingestFor(
 ): Promise<string> {
   const { eventId } = await ingestEvent(h.deps.db, {
     installation: {
-      id: seed.installationId,
-      appId: seed.appId,
+      installationId: seed.installationId,
       workspaceId: seed.workspaceId,
+      appId: seed.appId,
+      appVisibility: 'private',
       grantedTypes: null,
     },
     input: { type: 'player.inactive', body: 'Ali went idle', ...input },
