@@ -1,4 +1,12 @@
-export { type AppRow, type CreateAppInput, createApp, getApp, listOwnApps } from './apps.js';
+export {
+  type AppRow,
+  type CreateAppInput,
+  createApp,
+  getApp,
+  listInstallableApps,
+  listOwnApps,
+  setAppKey,
+} from './apps.js';
 export {
   type AudienceRow,
   createAudience,
@@ -25,6 +33,12 @@ export {
   type SystemAuditEntry,
   writeAudit,
 } from './audit.js';
+export {
+  type CatalogTypeRow,
+  type CatalogTypeUpsert,
+  listCatalog,
+  upsertCatalogTypes,
+} from './catalog.js';
 export {
   type ConnectionRow,
   type ConnectionStatus,
