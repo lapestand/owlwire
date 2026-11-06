@@ -71,6 +71,17 @@ function workerEntry(): { url: URL; execArgv: string[] } {
   return { url: new URL('./payload-schema-worker.js', here), execArgv: [] };
 }
 
+const UNAVAILABLE: ReadonlySet<string> = new Set([BUSY, CLOSED, STOPPED]);
+
+/**
+ * True for a failure that says nothing about the schema or the payload: the validator could not
+ * take the call (queue full, closed, or a worker that stopped). Callers report it as a retryable
+ * server condition, not as invalid input.
+ */
+export function isValidatorUnavailable(check: SchemaCheck): boolean {
+  return !check.ok && UNAVAILABLE.has(check.detail);
+}
+
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }

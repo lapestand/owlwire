@@ -2,7 +2,11 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { PayloadSchemaRegistry, type SchemaCheck } from './payload-schema.js';
+import {
+  isValidatorUnavailable,
+  PayloadSchemaRegistry,
+  type SchemaCheck,
+} from './payload-schema.js';
 
 const schema = {
   type: 'object',
@@ -311,5 +315,25 @@ describe('PayloadSchemaRegistry', () => {
         expect(performance.now() - started).toBeLessThan(20_000);
       }
     });
+  });
+});
+
+describe('isValidatorUnavailable', () => {
+  it('tells server conditions apart from schemas and payloads that failed', async () => {
+    const full = new PayloadSchemaRegistry({ maxQueued: 0 });
+    const closed = new PayloadSchemaRegistry();
+    await closed.close();
+    try {
+      expect(isValidatorUnavailable(await full.checkSchema(schema))).toBe(true);
+      expect(isValidatorUnavailable(await closed.checkSchema(schema))).toBe(true);
+      expect(
+        isValidatorUnavailable({ ok: false, detail: 'payload validator stopped unexpectedly' }),
+      ).toBe(true);
+      expect(isValidatorUnavailable(await reg.checkSchema({ type: 'nope' }))).toBe(false);
+      expect(isValidatorUnavailable(TOO_EXPENSIVE as SchemaCheck)).toBe(false);
+      expect(isValidatorUnavailable({ ok: true })).toBe(false);
+    } finally {
+      await full.close();
+    }
   });
 });
