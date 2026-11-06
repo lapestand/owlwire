@@ -11,18 +11,25 @@
 
 export const MAX_TEMPLATE_LENGTH = 8000;
 
+/** `invalid_template`: the template itself is wrong. `output_too_large`: rendering ran past its output budget. */
+type TemplateErrorCode = 'invalid_template' | 'output_too_large';
+
 export class TemplateError extends Error {
   override readonly name = 'TemplateError';
   /** Index in the template where the problem was found. */
   readonly position: number;
+  readonly code: TemplateErrorCode;
 
-  constructor(message: string, position: number) {
+  constructor(message: string, position: number, code: TemplateErrorCode = 'invalid_template') {
     super(`${message} at position ${position}`);
     this.position = position;
+    this.code = code;
   }
 }
 
-type TemplatePart = { t: 'text'; v: string } | { t: 'path'; segments: readonly string[] };
+type TemplatePart =
+  | { t: 'text'; v: string; at: number }
+  | { t: 'path'; segments: readonly string[]; at: number };
 
 export type TemplateParse =
   | { ok: true; parts: readonly TemplatePart[] }
@@ -150,13 +157,13 @@ export function parseTemplate(tpl: string): TemplateParse {
   while (i < tpl.length) {
     const open = tpl.indexOf(OPEN, i);
     if (open === -1) {
-      parts.push({ t: 'text', v: tpl.slice(i) });
+      parts.push({ t: 'text', v: tpl.slice(i), at: i });
       break;
     }
-    if (open > i) parts.push({ t: 'text', v: tpl.slice(i, open) });
+    if (open > i) parts.push({ t: 'text', v: tpl.slice(i, open), at: i });
     const scanner = new PathScanner(tpl, open + OPEN.length);
     try {
-      parts.push({ t: 'path', segments: scanner.placeholder() });
+      parts.push({ t: 'path', segments: scanner.placeholder(), at: open });
     } catch (err) {
       if (err instanceof EndOfInput)
         return { ok: false, error: new TemplateError('unclosed {{', open) };
@@ -202,16 +209,60 @@ function stringify(value: unknown): string {
   }
 }
 
-function renderTemplateParts(parts: readonly TemplatePart[], data: unknown): string {
-  let out = '';
-  for (const part of parts)
-    out += part.t === 'text' ? part.v : stringify(lookup(data, part.segments));
-  return out;
+/**
+ * Output budget and value cache shared by several renders on the same data. Each path is looked up and stringified
+ * once per budget, and the renders together may write at most the budget's characters.
+ */
+class RenderBudget {
+  private readonly values = new Map<string, string>();
+  private data: unknown;
+
+  constructor(private remaining: number) {}
+
+  value(data: unknown, segments: readonly string[]): string {
+    if (data !== this.data) {
+      this.values.clear();
+      this.data = data;
+    }
+    const key = JSON.stringify(segments);
+    let text = this.values.get(key);
+    if (text === undefined) {
+      text = stringify(lookup(data, segments));
+      this.values.set(key, text);
+    }
+    return text;
+  }
+
+  spend(text: string, at: number): void {
+    if (text.length > this.remaining) {
+      throw new TemplateError('rendered output exceeds its size limit', at, 'output_too_large');
+    }
+    this.remaining -= text.length;
+  }
 }
 
-/** Renders `tpl` on `data`; throws `TemplateError` when the template is invalid. */
-export function renderTemplateString(tpl: string, data: unknown): string {
+/** A budget of `maxLength` output characters for one or more `renderTemplateString` calls on the same data. */
+export function createRenderBudget(maxLength: number): RenderBudget {
+  return new RenderBudget(maxLength);
+}
+
+/**
+ * Renders `tpl` on `data`; throws `TemplateError` when the template is invalid, or with code `output_too_large` as
+ * soon as the output would pass the budget. Without a budget the output is limited only by the data.
+ */
+export function renderTemplateString(
+  tpl: string,
+  data: unknown,
+  options: { budget?: RenderBudget } = {},
+): string {
   const parsed = parseTemplate(tpl);
   if (!parsed.ok) throw parsed.error;
-  return renderTemplateParts(parsed.parts, data);
+  const budget = options.budget ?? new RenderBudget(Number.POSITIVE_INFINITY);
+  let out = '';
+  for (const part of parsed.parts) {
+    const text = part.t === 'text' ? part.v : budget.value(data, part.segments);
+    budget.spend(text, part.at);
+    out += text;
+  }
+  return out;
 }

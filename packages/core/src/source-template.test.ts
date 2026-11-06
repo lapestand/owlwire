@@ -6,6 +6,7 @@ import {
   SourceTemplateMappingSchema,
   selectTemplateHeaders,
 } from './source-template.js';
+import { TemplateError } from './template.js';
 
 const githubPush = {
   ref: 'refs/heads/main',
@@ -237,6 +238,46 @@ describe('applySourceTemplate', () => {
   });
 });
 
+describe('applySourceTemplate output budget', () => {
+  const bigPayload = { blob: 'x'.repeat(64 * 1024) };
+  const amplifier = '{{payload}}'.repeat(727);
+
+  it('refuses a template that amplifies the payload, quickly', () => {
+    const started = performance.now();
+    let caught: unknown;
+    try {
+      applySourceTemplate({ type: 't', body: amplifier }, ctx(bigPayload));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(TemplateError);
+    expect((caught as TemplateError).code).toBe('output_too_large');
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('leaves a normal mapping unaffected', () => {
+    const event = eventOf(
+      { type: 't', body: '{{ payload.blob }}', title: '{{ payload.short }}' },
+      ctx({ blob: 'y'.repeat(60_000), short: 'ok' }),
+    );
+    expect(event.body).toHaveLength(60_000);
+    expect(event.title).toBe('ok');
+  });
+
+  it('shares the budget across fields', () => {
+    const payload = { half: 'z'.repeat(40_000) };
+    expect(eventOf({ type: 't', body: '{{ payload.half }}' }, ctx(payload)).body).toHaveLength(
+      40_000,
+    );
+    expect(() =>
+      applySourceTemplate(
+        { type: 't', body: '{{ payload.half }}', summary: '{{ payload.half }}' },
+        ctx(payload),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'output_too_large' }));
+  });
+});
+
 describe('selectTemplateHeaders', () => {
   it('lower-cases names, drops secret headers and joins duplicates', () => {
     const headers = selectTemplateHeaders([
@@ -248,6 +289,12 @@ describe('selectTemplateHeaders', () => {
       ['X-Hub-Signature-256', 'sha256=x'],
       ['X-Gitlab-Token', 'x'],
       ['X-Webhook-Secret', 'x'],
+      ['X-Forwarded-Authorization', 'x'],
+      ['X-Serverless-Authorization', 'x'],
+      ['X-Shopify-Hmac-Sha256', 'x'],
+      ['X-Auth-User', 'x'],
+      ['X-Password', 'x'],
+      ['X-Client-Credentials', 'x'],
       ['X-GitHub-Event', 'push'],
       ['User-Agent', 'GitHub-Hookshot/1'],
       ['Accept', 'a'],
