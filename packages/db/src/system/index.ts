@@ -1,6 +1,11 @@
 export { listSystemAuditLog } from '../repos/audit.js';
 export { SYSTEM, type SystemScope, SystemTx, withSystem } from '../scope.js';
-export { findAppByKeyHash, listPendingPublicApps, setApprovalStatus } from './apps.js';
+export {
+  findAppByKeyHash,
+  listPendingPublicApps,
+  revokeAppInstallations,
+  setApprovalStatus,
+} from './apps.js';
 export {
   type AuthUserRow,
   countInstanceAdmins,

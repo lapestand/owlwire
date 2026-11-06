@@ -2,8 +2,8 @@ import { isUuid } from '@owlwire/core';
 import { and, asc, eq, gt, isNull, or } from 'drizzle-orm';
 import { type AppRow, appColumns } from '../repos/apps.js';
 import { type AuditActor, writeAudit } from '../repos/audit.js';
-import { q } from '../repos/context.js';
-import { apps, workspaces } from '../schema/index.js';
+import { now, q } from '../repos/context.js';
+import { apps, installations, workspaces } from '../schema/index.js';
 import type { SystemTx } from '../scope.js';
 
 /** App key lookup across workspaces: the current key, or the previous key until it expires. */
@@ -83,4 +83,33 @@ export async function setApprovalStatus(
     });
   }
   return { app, from: before.from };
+}
+
+/** Revokes every active installation of an app (used when a public app is rejected). */
+export async function revokeAppInstallations(
+  s: SystemTx,
+  appId: string,
+  actor: AuditActor,
+): Promise<number> {
+  if (!isUuid(appId)) return 0;
+  const rows = await q(s)
+    .update(installations)
+    .set({ status: 'revoked', revokedAt: now(s) })
+    .where(and(eq(installations.appId, appId), eq(installations.status, 'active')))
+    .returning({
+      id: installations.id,
+      workspaceId: installations.workspaceId,
+      tokenPrefix: installations.tokenPrefix,
+    });
+  for (const row of rows) {
+    await writeAudit(s, {
+      workspaceId: row.workspaceId,
+      action: 'installation.revoked',
+      actor,
+      targetType: 'installation',
+      targetId: row.id,
+      data: { appId, tokenPrefix: row.tokenPrefix, reason: 'app_rejected' },
+    });
+  }
+  return rows.length;
 }

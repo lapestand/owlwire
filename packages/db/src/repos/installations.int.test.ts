@@ -75,12 +75,20 @@ describe('row types hide secrets', () => {
     expectTypeOf<AppRow>().not.toHaveProperty('statusWebhookSecretEnc');
     expectTypeOf<InstallationRow>().not.toHaveProperty('tokenHash');
     expectTypeOf<CreateAppInput>().not.toHaveProperty('approvalStatus');
-    expectTypeOf<InstallationAuthRecord>().toEqualTypeOf<{
+    // Flattened: strict type equality treats the Pick & {...} intersection as a distinct shape.
+    expectTypeOf<{
+      [K in keyof InstallationAuthRecord]: InstallationAuthRecord[K];
+    }>().toEqualTypeOf<{
       id: string;
       workspaceId: string;
       appId: string;
       status: string;
       grantedTypes: string[] | null;
+      tokenHash: string;
+      appVisibility: string;
+      appApprovalStatus: string;
+      appOwnerWorkspaceId: string;
+      workspaceDeleted: boolean;
     }>();
   });
 });
@@ -266,6 +274,11 @@ describe('system lookups', () => {
       appId: own.id,
       status: 'active',
       grantedTypes: ['alert'],
+      tokenHash: input.tokenHash,
+      appVisibility: 'private',
+      appApprovalStatus: 'approved',
+      appOwnerWorkspaceId: B,
+      workspaceDeleted: false,
     });
     expect(await sys((s) => findInstallationByTokenHash(s, hashToken('unknown')))).toBeNull();
   });

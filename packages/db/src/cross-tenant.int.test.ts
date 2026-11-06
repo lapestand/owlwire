@@ -238,6 +238,11 @@ const CASES: Record<string, Case> = {
     (v) => v.installationId,
     (t, v) => repos.revokeInstallation(t, v.installationId, SYSTEM_ACTOR),
   ),
+  getInstallationWithApp: read((t, v) => repos.getInstallationWithApp(t, v.installationId)),
+  listInstallationsWithApp: read((t) => repos.listInstallationsWithApp(t)),
+  updateInstallationGrants: refused((t, v) =>
+    repos.updateInstallationGrants(t, v.installationId, ['evil'], SYSTEM_ACTOR),
+  ),
   // rate buckets
   takeBucketTokens: exempt(
     'rate_buckets is an instance-level table with no workspace_id and no RLS; the caller chooses the scope key, so t.workspaceId is not involved',

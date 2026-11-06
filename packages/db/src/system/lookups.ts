@@ -1,8 +1,9 @@
 import { isUuid } from '@owlwire/core';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import { q } from '../repos/context.js';
 import type { WorkspaceRow } from '../repos/workspaces.js';
 import {
+  apps,
   connections,
   deliveries,
   digests,
@@ -13,14 +14,20 @@ import {
 import type { SystemTx } from '../scope.js';
 
 type InstallationSelect = typeof installations.$inferSelect;
+type AppSelect = typeof apps.$inferSelect;
 export type InstallationAuthRecord = Pick<
   InstallationSelect,
-  'id' | 'workspaceId' | 'appId' | 'status' | 'grantedTypes'
->;
+  'id' | 'workspaceId' | 'appId' | 'status' | 'grantedTypes' | 'tokenHash'
+> & {
+  appVisibility: AppSelect['visibility'];
+  appApprovalStatus: AppSelect['approvalStatus'];
+  appOwnerWorkspaceId: string;
+  workspaceDeleted: boolean;
+};
 export type TenantEntityKind = 'event' | 'delivery' | 'digest' | 'connection' | 'installation';
 
 /**
- * Kiracılar arası tek okuma: token hash'inden kurulum kimliği ve workspace'i. İçerik döndürmez.
+ * Kiracılar arası tek okuma: token hash'inden kurulum, app ve workspace durumu. İçerik döndürmez.
  * İptal edilmiş kurulum da `status: 'revoked'` ile döner; kimlik doğrulama katmanı iptal ile bilinmeyeni
  * ayırt eder ve `status !== 'active'` olanı reddeder. Eşleşme `token_hash` üzerindeki unique indeksle yapılır.
  */
@@ -35,8 +42,15 @@ export async function findInstallationByTokenHash(
       appId: installations.appId,
       status: installations.status,
       grantedTypes: installations.grantedTypes,
+      tokenHash: installations.tokenHash,
+      appVisibility: apps.visibility,
+      appApprovalStatus: apps.approvalStatus,
+      appOwnerWorkspaceId: apps.ownerWorkspaceId,
+      workspaceDeleted: sql<boolean>`${workspaces.deletedAt} is not null`,
     })
     .from(installations)
+    .innerJoin(apps, eq(apps.id, installations.appId))
+    .innerJoin(workspaces, eq(workspaces.id, installations.workspaceId))
     .where(eq(installations.tokenHash, tokenHash));
   return rows[0] ?? null;
 }
