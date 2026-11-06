@@ -14,9 +14,9 @@ import {
   upsertCatalogTypes,
   withTenant,
 } from '@owlwire/db';
-import { notFound, ProblemError } from '../errors.js';
+import { notFound, ProblemError, unavailable } from '../errors.js';
 import { approveNewPublicApp } from '../system/initial-approval.js';
-import { isValidatorUnavailable } from './payload-schema.js';
+import { isValidatorUnavailable, VALIDATOR_BUSY_DETAIL } from './payload-schema.js';
 import { type ServiceDeps, userIdOf } from './types.js';
 
 /** How long the previous app key keeps working after a rotation. */
@@ -142,9 +142,7 @@ export async function putCatalog(
     const check = await d.payloadSchemas.checkSchema(type.payloadSchema);
     if (check.ok) continue;
     if (isValidatorUnavailable(check)) {
-      throw new ProblemError(503, 'unavailable', 'The payload validator is busy; try again.', {
-        'retry-after': '1',
-      });
+      throw unavailable(VALIDATOR_BUSY_DETAIL);
     }
     throw new ProblemError(422, 'validation_failed', `types.${i}.payloadSchema: ${check.detail}`);
   }
