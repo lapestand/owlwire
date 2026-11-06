@@ -18,6 +18,11 @@ const dest: DestinationRef = {
 };
 
 describe('createFakeAdapter', () => {
+  it('takes an open platform id and defaults to webhook', () => {
+    expect(createFakeAdapter('fake-a').platform).toBe('fake-a');
+    expect(createFakeAdapter().platform).toBe('webhook');
+  });
+
   it('records successful sends with increasing message ids', async () => {
     const fake = createFakeAdapter();
     const rendered = fake.render(

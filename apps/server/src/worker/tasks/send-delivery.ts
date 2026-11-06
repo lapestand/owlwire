@@ -1,9 +1,7 @@
 import type {
-  ConnectionKind,
   ConnectionRef,
   DestinationKind,
   DestinationRef,
-  Platform,
   SendOutcome,
 } from '@owlwire/adapter-sdk';
 import {
@@ -236,8 +234,8 @@ export async function sendDelivery(
   const conn: ConnectionRef = {
     id: connection.id,
     workspaceId: connection.workspaceId,
-    platform: connection.platform as Platform,
-    kind: connection.kind as ConnectionKind,
+    platform: connection.platform,
+    kind: connection.kind,
     config: config ?? {},
   };
   const dest: DestinationRef = {

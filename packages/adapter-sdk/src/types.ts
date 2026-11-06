@@ -1,7 +1,9 @@
 import type { Message } from '@owlwire/core/message';
 
-export type Platform = 'telegram' | 'discord' | 'whatsapp' | 'webhook';
-export type ConnectionKind = 'shared_bot' | 'own_bot' | 'webhook' | 'number';
+/** Open string id (see isPlatformId in @owlwire/core); plugins bring their own platforms. */
+export type Platform = string;
+/** Open string; the format is enforced by the database. */
+export type ConnectionKind = string;
 export type DestinationKind =
   | 'group'
   | 'community'
@@ -30,7 +32,7 @@ export interface DestinationRef {
 }
 
 export interface Capabilities {
-  formatting: 'telegram_html' | 'discord_markdown' | 'whatsapp' | 'plain';
+  formatting: string;
   maxBodyLength: number;
   images: boolean;
   typingIndicator: boolean;

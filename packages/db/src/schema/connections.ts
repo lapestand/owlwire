@@ -26,14 +26,8 @@ export const connections = pgTable(
     deletedAt: tstz('deleted_at'),
   },
   (t) => [
-    check(
-      'connections_platform_check',
-      sql`${t.platform} in ('telegram', 'discord', 'whatsapp', 'webhook')`,
-    ),
-    check(
-      'connections_kind_check',
-      sql`${t.kind} in ('shared_bot', 'own_bot', 'webhook', 'number')`,
-    ),
+    check('connections_platform_format_check', sql`${t.platform} ~ '^[a-z][a-z0-9-]{1,31}$'`),
+    check('connections_kind_format_check', sql`${t.kind} ~ '^[a-z][a-z0-9_]{1,31}$'`),
     check(
       'connections_status_check',
       sql`${t.status} in ('pending', 'active', 'degraded', 'broken', 'paused')`,

@@ -25,4 +25,18 @@ describe('adapter registry', () => {
       /duplicate adapter/,
     );
   });
+
+  it('registers adapters with open platform ids', () => {
+    const a = createFakeAdapter('fake-a');
+    const b = createFakeAdapter('fake-b');
+    const registry = createAdapterRegistry([a, b]);
+    expect(registry.get('fake-a')).toBe(a);
+    expect(registry.get('fake-b')).toBe(b);
+  });
+
+  it('rejects an adapter with an invalid platform id', () => {
+    expect(() => createAdapterRegistry([createFakeAdapter('Fake-A')])).toThrow(
+      /invalid platform id Fake-A/,
+    );
+  });
 });
