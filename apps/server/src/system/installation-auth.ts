@@ -67,8 +67,9 @@ export async function authenticateInstallationToken(
 
 /**
  * App key to app: the current key, or the previous key until its grace period ends (an expired previous key is
- * answered like an unknown one). A key of a pending or rejected app answers `app_not_approved`; a key of an app
- * whose owner workspace is deleted answers `unauthorized`.
+ * answered like an unknown one). A pending app's key is accepted so its catalog can be prepared and reviewed before
+ * approval (an unapproved app has no usable installations, so this opens nothing else). A rejected app's key
+ * answers `app_not_approved`; a key of an app whose owner workspace is deleted answers `unauthorized`.
  */
 export async function authenticateAppKey(
   db: OwlwireDb,
@@ -82,6 +83,6 @@ export async function authenticateAppKey(
   if (!found || !verifyTokenHash(token, found.keyHash) || found.ownerWorkspaceDeleted) {
     return { ok: false, code: 'unauthorized' };
   }
-  if (approvalWithdrawn(found.app.approvalStatus)) return { ok: false, code: 'app_not_approved' };
+  if (found.app.approvalStatus === 'rejected') return { ok: false, code: 'app_not_approved' };
   return { ok: true, app: found.app };
 }

@@ -116,7 +116,8 @@ describe('installationAuth', () => {
 
   it('refuses the token of an installation created while the approval was being withdrawn', async () => {
     // createInstallation reads the app without a lock; the token check is the guard (documented in the repository).
-    // Run the race several times so both orders are likely to occur.
+    // In practice the withdrawal nearly always wins this free race; the forced-order test below covers the other
+    // order. A few runs still guard against either outcome letting a token through.
     for (let i = 0; i < 8; i++) {
       const other = await fx.workspace(`delta-race-${i}`);
       const { appId } = await fx.publicApp(ws);
@@ -236,16 +237,25 @@ describe('catalogAuth', () => {
     }
   });
 
-  it.each(['pending', 'rejected'] as const)(
-    'answers app_not_approved for app keys of %s apps',
-    async (status) => {
-      const { appId, appKey } = await fx.publicApp(ws);
-      await fx.owner.query(`update apps set approval_status = $2 where id = $1`, [appId, status]);
-      const res = await mini.request('/cat', bearer(appKey));
-      expect(res.status).toBe(403);
-      expect(await code(res)).toBe('app_not_approved');
-    },
-  );
+  it('accepts app keys of pending apps so the catalog can be prepared before approval', async () => {
+    const { appId, appKey } = await fx.publicApp(ws, { approval: 'pending' });
+    const res = await mini.request('/cat', bearer(appKey));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      appId,
+      ownerWorkspaceId: ws,
+      via: 'app_key',
+      installationId: null,
+    });
+  });
+
+  it('answers app_not_approved for app keys of rejected apps', async () => {
+    const { appId, appKey } = await fx.publicApp(ws);
+    await fx.owner.query(`update apps set approval_status = 'rejected' where id = $1`, [appId]);
+    const res = await mini.request('/cat', bearer(appKey));
+    expect(res.status).toBe(403);
+    expect(await code(res)).toBe('app_not_approved');
+  });
 
   it('rejects app keys of apps whose owner workspace is deleted', async () => {
     const owner = await fx.workspace('key-owner-gone');
