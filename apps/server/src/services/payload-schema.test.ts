@@ -53,4 +53,38 @@ describe('PayloadSchemaRegistry', () => {
     reg.validate('c', schema, { target: 'x' });
     expect(reg.size).toBe(2);
   });
+
+  describe('pattern handling', () => {
+    it('does not backtrack catastrophically on hostile patterns', () => {
+      const reg = new PayloadSchemaRegistry();
+      const hostile = { type: 'string', pattern: '^(a+)+$' };
+      const started = performance.now();
+      const r = reg.validate('evil', hostile, `${'a'.repeat(50)}b`);
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(r.ok).toBe(false);
+    });
+
+    it('refuses patterns the linear engine cannot express', () => {
+      const reg = new PayloadSchemaRegistry();
+      for (const pattern of ['(a)\\1', '(?=a)a', '(?<=a)b']) {
+        expect(reg.checkSchema({ type: 'string', pattern }).ok).toBe(false);
+      }
+      expect(reg.validate('k', { type: 'string', pattern: '(a)\\1' }, 'aa').ok).toBe(false);
+    });
+
+    it('still validates ordinary patterns and patternProperties', () => {
+      const reg = new PayloadSchemaRegistry();
+      const s = {
+        type: 'object',
+        properties: { id: { type: 'string', pattern: '^[A-Z]{3}-\\d+$' } },
+        patternProperties: { '^x-': { type: 'string' } },
+        additionalProperties: false,
+      };
+      expect(reg.validate('p', s, { id: 'ABC-12', 'x-a': 'v' })).toEqual({ ok: true });
+      expect(reg.validate('p', s, { id: 'abc' }).ok).toBe(false);
+      expect(reg.validate('p', s, { 'x-a': 1 }).ok).toBe(false);
+      expect(reg.validate('p2', { type: 'string', pattern: 'foo' }, 'a foo b').ok).toBe(true);
+      expect(reg.validate('q', { type: 'string', pattern: 'bar' }, 'a foo b').ok).toBe(false);
+    });
+  });
 });

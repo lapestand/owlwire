@@ -1,6 +1,7 @@
 import { MAX_PAYLOAD_SCHEMA_BYTES } from '@owlwire/contracts';
 import type { ValidateFunction } from 'ajv';
 import { Ajv2020 } from 'ajv/dist/2020.js';
+import { RE2JS } from 're2js';
 
 export type SchemaCheck = { ok: true } | { ok: false; detail: string };
 
@@ -9,6 +10,19 @@ const DEFAULT_MAX_ENTRIES = 500;
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+/**
+ * Schema patterns come from untrusted apps and run against every ingested event, so they use
+ * a linear-time engine instead of the backtracking native RegExp. Patterns it cannot express
+ * (backreferences, lookaround) throw here, which makes the schema fail to compile.
+ */
+function linearRegExp(pattern: string): { test: (s: string) => boolean; toString: () => string } {
+  const re = RE2JS.compile(pattern);
+  // Ajv keys its compiled-pattern scope by toString(), so it must identify the pattern.
+  return { test: (s) => re.test(s), toString: () => pattern };
+}
+// Not 'new RegExp': that marker makes Ajv emit a native RegExp in generated code.
+linearRegExp.code = 're2js-linear';
 
 /**
  * Compiles and runs payload schemas registered by apps (untrusted input).
@@ -21,6 +35,7 @@ export class PayloadSchemaRegistry {
     allErrors: false,
     addUsedSchema: false,
     validateSchema: true,
+    code: { regExp: linearRegExp },
   });
   readonly #cache = new Map<string, ValidateFunction>();
   readonly #maxEntries: number;
