@@ -128,7 +128,7 @@ describe('log privacy with real failing queries', () => {
       const res = await app.request('/v1/events', {
         method: 'POST',
         headers: { authorization: `Bearer ${s.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ type: 'demo.ping', body: botTokenLike('HTTP') }),
+        body: JSON.stringify({ type: 'generic', body: botTokenLike('HTTP') }),
       });
       expect(res.status).toBe(500);
       expect(res.headers.get('content-type')).toContain('application/problem+json');

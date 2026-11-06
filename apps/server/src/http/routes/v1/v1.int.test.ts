@@ -64,7 +64,7 @@ async function routeJobsFor(eventId: string) {
 describe('POST /v1/events', () => {
   it('accepts an event, stores the message and enqueues route_event in the same transaction', async () => {
     const res = await postEvent({
-      type: 'player.inactive',
+      type: 'generic',
       body: '**Ali** is idle',
       data: { a: 1 },
     });
@@ -73,13 +73,13 @@ describe('POST /v1/events', () => {
     expect(body.duplicate).toBe(false);
     const row = await eventRow(body.eventId);
     expect(row).toMatchObject({
-      type: 'player.inactive',
+      type: 'generic',
       severity: 'info',
       workspaceId: seed.workspaceId,
       installationId: seed.installationId,
     });
     expect(row?.message).toEqual({
-      type: 'player.inactive',
+      type: 'generic',
       severity: 'info',
       body: '**Ali** is idle',
       data: { a: 1 },
@@ -95,22 +95,22 @@ describe('POST /v1/events', () => {
 
   it('returns the same event for a repeated idempotency key without a second job', async () => {
     const first = (await (
-      await postEvent({ type: 'a', body: 'x', idempotencyKey: 'k-1' })
+      await postEvent({ type: 'generic', body: 'x', idempotencyKey: 'k-1' })
     ).json()) as {
       eventId: string;
     };
-    const again = await postEvent({ type: 'a', body: 'x', idempotencyKey: 'k-1' });
+    const again = await postEvent({ type: 'generic', body: 'x', idempotencyKey: 'k-1' });
     expect(again.status).toBe(202);
     expect(await again.json()).toEqual({ eventId: first.eventId, duplicate: true });
     expect(await routeJobsFor(first.eventId)).toHaveLength(1);
   });
 
   it('stores distinct events that carry no idempotency key at all', async () => {
-    const a = (await (await postEvent({ type: 'a', body: 'first' })).json()) as {
+    const a = (await (await postEvent({ type: 'generic', body: 'first' })).json()) as {
       eventId: string;
       duplicate: boolean;
     };
-    const b = (await (await postEvent({ type: 'a', body: 'second' })).json()) as {
+    const b = (await (await postEvent({ type: 'generic', body: 'second' })).json()) as {
       eventId: string;
       duplicate: boolean;
     };
@@ -120,14 +120,14 @@ describe('POST /v1/events', () => {
   });
 
   it('rejects an empty body idempotency key instead of collapsing later events into it', async () => {
-    const empty = await postEvent({ type: 'a', body: 'x', idempotencyKey: '' });
+    const empty = await postEvent({ type: 'generic', body: 'x', idempotencyKey: '' });
     expect(empty.status).toBe(422);
     expect(((await empty.json()) as { code: string }).code).toBe('validation_failed');
     const blankHeader = (await (
-      await postEvent({ type: 'a', body: 'x' }, { 'idempotency-key': '   ' })
+      await postEvent({ type: 'generic', body: 'x' }, { 'idempotency-key': '   ' })
     ).json()) as { duplicate: boolean };
     const again = (await (
-      await postEvent({ type: 'a', body: 'y' }, { 'idempotency-key': '   ' })
+      await postEvent({ type: 'generic', body: 'y' }, { 'idempotency-key': '   ' })
     ).json()) as { duplicate: boolean };
     expect(blankHeader.duplicate).toBe(false);
     expect(again.duplicate).toBe(false);
@@ -135,18 +135,21 @@ describe('POST /v1/events', () => {
 
   it('uses the Idempotency-Key header when the body has no key', async () => {
     const a = (await (
-      await postEvent({ type: 'a', body: 'x' }, { 'idempotency-key': 'hdr-1' })
+      await postEvent({ type: 'generic', body: 'x' }, { 'idempotency-key': 'hdr-1' })
     ).json()) as {
       eventId: string;
     };
     const b = (await (
-      await postEvent({ type: 'a', body: 'y' }, { 'idempotency-key': 'hdr-1' })
+      await postEvent({ type: 'generic', body: 'y' }, { 'idempotency-key': 'hdr-1' })
     ).json()) as {
       eventId: string;
       duplicate: boolean;
     };
     expect(b).toEqual({ eventId: a.eventId, duplicate: true });
-    const long = await postEvent({ type: 'a', body: 'x' }, { 'idempotency-key': 'k'.repeat(129) });
+    const long = await postEvent(
+      { type: 'generic', body: 'x' },
+      { 'idempotency-key': 'k'.repeat(129) },
+    );
     expect(long.status).toBe(422);
   });
 
@@ -162,14 +165,15 @@ describe('POST /v1/events', () => {
     expect(((await none.json()) as { code: string }).code).toBe('unauthorized');
 
     expect(
-      (await postEvent({ type: 'a', body: 'x' }, { authorization: 'Bearer nope' })).status,
+      (await postEvent({ type: 'generic', body: 'x' }, { authorization: 'Bearer nope' })).status,
     ).toBe(401);
-    expect((await postEvent({ type: 'a', body: 'x' }, { authorization: 'Basic abc' })).status).toBe(
-      401,
-    );
+    expect(
+      (await postEvent({ type: 'generic', body: 'x' }, { authorization: 'Basic abc' })).status,
+    ).toBe(401);
     const unknown = `ow_inst_${'0'.repeat(43)}`;
     expect(
-      (await postEvent({ type: 'a', body: 'x' }, { authorization: `Bearer ${unknown}` })).status,
+      (await postEvent({ type: 'generic', body: 'x' }, { authorization: `Bearer ${unknown}` }))
+        .status,
     ).toBe(401);
   });
 
@@ -177,7 +181,7 @@ describe('POST /v1/events', () => {
     const res = await h.app.request(`/v1/events?token=${seed.token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ type: 'a', body: 'x' }),
+      body: JSON.stringify({ type: 'generic', body: 'x' }),
     });
     expect(res.status).toBe(401);
   });
@@ -193,13 +197,13 @@ describe('POST /v1/events', () => {
     expect(malformed.headers.get('content-type')).toContain('application/problem+json');
     expect(((await malformed.json()) as { code: string }).code).toBe('validation_failed');
     expect(
-      (await postEvent({ type: 'a', body: 'x' }, { 'content-type': 'text/plain' })).status,
+      (await postEvent({ type: 'generic', body: 'x' }, { 'content-type': 'text/plain' })).status,
     ).toBe(422);
-    expect((await postEvent({ events: [{ type: 'a', body: 'x' }] })).status).toBe(422);
+    expect((await postEvent({ events: [{ type: 'generic', body: 'x' }] })).status).toBe(202);
   });
 
   it('rejects non http urls such as javascript: with validation_failed', async () => {
-    const res = await postEvent({ type: 'a', body: 'x', url: 'javascript:alert(1)' });
+    const res = await postEvent({ type: 'generic', body: 'x', url: 'javascript:alert(1)' });
     expect(res.status).toBe(422);
     const problem = (await res.json()) as { code: string; detail: string };
     expect(problem.code).toBe('validation_failed');
@@ -211,13 +215,23 @@ describe('POST /v1/events', () => {
       seed.installationId,
       ['player.inactive'],
     ]);
-    const denied = await postEvent({ type: 'attack.incoming', body: 'x' });
-    expect(denied.status).toBe(422);
-    expect(((await denied.json()) as { code: string }).code).toBe('unknown_type');
-    expect((await postEvent({ type: 'player.inactive', body: 'x' })).status).toBe(202);
+    const denied = await postEvent({ type: 'generic', body: 'x' });
+    expect(denied.status).toBe(403);
+    expect(((await denied.json()) as { code: string }).code).toBe('forbidden');
+    await h.ownerPool.query('update installations set granted_types = $2 where id = $1', [
+      seed.installationId,
+      ['generic'],
+    ]);
+    expect((await postEvent({ type: 'generic', body: 'x' })).status).toBe(202);
     await h.ownerPool.query('update installations set granted_types = null where id = $1', [
       seed.installationId,
     ]);
+  });
+
+  it('rejects types that are not in the app catalog', async () => {
+    const res = await postEvent({ type: 'player.inactive', body: 'x' });
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { code: string }).code).toBe('unknown_type');
   });
 });
 
