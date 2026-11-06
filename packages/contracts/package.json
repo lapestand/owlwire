@@ -21,7 +21,6 @@
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
     "@owlwire/core": "workspace:*",
-    "hono": "^4.13.16",
     "zod": "^4.6.6"
   }
 }

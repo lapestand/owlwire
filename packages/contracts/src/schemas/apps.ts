@@ -1,5 +1,6 @@
 import { z } from '@hono/zod-openapi';
 import { CatalogType } from './catalog.js';
+import { HttpUrl } from './events.js';
 import { InstallationView } from './installations.js';
 
 export const AppCreateInput = z
@@ -7,7 +8,7 @@ export const AppCreateInput = z
     name: z.string().trim().min(1).max(80),
     visibility: z.enum(['private', 'public']),
     description: z.string().max(1000).optional(),
-    homepageUrl: z.string().url().optional(),
+    homepageUrl: HttpUrl.optional(),
   })
   .openapi('AppCreateInput');
 export type AppCreateInput = z.infer<typeof AppCreateInput>;
