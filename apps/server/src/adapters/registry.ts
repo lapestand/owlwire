@@ -1,5 +1,6 @@
 import type { AdapterDeps, ChannelAdapter } from '@owlwire/adapter-sdk';
 import { createTelegramAdapter } from '@owlwire/adapter-telegram';
+import { isPlatformId } from '@owlwire/core';
 import type { ServerConfig } from '../config/load.js';
 
 export interface AdapterRegistry {
@@ -10,6 +11,9 @@ export interface AdapterRegistry {
 export function createAdapterRegistry(adapters: ChannelAdapter[]): AdapterRegistry {
   const byPlatform = new Map<string, ChannelAdapter>();
   for (const adapter of adapters) {
+    if (!isPlatformId(adapter.platform)) {
+      throw new Error(`invalid platform id ${String(adapter.platform)}`);
+    }
     if (byPlatform.has(adapter.platform)) {
       throw new Error(`duplicate adapter for platform ${adapter.platform}`);
     }

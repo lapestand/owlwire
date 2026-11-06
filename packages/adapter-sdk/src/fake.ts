@@ -3,7 +3,6 @@ import type {
   Capabilities,
   ChannelAdapter,
   DestinationRef,
-  Platform,
   RenderedMessage,
   SendOutcome,
 } from './types.js';
@@ -22,7 +21,7 @@ export type FakeAdapter = ChannelAdapter & {
   nextOutcome(o: SendOutcome): void;
 };
 
-export function createFakeAdapter(platform: Platform = 'webhook'): FakeAdapter {
+export function createFakeAdapter(platform: string = 'webhook'): FakeAdapter {
   const sent: FakeAdapter['sent'] = [];
   const queue: SendOutcome[] = [];
   let counter = 0;

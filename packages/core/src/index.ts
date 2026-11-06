@@ -5,6 +5,7 @@ export * from './config/schema.js';
 export * from './ids.js';
 export * from './limits.js';
 export * from './message.js';
+export * from './platform.js';
 export * from './redaction.js';
 export * from './registration.js';
 export * from './roles.js';
