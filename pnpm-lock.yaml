@@ -223,6 +223,9 @@ importers:
       '@hono/zod-openapi':
         specifier: ^1.6.3
         version: 1.6.3(hono@4.13.13)(zod@4.6.6)
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       better-auth:
         specifier: ^1.7.7
         version: 1.7.7(drizzle-orm@0.45.4(@types/pg@8.23.1)(kysely@0.29.6)(pg@8.23.1))(pg@8.23.1)
