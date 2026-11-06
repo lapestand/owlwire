@@ -61,9 +61,13 @@ export {
 } from './destinations.js';
 export {
   type EventRow,
+  type EventStatus,
   getEvent,
+  getEventStatus,
   type InsertEventInput,
+  type InsertedEvent,
   insertEvent,
+  insertEvents,
   markEventRouted,
 } from './events.js';
 export {
@@ -112,6 +116,7 @@ export {
   transferWorkspaceOwnership,
   updateMemberRole,
 } from './memberships.js';
+export * from './rate-buckets.js';
 export {
   type CreateRuleInput,
   createRule,

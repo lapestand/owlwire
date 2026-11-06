@@ -1,8 +1,8 @@
 import { isUuid, newId } from '@owlwire/core';
 import type { Message, Severity } from '@owlwire/core/message';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { mapPgErrors, RepoInputError, RepoNotFoundError } from '../errors.js';
-import { events, installations } from '../schema/index.js';
+import { deliveries, events, installations } from '../schema/index.js';
 import type { TenantTx } from '../scope.js';
 import { assertIdShape, now, q } from './context.js';
 import { enqueueJob, routeQueue } from './jobs.js';
@@ -102,4 +102,69 @@ export async function markEventRouted(t: TenantTx, id: string): Promise<void> {
     .where(and(eq(events.workspaceId, t.workspaceId), eq(events.id, id)))
     .returning({ id: events.id });
   if (!rows[0]) throw new RepoNotFoundError('event', id);
+}
+
+export interface InsertedEvent {
+  eventId: string;
+  duplicate: boolean;
+}
+
+export interface EventStatus {
+  id: string;
+  status: 'received' | 'routed';
+  deliveries: { total: number; delivered: number; failed: number; pending: number };
+}
+
+/**
+ * Inserts events in order inside the caller's tenant transaction; each new event gets its route_event job in the
+ * same transaction (insertEvent). A repeated (installation_id, idempotency_key), also within one batch, returns
+ * the existing id with duplicate=true; under concurrency the unique index makes the second transaction wait.
+ */
+export async function insertEvents(
+  t: TenantTx,
+  rows: InsertEventInput[],
+): Promise<InsertedEvent[]> {
+  const out: InsertedEvent[] = [];
+  for (const row of rows) out.push(await insertEvent(t, row));
+  return out;
+}
+
+export async function getEventStatus(
+  t: TenantTx,
+  installationId: string,
+  eventId: string,
+): Promise<EventStatus | null> {
+  if (!isUuid(installationId) || !isUuid(eventId)) return null;
+  const evs = await q(t)
+    .select({ id: events.id, routedAt: events.routedAt })
+    .from(events)
+    .where(
+      and(
+        eq(events.id, eventId),
+        eq(events.workspaceId, t.workspaceId),
+        eq(events.installationId, installationId),
+      ),
+    );
+  const ev = evs[0];
+  if (!ev) return null;
+  const counts = await q(t)
+    .select({
+      total: sql<number>`count(*)::int`,
+      delivered: sql<number>`(count(*) filter (where ${deliveries.status} in ('delivered', 'digested')))::int`,
+      failed: sql<number>`(count(*) filter (where ${deliveries.status} = 'failed'))::int`,
+      pending: sql<number>`(count(*) filter (where ${deliveries.status} in ('pending', 'scheduled', 'sending')))::int`,
+    })
+    .from(deliveries)
+    .where(and(eq(deliveries.eventId, eventId), eq(deliveries.workspaceId, t.workspaceId)));
+  const c = counts[0];
+  return {
+    id: ev.id,
+    status: ev.routedAt ? 'routed' : 'received',
+    deliveries: {
+      total: c?.total ?? 0,
+      delivered: c?.delivered ?? 0,
+      failed: c?.failed ?? 0,
+      pending: c?.pending ?? 0,
+    },
+  };
 }
