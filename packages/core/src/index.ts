@@ -2,6 +2,7 @@ export * from './backoff.js';
 export * from './clock.js';
 export * from './config/schema.js';
 export * from './ids.js';
+export * from './limits.js';
 export * from './message.js';
 export * from './redaction.js';
 export * from './registration.js';
