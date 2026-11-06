@@ -1,6 +1,6 @@
 # Development container used by ./dev (deploy/compose/docker-compose.dev.yml).
 # The base digest is kept current by Dependabot (docker ecosystem, /docker).
-FROM node:26-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
+FROM node:26-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072
 # Fail a RUN when any command in a pipe fails, not only the last one (the checksum check below pipes into sha512sum).
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Debian replaces package versions in place on security updates, so exact apt pins would break this build within
