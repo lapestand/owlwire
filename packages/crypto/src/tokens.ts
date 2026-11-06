@@ -55,3 +55,21 @@ export function verifyTokenHash(token: string, expectedHash: string): boolean {
 export function isInstallationToken(s: string): boolean {
   return INSTALLATION_TOKEN_RE.test(s);
 }
+
+export interface IssuedToken {
+  token: string;
+  hash: string;
+  prefix: string;
+}
+
+/** Generates a token and the values stored in the database; the plain token is returned to the caller once. */
+export function issueToken(kind: 'inst' | 'app'): IssuedToken {
+  const token = generateToken(kind);
+  return { token, hash: hashToken(token), prefix: tokenPrefix(token) };
+}
+
+export function tokenKind(token: string): 'inst' | 'app' | null {
+  if (token.startsWith(INSTALLATION_TOKEN_PREFIX)) return 'inst';
+  if (token.startsWith(APP_KEY_PREFIX)) return 'app';
+  return null;
+}
