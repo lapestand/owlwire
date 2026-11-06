@@ -9,12 +9,19 @@ import type { WorkerRequest, WorkerResponse } from './payload-schema-worker.js';
 export type { SchemaCheck };
 
 /**
- * Hard limit for one compile or validate call inside a worker, counted from the moment the
- * call reaches an idle worker (queue wait is not included). Static limits cannot bound what
- * an app's schema costs to evaluate (ref fan-out, repeated `uniqueItems`, ...), so a call that
- * runs longer has its worker terminated and fails closed. Ordinary schemas take a few ms.
+ * Hard limit for running a compiled validator on one payload inside a worker. Static limits
+ * cannot bound what an app's schema costs to evaluate (ref fan-out, repeated `uniqueItems`,
+ * ...), so a run that takes longer has its worker terminated and fails closed. Ordinary
+ * payloads take well under a millisecond.
  */
-const WORKER_DEADLINE_MS = 250;
+const RUN_DEADLINE_MS = 250;
+/**
+ * Hard limit for compiling a schema (checkSchema, and a validate call whose validator is not
+ * cached). Kept apart from the run deadline: a plain near-16 KB schema takes 100-250 ms to
+ * compile, which must not make its events fail. A schema slower than this is refused.
+ * Both deadlines count from the moment the call reaches a ready worker, not queue wait.
+ */
+const COMPILE_DEADLINE_MS = 2000;
 const DEFAULT_MAX_QUEUED = 256;
 const DEFAULT_MAX_ENTRIES = 500;
 // Heap per worker; running out ends the worker like a timeout does.
@@ -32,14 +39,14 @@ type Request =
 
 interface Job {
   request: Request;
-  /** Result used when the call misses its deadline. */
-  expensive: string;
   resolve: (result: SchemaCheck) => void;
 }
 
 interface Running extends Job {
   id: number;
   timer: NodeJS.Timeout;
+  /** Compiling until the worker reports `compiled`, then running the validator. */
+  phase: 'compile' | 'run';
 }
 
 interface Slot {
@@ -72,11 +79,12 @@ function messageOf(err: unknown): string {
  * Checks and runs payload schemas registered by apps (untrusted input). All compilation and
  * validation happens in a small pool of worker threads, each with its own compiled-validator
  * cache (keyed by the caller's cache key, at most `maxEntries` per worker), so a hostile
- * schema can never block the main event loop: every call has a WORKER_DEADLINE_MS deadline.
+ * schema can never block the main event loop, and every call has a hard deadline.
  *
  * Calls never reject. Failures come back as `{ ok: false, detail }`:
- * - the deadline passed: "payload too expensive to validate" (validate) or
- *   "payloadSchema too expensive to compile" (checkSchema); the worker is replaced;
+ * - compiling took longer than COMPILE_DEADLINE_MS (checkSchema, or validate on a cache miss):
+ *   "payloadSchema too expensive to compile"; running the validator took longer than
+ *   RUN_DEADLINE_MS: "payload too expensive to validate". Either way the worker is replaced;
  * - more than `maxQueued` calls are waiting for a worker: "payload validator is busy";
  * - after close(): "payload validator is closed".
  *
@@ -87,13 +95,26 @@ export class PayloadSchemaRegistry {
   readonly #poolSize: number;
   readonly #maxQueued: number;
   readonly #maxEntries: number;
+  readonly #compileDeadlineMs: number;
+  readonly #runDeadlineMs: number;
   readonly #slots: Slot[] = [];
   readonly #queue: Job[] = [];
   #nextId = 0;
   #closed = false;
 
-  constructor(opts: { maxEntries?: number; poolSize?: number; maxQueued?: number } = {}) {
+  /** The deadline options exist for tests; production uses the constants. */
+  constructor(
+    opts: {
+      maxEntries?: number;
+      poolSize?: number;
+      maxQueued?: number;
+      compileDeadlineMs?: number;
+      runDeadlineMs?: number;
+    } = {},
+  ) {
     this.#maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.#compileDeadlineMs = opts.compileDeadlineMs ?? COMPILE_DEADLINE_MS;
+    this.#runDeadlineMs = opts.runDeadlineMs ?? RUN_DEADLINE_MS;
     this.#poolSize = Math.max(1, opts.poolSize ?? Math.min(2, availableParallelism()));
     this.#maxQueued = opts.maxQueued ?? DEFAULT_MAX_QUEUED;
   }
@@ -113,11 +134,11 @@ export class PayloadSchemaRegistry {
         detail: `payloadSchema exceeds ${MAX_PAYLOAD_SCHEMA_BYTES} bytes`,
       });
     }
-    return this.#run({ op: 'check', schema }, SCHEMA_TOO_EXPENSIVE);
+    return this.#run({ op: 'check', schema });
   }
 
   validate(cacheKey: string, schema: Record<string, unknown>, data: unknown): Promise<SchemaCheck> {
-    return this.#run({ op: 'validate', key: cacheKey, schema, data }, TOO_EXPENSIVE);
+    return this.#run({ op: 'validate', key: cacheKey, schema, data });
   }
 
   /** Stops every worker; pending and later calls resolve with "payload validator is closed". */
@@ -133,11 +154,11 @@ export class PayloadSchemaRegistry {
     );
   }
 
-  #run(request: Request, expensive: string): Promise<SchemaCheck> {
+  #run(request: Request): Promise<SchemaCheck> {
     if (this.#closed) return Promise.resolve({ ok: false, detail: CLOSED });
     if (this.#queue.length >= this.#maxQueued) return Promise.resolve({ ok: false, detail: BUSY });
     return new Promise((resolve) => {
-      this.#queue.push({ request, expensive, resolve });
+      this.#queue.push({ request, resolve });
       this.#pump();
     });
   }
@@ -158,8 +179,8 @@ export class PayloadSchemaRegistry {
 
   #dispatch(slot: Slot, job: Job): void {
     const id = ++this.#nextId;
-    const timer = setTimeout(() => this.#expire(slot), WORKER_DEADLINE_MS);
-    slot.job = { ...job, id, timer };
+    const timer = setTimeout(() => this.#expire(slot), this.#compileDeadlineMs);
+    slot.job = { ...job, id, timer, phase: 'compile' };
     slot.worker.ref();
     try {
       slot.worker.postMessage({ id, ...job.request } satisfies WorkerRequest);
@@ -179,9 +200,13 @@ export class PayloadSchemaRegistry {
     job.resolve(result);
   }
 
+  /** Detail for a call that missed its deadline or ran its worker out of memory. */
+  #expensive(job: Running): string {
+    return job.phase === 'compile' ? SCHEMA_TOO_EXPENSIVE : TOO_EXPENSIVE;
+  }
+
   #expire(slot: Slot): void {
-    const expensive = slot.job?.expensive ?? TOO_EXPENSIVE;
-    this.#finish(slot, { ok: false, detail: expensive });
+    if (slot.job) this.#finish(slot, { ok: false, detail: this.#expensive(slot.job) });
     this.#retire(slot);
     void slot.worker.terminate();
     if (!this.#closed) this.#spawn();
@@ -207,17 +232,29 @@ export class PayloadSchemaRegistry {
         slot.ready = true;
         if (!this.#closed) this.#pump();
         if (!slot.job) worker.unref();
+      } else if (msg.type === 'compiled') {
+        const job = slot.job;
+        if (job?.id !== msg.id || job.phase !== 'compile') return;
+        clearTimeout(job.timer);
+        job.phase = 'run';
+        job.timer = setTimeout(() => this.#expire(slot), this.#runDeadlineMs);
       } else if (slot.job?.id === msg.id) {
         this.#finish(slot, msg.result);
         this.#pump();
       }
     });
     // An 'error' event is always followed by 'exit'; the listener keeps it from being thrown.
-    worker.on('error', () => {});
+    let outOfMemory = false;
+    worker.on('error', (err: Error & { code?: string }) => {
+      outOfMemory = err.code === 'ERR_WORKER_OUT_OF_MEMORY';
+    });
     worker.on('exit', () => {
       if (!this.#slots.includes(slot)) return; // retired or closed on purpose
       this.#retire(slot);
-      this.#finish(slot, { ok: false, detail: STOPPED });
+      const job = slot.job;
+      if (job) {
+        this.#finish(slot, { ok: false, detail: outOfMemory ? this.#expensive(job) : STOPPED });
+      }
       if (!slot.ready) {
         // It never started (broken entry or loader): fail what is waiting instead of looping.
         for (const job of this.#queue.splice(0)) job.resolve({ ok: false, detail: STOPPED });
