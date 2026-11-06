@@ -4,9 +4,11 @@ import { type AppFixture, createAppFixture } from '../test/app-fixtures.js';
 import { createWorkspaceApp, putCatalog } from './apps.js';
 import {
   changeInstallationGrants,
+  changeInstallationSourceTemplate,
   createWorkspaceInstallation,
   revokeWorkspaceInstallation,
 } from './installations.js';
+import { createWorkspaceSourceTemplate } from './source-templates.js';
 import { type ServiceDeps, serviceDeps } from './types.js';
 
 let fx: AppFixture;
@@ -192,6 +194,85 @@ describe('revoke and grants', () => {
     });
     await expect(
       changeInstallationGrants(d, tenantScope(wsA), adminA, installation.id, null),
+    ).rejects.toMatchObject({ status: 404, code: 'not_found' });
+  });
+});
+
+describe('source template binding', () => {
+  const mapping = { type: 'generic', body: '{{payload.text}}' };
+  const template = (ws: string, actor: AuditActor, key: string) =>
+    createWorkspaceSourceTemplate(d, tenantScope(ws), actor, { key, name: key, mapping });
+
+  it('binds on create, rebinds and unbinds later', async () => {
+    const app = await publicApp('approved');
+    const first = await template(wsB, adminB, 'bind-first');
+    const second = await template(wsB, adminB, 'bind-second');
+    const { installation } = await createWorkspaceInstallation(d, tenantScope(wsB), adminB, {
+      appId: app.id,
+      sourceTemplateId: first.id,
+    });
+    expect(installation.sourceTemplateId).toBe(first.id);
+    const moved = await changeInstallationSourceTemplate(
+      d,
+      tenantScope(wsB),
+      adminB,
+      installation.id,
+      second.id,
+    );
+    expect(moved.sourceTemplateId).toBe(second.id);
+    const cleared = await changeInstallationSourceTemplate(
+      d,
+      tenantScope(wsB),
+      adminB,
+      installation.id,
+      null,
+    );
+    expect(cleared.sourceTemplateId).toBeNull();
+  });
+
+  it('rejects a template of another workspace or an unknown one with the same 422', async () => {
+    const app = await publicApp('approved');
+    const foreign = await template(wsA, adminA, 'foreign-one');
+    const unknown = '0190a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b';
+    for (const id of [foreign.id, unknown]) {
+      await expect(
+        createWorkspaceInstallation(d, tenantScope(wsB), adminB, {
+          appId: app.id,
+          sourceTemplateId: id,
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        code: 'validation_failed',
+        detail: 'unknown source template',
+      });
+    }
+    const { installation } = await createWorkspaceInstallation(d, tenantScope(wsB), adminB, {
+      appId: app.id,
+    });
+    await expect(
+      changeInstallationSourceTemplate(d, tenantScope(wsB), adminB, installation.id, foreign.id),
+    ).rejects.toMatchObject({ status: 422, detail: 'unknown source template' });
+  });
+
+  it('refuses to bind a revoked installation', async () => {
+    const app = await publicApp('approved');
+    const t = await template(wsB, adminB, 'revoked-bind');
+    const { installation } = await createWorkspaceInstallation(d, tenantScope(wsB), adminB, {
+      appId: app.id,
+    });
+    await revokeWorkspaceInstallation(d, tenantScope(wsB), adminB, installation.id);
+    await expect(
+      changeInstallationSourceTemplate(d, tenantScope(wsB), adminB, installation.id, t.id),
+    ).rejects.toMatchObject({ status: 409, code: 'conflict' });
+  });
+
+  it('hides installations of other workspaces', async () => {
+    const app = await publicApp('approved');
+    const { installation } = await createWorkspaceInstallation(d, tenantScope(wsB), adminB, {
+      appId: app.id,
+    });
+    await expect(
+      changeInstallationSourceTemplate(d, tenantScope(wsA), adminA, installation.id, null),
     ).rejects.toMatchObject({ status: 404, code: 'not_found' });
   });
 });

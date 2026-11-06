@@ -31,3 +31,4 @@ export * from './schemas/catalog.js';
 export * from './schemas/events.js';
 export * from './schemas/installations.js';
 export * from './schemas/problem-status.js';
+export * from './schemas/source-templates.js';
