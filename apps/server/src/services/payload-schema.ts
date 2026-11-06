@@ -15,39 +15,136 @@ function messageOf(err: unknown): string {
 
 const MAX_PATTERN_LENGTH = 512;
 const MAX_REPEAT_BOUND = 100;
-const REPEAT_BOUNDS = /\{(\d+)(?:,(\d*))?\}/g;
+const MAX_REPEAT_PRODUCT = 100;
+const MAX_PATTERN_COST = 2500;
+const MAX_PATTERNS_PER_SCHEMA = 32;
+const MAX_STRING_FOR_PATTERN = 4096;
+const BOUNDS = /^\{(\d+)(?:,(\d*))?\}/;
+
+/** Raised while validating when a string is too long to be matched safely. */
+class PatternInputError extends Error {}
 
 /**
- * A linear-time engine is still O(input x program size), and large counted repetitions blow
- * the program up, so long patterns and big repeat bounds are refused outright. The bound scan
- * is textual: a brace group inside a character class is refused too, which fails closed.
+ * Upper bound of a quantifier at the start of `rest`, with its length, or null. `{n}` counts
+ * as n, `{n,}` as n and `{n,m}` as m; `*`, `+` and `?` do not enlarge the program.
  */
-function assertAffordable(pattern: string): void {
-  if (pattern.length > MAX_PATTERN_LENGTH) {
-    throw new Error(`pattern is longer than ${MAX_PATTERN_LENGTH} characters`);
+function quantifierAt(rest: string): { bound: number; length: number } | null {
+  const c = rest[0];
+  if (c === '*' || c === '+' || c === '?') return { bound: 1, length: 1 };
+  const m = BOUNDS.exec(rest);
+  if (!m) return null;
+  const [text, lo, hi] = m;
+  const bounds = [lo, hi].filter((v): v is string => !!v).map(Number);
+  if (bounds.some((n) => n > MAX_REPEAT_BOUND)) {
+    throw new Error(`pattern repetition bound exceeds ${MAX_REPEAT_BOUND}`);
   }
-  for (const m of pattern.matchAll(REPEAT_BOUNDS)) {
-    for (const bound of [m[1], m[2]]) {
-      if (bound && Number(bound) > MAX_REPEAT_BOUND) {
-        throw new Error(`pattern repetition bound exceeds ${MAX_REPEAT_BOUND}`);
-      }
+  return { bound: Math.max(1, hi ? Number(hi) : Number(lo)), length: text.length };
+}
+
+/**
+ * Walks the pattern text and refuses it when nested counted repetitions multiply beyond
+ * MAX_REPEAT_PRODUCT, or when the estimated program size (every atom weighted by the
+ * repetitions around it) exceeds MAX_PATTERN_COST. Each frame tracks the largest repetition
+ * product and the summed cost inside one group.
+ */
+function assertNestedBounds(pattern: string): void {
+  const frames = [{ product: 1, cost: 0 }];
+  const top = () => frames[frames.length - 1] ?? { product: 1, cost: 0 };
+  const note = (product: number, cost: number): void => {
+    if (product > MAX_REPEAT_PRODUCT) {
+      throw new Error(`pattern nested repetition exceeds ${MAX_REPEAT_PRODUCT}`);
+    }
+    const frame = top();
+    frame.product = Math.max(frame.product, product);
+    frame.cost += cost;
+    if (frames.length === 1 && frame.cost > MAX_PATTERN_COST) {
+      throw new Error('pattern is too complex');
+    }
+  };
+  const atom = (at: number): number => {
+    const q = quantifierAt(pattern.slice(at));
+    note(q?.bound ?? 1, q?.bound ?? 1);
+    return at + (q?.length ?? 0);
+  };
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === '\\') {
+      i = atom(i + 2);
+    } else if (c === '[') {
+      // Character class: skip to the closing bracket, honouring escapes and a leading ].
+      i += 1;
+      if (pattern[i] === '^') i += 1;
+      if (pattern[i] === ']') i += 1;
+      while (i < pattern.length && pattern[i] !== ']') i += pattern[i] === '\\' ? 2 : 1;
+      i = atom(i + 1);
+    } else if (c === '(') {
+      frames.push({ product: 1, cost: 0 });
+      i += 1;
+    } else if (c === ')') {
+      const inner = frames.length > 1 ? (frames.pop() ?? top()) : { product: 1, cost: 0 };
+      const q = quantifierAt(pattern.slice(i + 1));
+      const bound = q?.bound ?? 1;
+      i += 1 + (q?.length ?? 0);
+      note(inner.product * bound, Math.max(1, inner.cost) * bound);
+    } else {
+      i = atom(i + 1);
     }
   }
 }
 
 /**
- * Schema patterns come from untrusted apps and run against every ingested event, so they use
- * a linear-time engine instead of the backtracking native RegExp. Patterns it cannot express
- * (backreferences, lookaround) throw here, which makes the schema fail to compile.
+ * A linear-time engine is still O(input x program size), and large counted repetitions blow
+ * the program up, so long patterns, big repeat bounds and nested repetitions are refused
+ * outright. The scan is textual and fails closed.
  */
-function linearRegExp(pattern: string): { test: (s: string) => boolean; toString: () => string } {
-  assertAffordable(pattern);
-  const re = RE2JS.compile(pattern);
-  // Ajv keys its compiled-pattern scope by toString(), so it must identify the pattern.
-  return { test: (s) => re.test(s), toString: () => pattern };
+function assertAffordable(pattern: string): void {
+  if (pattern.length > MAX_PATTERN_LENGTH) {
+    throw new Error(`pattern is longer than ${MAX_PATTERN_LENGTH} characters`);
+  }
+  assertNestedBounds(pattern);
 }
-// Not 'new RegExp': that marker makes Ajv emit a native RegExp in generated code.
-linearRegExp.code = 're2js-linear';
+
+/**
+ * Builds the regex factory handed to Ajv for one compile. Schema patterns come from untrusted
+ * apps and run against every ingested event, so they use a linear-time engine instead of the
+ * backtracking native RegExp. Patterns it cannot express (backreferences, lookaround) throw
+ * here, which makes the schema fail to compile, as does having too many patterns. Strings
+ * longer than MAX_STRING_FOR_PATTERN are never matched: validation fails instead.
+ */
+function linearRegExpFactory(): {
+  (pattern: string): { test: (s: string) => boolean; toString: () => string };
+  code: string;
+  arm: () => void;
+} {
+  let count = 0;
+  let armed = false;
+  const factory = (pattern: string) => {
+    if (armed) count += 1;
+    if (count > MAX_PATTERNS_PER_SCHEMA) {
+      throw new Error(`schema has more than ${MAX_PATTERNS_PER_SCHEMA} patterns`);
+    }
+    assertAffordable(pattern);
+    const re = RE2JS.compile(pattern);
+    return {
+      test: (s: string) => {
+        if (s.length > MAX_STRING_FOR_PATTERN) {
+          throw new PatternInputError('string too long for pattern');
+        }
+        return re.test(s);
+      },
+      // Ajv keys its compiled-pattern scope by toString(), so it must identify the pattern.
+      toString: () => pattern,
+    };
+  };
+  // Not 'new RegExp': that marker makes Ajv emit a native RegExp in generated code.
+  factory.code = 're2js-linear';
+  // Counting starts once Ajv has compiled its own meta-schemas, which contain patterns too.
+  factory.arm = () => {
+    armed = true;
+  };
+  return factory;
+}
 
 /**
  * Compiles and runs payload schemas registered by apps (untrusted input).
@@ -73,6 +170,7 @@ export class PayloadSchemaRegistry {
    * registry's LRU as the only thing that keeps compiled validators alive.
    */
   #compile(schema: Record<string, unknown>): ValidateFunction {
+    const regExp = linearRegExpFactory();
     const ajv = new Ajv2020({
       strict: false,
       allErrors: false,
@@ -83,8 +181,10 @@ export class PayloadSchemaRegistry {
       inlineRefs: false,
       // Schemas are untrusted and must not write to the console (unknown formats warn).
       logger: false,
-      code: { regExp: linearRegExp },
+      code: { regExp },
     });
+    ajv.validateSchema({});
+    regExp.arm();
     return ajv.compile(schema);
   }
 
@@ -122,6 +222,7 @@ export class PayloadSchemaRegistry {
     try {
       if (fn(data)) return { ok: true };
     } catch (err) {
+      if (err instanceof PatternInputError) return { ok: false, detail: err.message };
       const deep = err instanceof RangeError;
       return {
         ok: false,
