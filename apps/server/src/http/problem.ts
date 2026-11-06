@@ -14,6 +14,7 @@ const TITLES: Record<ProblemCode, string> = {
   payload_too_large: 'Payload Too Large',
   internal: 'Internal Server Error',
   unavailable: 'Service Unavailable',
+  app_not_approved: 'App Not Approved',
 };
 
 function problemBody(status: number, code: ProblemCode, detail?: string) {

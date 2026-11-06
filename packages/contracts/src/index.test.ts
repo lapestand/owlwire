@@ -82,6 +82,7 @@ describe('PROBLEM_CODES', () => {
       'payload_too_large',
       'internal',
       'unavailable',
+      'app_not_approved',
     ]);
   });
 });
