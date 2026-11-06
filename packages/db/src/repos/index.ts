@@ -95,6 +95,7 @@ export {
   listInstallations,
   listInstallationsWithApp,
   revokeInstallation,
+  setInstallationSourceTemplate,
   updateInstallationGrants,
 } from './installations.js';
 export {
@@ -147,6 +148,16 @@ export {
   type UpdateRulePatch,
   updateRule,
 } from './rules.js';
+export {
+  type CreateSourceTemplateInput,
+  createSourceTemplate,
+  deleteSourceTemplate,
+  getSourceTemplate,
+  listSourceTemplates,
+  type SourceTemplateRow,
+  type UpdateSourceTemplateInput,
+  updateSourceTemplate,
+} from './source-templates.js';
 export {
   type CreateWorkspaceInput,
   createWorkspace,

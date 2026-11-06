@@ -14,6 +14,7 @@ import { createInstallation } from '../repos/installations.js';
 import { createInvitation } from '../repos/invitations.js';
 import { addMembership } from '../repos/memberships.js';
 import { createRule } from '../repos/rules.js';
+import { createSourceTemplate } from '../repos/source-templates.js';
 import { SYSTEM, tenantScope, withSystem, withTenant } from '../scope.js';
 import { createTestWorkspace } from './fixtures.js';
 
@@ -29,6 +30,7 @@ export interface SeededTenant {
   appId: string;
   installationId: string;
   ruleId: string;
+  sourceTemplateId: string;
   eventId: string;
   deliveryId: string;
   digestId: string;
@@ -100,6 +102,15 @@ export async function seedTenant(
       },
       SYSTEM_ACTOR,
     );
+    const tpl = await createSourceTemplate(
+      t,
+      {
+        key: `${label}-template`,
+        name: label,
+        mapping: { type: 'generic', body: `${label} body` },
+      },
+      SYSTEM_ACTOR,
+    );
     const ev = await insertEvent(t, {
       installationId: inst.id,
       idempotencyKey: `${label}-k`,
@@ -145,6 +156,7 @@ export async function seedTenant(
       appId: app.id,
       installationId: inst.id,
       ruleId: rule.id,
+      sourceTemplateId: tpl.id,
       eventId: ev.eventId,
       deliveryId: delivery.id,
       digestId,

@@ -6,6 +6,7 @@ import type { TenantTx } from '../scope.js';
 import { getApp } from './apps.js';
 import { type AuditActor, writeAudit } from './audit.js';
 import { assertIdShape, now, q } from './context.js';
+import { getSourceTemplate } from './source-templates.js';
 
 type InstallationSelect = typeof installations.$inferSelect;
 /** Token hash'i satır tipinde yoktur; token ile kimlik doğrulama yalnız `@owlwire/db/system` üzerindendir. */
@@ -28,10 +29,17 @@ export interface CreateInstallationInput {
   externalRef?: string | null;
   grantedTypes?: string[] | null;
   createdByUserId?: string | null;
+  sourceTemplateId?: string | null;
 }
 
 const byId = (t: TenantTx, id: string) =>
   and(eq(installations.workspaceId, t.workspaceId), eq(installations.id, id));
+
+/** A template that is not in this workspace (another workspace's included) is `RepoNotFoundError('source_template')`. */
+async function assertSourceTemplate(t: TenantTx, id: string): Promise<void> {
+  assertIdShape('source_template', id);
+  if (!(await getSourceTemplate(t, id))) throw new RepoNotFoundError('source_template', id);
+}
 
 /**
  * FK denetimi RLS'i yok saydığından başka workspace'in private (görünmez) app'ine kurulum satırı DB'de
@@ -52,6 +60,8 @@ export async function createInstallation(
   }
   const app = await getApp(t, input.appId);
   if (!app) throw new RepoNotFoundError('app', input.appId);
+  const sourceTemplateId = input.sourceTemplateId ?? null;
+  if (sourceTemplateId !== null) await assertSourceTemplate(t, sourceTemplateId);
   const id = newId();
   const rows = await mapPgErrors('installation', id, () =>
     q(t)
@@ -65,6 +75,7 @@ export async function createInstallation(
         externalRef: input.externalRef ?? null,
         grantedTypes: input.grantedTypes ?? null,
         createdByUserId: input.createdByUserId ?? null,
+        sourceTemplateId,
         createdAt: now(t),
       })
       .returning(installationColumns),
@@ -76,7 +87,7 @@ export async function createInstallation(
     actor,
     targetType: 'installation',
     targetId: id,
-    data: { appId: input.appId, tokenPrefix: input.tokenPrefix },
+    data: { appId: input.appId, tokenPrefix: input.tokenPrefix, sourceTemplateId },
   });
   return row;
 }
@@ -180,4 +191,54 @@ export async function updateInstallationGrants(
     data: { grantedTypes },
   });
   return row;
+}
+
+/**
+ * Binds an active installation to a source template of this workspace, or unbinds it with null. Returns null when
+ * there is no active installation with this id. Writes an audit row only when the binding changes.
+ */
+export async function setInstallationSourceTemplate(
+  t: TenantTx,
+  installationId: string,
+  sourceTemplateId: string | null,
+  actor: AuditActor,
+): Promise<InstallationRow | null> {
+  if (!isUuid(installationId)) return null;
+  if (sourceTemplateId !== null) await assertSourceTemplate(t, sourceTemplateId);
+  const current = await q(t)
+    .select(installationColumns)
+    .from(installations)
+    .where(and(byId(t, installationId), eq(installations.status, 'active')))
+    .for('update');
+  const row = current[0];
+  if (!row) return null;
+  if (row.sourceTemplateId === sourceTemplateId) return row;
+  const rows = await mapPgErrors(
+    'installation',
+    installationId,
+    () =>
+      q(t)
+        .update(installations)
+        .set({ sourceTemplateId })
+        .where(byId(t, installationId))
+        .returning(installationColumns),
+    {
+      fkNotFound: {
+        installations_source_template_ws_fk: {
+          entity: 'source_template',
+          id: sourceTemplateId ?? '',
+        },
+      },
+    },
+  );
+  const updated = rows[0];
+  if (!updated) return null;
+  await writeAudit(t, {
+    action: 'installation.updated',
+    actor,
+    targetType: 'installation',
+    targetId: installationId,
+    data: { sourceTemplateId },
+  });
+  return updated;
 }

@@ -85,6 +85,20 @@
       "when": 1793964387808,
       "tag": "0011_connection_format_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793965728793,
+      "tag": "0012_source_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793965732865,
+      "tag": "0013_source_templates_rls",
+      "breakpoints": true
     }
   ]
 }

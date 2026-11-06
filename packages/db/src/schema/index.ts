@@ -23,5 +23,6 @@ export * from './memberships.js';
 export * from './rate-buckets.js';
 export * from './rule-targets.js';
 export * from './rules.js';
+export * from './source-templates.js';
 export * from './workspace-keys.js';
 export * from './workspaces.js';

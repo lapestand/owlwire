@@ -243,6 +243,21 @@ const CASES: Record<string, Case> = {
   updateInstallationGrants: refused((t, v) =>
     repos.updateInstallationGrants(t, v.installationId, ['evil'], SYSTEM_ACTOR),
   ),
+  setInstallationSourceTemplate: refused((t, v) =>
+    repos.setInstallationSourceTemplate(t, v.installationId, null, SYSTEM_ACTOR),
+  ),
+  // source templates
+  createSourceTemplate: exempt(
+    'workspace_id is always t.workspaceId; the input carries no id of another row',
+  ),
+  deleteSourceTemplate: refused((t, v) =>
+    repos.deleteSourceTemplate(t, v.sourceTemplateId, SYSTEM_ACTOR),
+  ),
+  getSourceTemplate: read((t, v) => repos.getSourceTemplate(t, v.sourceTemplateId)),
+  listSourceTemplates: read((t) => repos.listSourceTemplates(t)),
+  updateSourceTemplate: refused((t, v) =>
+    repos.updateSourceTemplate(t, v.sourceTemplateId, { name: 'evil' }, SYSTEM_ACTOR),
+  ),
   // rate buckets
   takeBucketTokens: exempt(
     'rate_buckets is an instance-level table with no workspace_id and no RLS; the caller chooses the scope key, so t.workspaceId is not involved',
@@ -339,6 +354,27 @@ type Expected =
 
 /** Attacks beyond one-per-function: other victim-id positions of the same functions. */
 const EXTRA_ATTACKS: Array<[string, Attack, (v: SeededTenant) => Expected]> = [
+  [
+    'setInstallationSourceTemplate: bind the victim template to an attacker installation',
+    (t, v, a) =>
+      repos.setInstallationSourceTemplate(t, a.installationId, v.sourceTemplateId, SYSTEM_ACTOR),
+    (v) => ({ name: 'RepoNotFoundError', entity: 'source_template', id: v.sourceTemplateId }),
+  ],
+  [
+    'createInstallation: bind the victim template',
+    (t, v, a) =>
+      repos.createInstallation(
+        t,
+        {
+          appId: a.appId,
+          tokenHash: `evil-${randomUUID()}`,
+          tokenPrefix: 'ow_inst_evil',
+          sourceTemplateId: v.sourceTemplateId,
+        },
+        SYSTEM_ACTOR,
+      ),
+    (v) => ({ name: 'RepoNotFoundError', entity: 'source_template', id: v.sourceTemplateId }),
+  ],
   [
     'setAudienceMembers: attacker destination into the victim audience',
     (t, v, a) => repos.setAudienceMembers(t, v.audienceId, [a.destinationId], SYSTEM_ACTOR),
@@ -440,6 +476,7 @@ const VICTIM_TABLES = [
   'connections',
   'destinations',
   'installations',
+  'source_templates',
   'rules',
   'rule_targets',
   'events',
@@ -573,6 +610,7 @@ function markers(v: SeededTenant): string[] {
     v.appId,
     v.installationId,
     v.ruleId,
+    v.sourceTemplateId,
     v.eventId,
     v.deliveryId,
     v.digestId,
@@ -767,6 +805,8 @@ interface OwnIds {
   destinationId: string;
   audienceId: string;
   installationId: string;
+  appId: string;
+  sourceTemplateId: string;
   ruleId: string;
   eventId: string;
   digestId: string;
@@ -907,6 +947,20 @@ const FK_SPECS: FkSpec[] = [
     }),
   },
   {
+    constraint: 'installations_source_template_ws_fk',
+    table: 'installations',
+    column: 'source_template_id',
+    victimValue: (v) => v.sourceTemplateId,
+    row: (o) => ({
+      id: newId(),
+      app_id: o.appId,
+      workspace_id: o.ws,
+      token_hash: `fk-${randomUUID()}`,
+      token_prefix: 'ow_inst_fk',
+      source_template_id: o.sourceTemplateId,
+    }),
+  },
+  {
     constraint: 'rule_targets_audience_ws_fk',
     table: 'rule_targets',
     column: 'audience_id',
@@ -1001,6 +1055,8 @@ describe('composite foreign keys reject victim ids under the app role', () => {
         destinationId: attacker.destinationId,
         audienceId: aud.id,
         installationId: attacker.installationId,
+        appId: attacker.appId,
+        sourceTemplateId: attacker.sourceTemplateId,
         ruleId: rule.id,
         eventId: ev.eventId,
         digestId: attacker.digestId,
@@ -1046,6 +1102,7 @@ const malformedVictim: SeededTenant = {
   appId: MALFORMED,
   installationId: MALFORMED,
   ruleId: MALFORMED,
+  sourceTemplateId: MALFORMED,
   eventId: MALFORMED,
   deliveryId: MALFORMED,
   digestId: MALFORMED,
