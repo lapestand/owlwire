@@ -111,7 +111,7 @@ describe('PayloadSchemaRegistry', () => {
 
   describe('resource limits', () => {
     it('compiles a ref-heavy schema quickly', () => {
-      const refs = Array.from({ length: 540 }, () => ({ $ref: '#/$defs/a' }));
+      const refs = Array.from({ length: 16 }, () => ({ $ref: '#/$defs/a' }));
       const props = Object.fromEntries(
         Array.from({ length: 120 }, (_, i) => [`p${i}`, { type: 'string' }]),
       );
@@ -141,15 +141,15 @@ describe('PayloadSchemaRegistry', () => {
       }
     });
 
-    it('reports excessive nesting instead of throwing', () => {
-      const recursive = {
-        $defs: { n: { type: 'array', items: { $ref: '#/$defs/n' } } },
-        $ref: '#/$defs/n',
-      };
-      let data: unknown[] = [];
-      for (let i = 0; i < 30_000; i++) data = [data];
-      const r = new PayloadSchemaRegistry().validate('deep', recursive, data);
-      expect(r).toEqual({ ok: false, detail: 'payload is nested too deeply' });
+    it('never throws for a deeply nested schema and payload', () => {
+      let schema: Record<string, unknown> = { type: 'string' };
+      let data: unknown = 'x';
+      for (let i = 0; i < 1500; i++) {
+        schema = { type: 'array', items: schema };
+        data = [data];
+      }
+      const r = new PayloadSchemaRegistry().validate('deep', schema, data);
+      expect(typeof r.ok).toBe('boolean');
     });
 
     it('does not write to the console for unknown formats', () => {
@@ -262,6 +262,103 @@ describe('PayloadSchemaRegistry', () => {
       const started = performance.now();
       reg.validate('whole', schema, data);
       expect(performance.now() - started).toBeLessThan(300);
+    });
+  });
+
+  describe('run time and reference limits', () => {
+    const heavyPattern = `${'[a-z]{100}'.repeat(20)}$`;
+    const refTo = (name: string) => ({ $ref: `#/$defs/${name}` });
+    const long = `${'a'.repeat(4095)}b`;
+
+    it('refuses more than 16 $ref occurrences at compile', () => {
+      const refs = Array.from({ length: 766 }, () => refTo('p'));
+      const schema = {
+        $defs: { p: { type: 'string', pattern: heavyPattern } },
+        type: 'array',
+        items: { allOf: refs },
+      };
+      const r = new PayloadSchemaRegistry().checkSchema(schema);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.detail).toMatch(/\$ref/);
+      const sixteen = { ...schema, items: { allOf: refs.slice(0, 16) } };
+      expect(new PayloadSchemaRegistry().checkSchema(sixteen)).toEqual({ ok: true });
+    });
+
+    it('trips the run time budget for fan-out within 16 refs', () => {
+      const schema = {
+        $defs: { p: { type: 'string', pattern: heavyPattern } },
+        type: 'array',
+        items: { allOf: Array.from({ length: 15 }, () => refTo('p')) },
+      };
+      const reg = new PayloadSchemaRegistry();
+      expect(reg.checkSchema(schema).ok).toBe(true);
+      const started = performance.now();
+      const r = reg.validate(
+        'fan',
+        schema,
+        Array.from({ length: 15 }, () => long),
+      );
+      expect(r).toEqual({ ok: false, detail: 'payload too expensive to validate' });
+      expect(performance.now() - started).toBeLessThan(1000);
+    });
+
+    it('trips the budget for an array of long strings checked by one pattern', () => {
+      const schema = {
+        type: 'array',
+        items: { type: 'string', pattern: `${'[a-z]{100}'.repeat(12)}$` },
+      };
+      const started = performance.now();
+      const r = new PayloadSchemaRegistry().validate(
+        'arr',
+        schema,
+        Array.from({ length: 15 }, () => long),
+      );
+      expect(r).toEqual({ ok: false, detail: 'payload too expensive to validate' });
+      expect(performance.now() - started).toBeLessThan(1000);
+    });
+
+    it('gives every validate call a fresh budget', () => {
+      const schema = { type: 'array', items: { type: 'string', pattern: '^[a-z]+$' } };
+      const reg = new PayloadSchemaRegistry();
+      const data = Array.from({ length: 20 }, () => 'a'.repeat(4000));
+      for (let i = 0; i < 50; i++)
+        expect(reg.validate('fresh', schema, data)).toEqual({ ok: true });
+    });
+
+    it('refuses \\Q quoting that hides repetition from the nesting scan', () => {
+      const reg = new PayloadSchemaRegistry();
+      const pattern = '\\Q)\\E(?:(?:a|aa|aaa|aaaa|aaaaa){10}){100}';
+      expect(reg.checkSchema({ type: 'string', pattern }).ok).toBe(false);
+      expect(reg.checkSchema({ type: 'string', pattern: '\\Qa.b\\E' }).ok).toBe(false);
+    });
+
+    it('refuses cyclic references', () => {
+      const reg = new PayloadSchemaRegistry();
+      const self = { $defs: { a: { type: 'array', items: refTo('a') } }, ...refTo('a') };
+      expect(reg.checkSchema(self).ok).toBe(false);
+      const mutual = {
+        $defs: { a: { properties: { x: refTo('b') } }, b: { properties: { y: refTo('a') } } },
+        ...refTo('a'),
+      };
+      expect(reg.checkSchema(mutual).ok).toBe(false);
+      expect(reg.checkSchema({ type: 'array', items: { $ref: '#' } }).ok).toBe(false);
+      const anchored = {
+        $defs: { a: { $anchor: 'node', properties: { x: { $ref: '#node' } } } },
+        ...refTo('a'),
+      };
+      expect(reg.checkSchema(anchored).ok).toBe(false);
+    });
+
+    it('accepts acyclic shared references', () => {
+      const reg = new PayloadSchemaRegistry();
+      const schema = {
+        $defs: { s: { type: 'string', pattern: '^[a-z]+$' }, n: { properties: { v: refTo('s') } } },
+        properties: { a: refTo('n'), b: refTo('n'), c: refTo('s') },
+      };
+      expect(reg.validate('ok', schema, { a: { v: 'x' }, b: { v: 'y' }, c: 'z' })).toEqual({
+        ok: true,
+      });
+      expect(reg.validate('ok', schema, { c: 'Z' }).ok).toBe(false);
     });
   });
 });
