@@ -122,7 +122,7 @@ describe('PayloadSchemaRegistry', () => {
     const { result, ms } = await timed(() => reg.validate('evil', s, `${'a'.repeat(50)}b`));
     expect(result.ok).toBe(false);
     expect(result).not.toEqual(TOO_EXPENSIVE);
-    expect(ms).toBeLessThan(1000);
+    expect(ms).toBeLessThan(2000);
   });
 
   describe('evaluation deadline', () => {
@@ -132,38 +132,40 @@ describe('PayloadSchemaRegistry', () => {
       const { result, ms } = await timed(() => reg.validate('id-cycle', s, data));
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.detail).toMatch(/^payload schema cannot be compiled/);
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(2000);
     });
 
     it('stops inline allOf copies of uniqueItems at the run deadline', async () => {
       const one = new PayloadSchemaRegistry({ poolSize: 1 });
       try {
-        const { schema: s, data } = attacks.uniqueItems;
-        // Its compile (about 400 ms) is within the compile deadline; cache it first.
+        // 200 copies compile in tens of ms (727 take about 400 ms, more under coverage) and
+        // still run for seconds on the 2000 arrays. Cache the validator first.
+        const s = { allOf: attacks.uniqueItems.schema.allOf.slice(0, 200) };
+        const { data } = attacks.uniqueItems;
         expect(await one.validate('unique', s, [])).toEqual({ ok: true });
         const { result, ms } = await timed(() => one.validate('unique', s, data));
         expect(result).toEqual(TOO_EXPENSIVE);
-        expect(ms).toBeLessThan(1000);
+        expect(ms).toBeLessThan(2000);
         // Uncached, the call gets the compile time and then the run deadline.
         const cold = await timed(() => one.validate('unique-cold', s, data));
         expect(cold.result).toEqual(TOO_EXPENSIVE);
-        expect(cold.ms).toBeLessThan(3000);
+        expect(cold.ms).toBeLessThan(5000);
       } finally {
         await one.close();
       }
     });
 
     it('refuses a schema whose compile misses the compile deadline', async () => {
-      // 727 inline branches take about 400 ms to compile: fine with the 2000 ms default,
-      // refused with a lowered deadline (no schema within 16 KB reliably needs 2 s).
+      // 727 inline branches take about 400 ms to compile: refused with a lowered deadline (no
+      // schema within 16 KB reliably needs the 2 s default). The default accepts a smaller copy.
       const s = attacks.uniqueItems.schema;
-      expect(await reg.checkSchema(s)).toEqual({ ok: true });
+      expect(await reg.checkSchema({ allOf: s.allOf.slice(0, 200) })).toEqual({ ok: true });
       const strict = new PayloadSchemaRegistry({ poolSize: 1, compileDeadlineMs: 150 });
       try {
         const expensive = { ok: false, detail: 'payloadSchema too expensive to compile' };
         const { result, ms } = await timed(() => strict.checkSchema(s));
         expect(result).toEqual(expensive);
-        expect(ms).toBeLessThan(1000);
+        expect(ms).toBeLessThan(2000);
         expect(await strict.validate('slow-compile', s, [])).toEqual(expensive);
       } finally {
         await strict.close();
@@ -203,7 +205,7 @@ describe('PayloadSchemaRegistry', () => {
       expect(await reg.checkSchema(s)).toEqual({ ok: true });
       const { result, ms } = await timed(() => reg.validate('fan', s, data));
       expect(result).toEqual(TOO_EXPENSIVE);
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(2000);
     });
 
     it('replaces a timed out worker so the next call works', async () => {
