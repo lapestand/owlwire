@@ -22,17 +22,17 @@
   },
   "packageManager": "pnpm@12.11.2+sha512.25a51652a196785af5f28bda6dfe8dc582ebefa4ac1d180221ce1390231c5fb76637822ea4b6e4633ce74acdcb0a77f725af11bad38177fdeddaee818a955cb9",
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
-    "@stryker-mutator/core": "^10.0.0",
-    "@stryker-mutator/vitest-runner": "^10.0.0",
-    "@swc/core": "^1.16.18",
-    "@types/node": "^26.6.5",
-    "@vitest/coverage-v8": "^5.0.4",
-    "dependency-cruiser": "^18.6.0",
+    "@biomejs/biome": "^2.6.4",
+    "@stryker-mutator/core": "^10.1.1",
+    "@stryker-mutator/vitest-runner": "^10.1.1",
+    "@swc/core": "^1.16.21",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
+    "dependency-cruiser": "^18.7.2",
     "fast-check": "^4.10.2",
-    "knip": "^6.41.0",
-    "turbo": "^2.11.7",
+    "knip": "^6.44.1",
+    "turbo": "^2.11.10",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.4"
+    "vitest": "^5.1.0"
   }
 }
