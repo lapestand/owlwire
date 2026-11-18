@@ -20,7 +20,7 @@
     "test:int": "vitest run --config ../../vitest.config.ts --project int --passWithNoTests"
   },
   "dependencies": {
-    "@testcontainers/postgresql": "^12.2.0",
+    "@testcontainers/postgresql": "^12.2.1",
     "pg": "^8.23.1"
   },
   "devDependencies": {
